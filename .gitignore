@@ -1,0 +1,37 @@
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# Logs
+*.log
+
+# Node
+node_modules/
+dist/
+.vite/
+
+# Rust
+target/
+**/*.rs.bk
+Cargo.lock.bak
+
+# Tauri generated
+src-tauri/gen/
+
+# Local env
+.env
+.env.local
+.env.*.local
+
+# Puku / agent artifacts
+.puku/puku-embeddings.db
+.puku/puku-embeddings.db-wal
+.puku/puku-embeddings.db-shm
+.puku/cache/
+
+# Editor / scratch logs at repo root
+build.log
+frontend-test.log

@@ -1,0 +1,162 @@
+@import "tailwindcss";
+
+/* -----------------------------------------------------------------------------
+ * LectorBit design tokens (Tailwind v4 + shadcn-style CSS variables).
+ *
+ * Light is the production default. Dark uses the same hue rotation.
+ * Components reference these via `bg-background`, `text-foreground`,
+ * `border-border`, `bg-card`, etc.
+ * --------------------------------------------------------------------------- */
+@layer base {
+  :root {
+    color-scheme: light;
+
+    --background: oklch(0.99 0.005 95);
+    --foreground: oklch(0.18 0.02 270);
+
+    --card: oklch(1 0 0);
+    --card-foreground: oklch(0.18 0.02 270);
+
+    --popover: oklch(1 0 0);
+    --popover-foreground: oklch(0.18 0.02 270);
+
+    --primary: oklch(0.55 0.18 265);
+    --primary-foreground: oklch(0.98 0.005 95);
+
+    --secondary: oklch(0.96 0.01 265);
+    --secondary-foreground: oklch(0.22 0.03 270);
+
+    --muted: oklch(0.95 0.01 265);
+    --muted-foreground: oklch(0.48 0.02 270);
+
+    --accent: oklch(0.94 0.04 265);
+    --accent-foreground: oklch(0.22 0.03 270);
+
+    --destructive: oklch(0.6 0.22 27);
+    --destructive-foreground: oklch(0.98 0.005 95);
+
+    --border: oklch(0.9 0.01 265);
+    --input: oklch(0.9 0.01 265);
+    --ring: oklch(0.55 0.18 265 / 0.55);
+
+    --radius: 0.625rem;
+
+    --sidebar-width: 16rem;
+    --topbar-height: 3.25rem;
+  }
+
+  .dark {
+    color-scheme: dark;
+
+    --background: oklch(0.16 0.02 270);
+    --foreground: oklch(0.96 0.005 95);
+
+    --card: oklch(0.2 0.02 270);
+    --card-foreground: oklch(0.96 0.005 95);
+
+    --popover: oklch(0.2 0.02 270);
+    --popover-foreground: oklch(0.96 0.005 95);
+
+    --primary: oklch(0.7 0.18 265);
+    --primary-foreground: oklch(0.16 0.02 270);
+
+    --secondary: oklch(0.26 0.02 270);
+    --secondary-foreground: oklch(0.96 0.005 95);
+
+    --muted: oklch(0.24 0.02 270);
+    --muted-foreground: oklch(0.7 0.02 270);
+
+    --accent: oklch(0.3 0.04 265);
+    --accent-foreground: oklch(0.96 0.005 95);
+
+    --destructive: oklch(0.55 0.22 27);
+    --destructive-foreground: oklch(0.98 0.005 95);
+
+    --border: oklch(0.3 0.02 270);
+    --input: oklch(0.3 0.02 270);
+    --ring: oklch(0.7 0.18 265 / 0.55);
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    background-color: var(--background);
+    color: var(--foreground);
+    font-family:
+      system-ui,
+      -apple-system,
+      "Segoe UI",
+      Roboto,
+      "Helvetica Neue",
+      Arial,
+      sans-serif;
+    font-feature-settings:
+      "cv02",
+      "cv03",
+      "cv04",
+      "cv11";
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  *:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+    border-radius: calc(var(--radius) * 0.5);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.001ms !important;
+      transition-duration: 0.001ms !important;
+    }
+  }
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+@utility scrollbar-thin {
+  &::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  &::-webkit-scrollbar-thumb {
+    background-color: var(--border);
+    border-radius: 999px;
+  }
+  &::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}
