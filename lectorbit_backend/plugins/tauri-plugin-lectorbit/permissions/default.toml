@@ -1,0 +1,13 @@
+# Capabilities consumed by the main window.
+#
+# Only LectorBit-specific, narrowly scoped permissions are listed here.
+# Do NOT add generic filesystem / SQL / shell / network / updater permissions.
+
+[$parent]
+remote = { urls = ["http://127.0.0.1:1420"] }
+
+[permissions]
+core:default = { all = true }
+dialog:default = { all = true }
+"lectorbit:default" = { all = true }
+"lectorbit:allow-app-get-version" = true

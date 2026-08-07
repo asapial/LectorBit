@@ -1,0 +1,43 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "LectorBit",
+  "version": "0.1.0",
+  "identifier": "dev.lectorbit.app",
+  "build": {
+    "beforeDevCommand": {
+      "cwd": "../../lectorbit_frontend",
+      "script": "pnpm dev --host 127.0.0.1 --port 1420",
+      "wait": false
+    },
+    "beforeBuildCommand": {
+      "cwd": "../../lectorbit_frontend",
+      "script": "pnpm build",
+      "wait": true
+    },
+    "devUrl": "http://127.0.0.1:1420",
+    "frontendDist": "../../lectorbit_frontend/dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "LectorBit",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 960,
+        "minHeight": 600,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/icon.png"
+    ]
+  }
+}

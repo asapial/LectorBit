@@ -1,0 +1,1 @@
+//! Search use-cases. Backed by SQLite FTS5.

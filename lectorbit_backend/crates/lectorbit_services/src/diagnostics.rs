@@ -1,0 +1,1 @@
+//! Diagnostics: env probe, adapter verification, manifest checks, log export.

@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json.schemastore.org/package.json",
+  "name": "tauri-plugin-lectorbit",
+  "version": "0.1.0",
+  "private": true,
+  "description": "LectorBit Tauri plugin (Rust side). JavaScript bindings are generated later if needed."
+}

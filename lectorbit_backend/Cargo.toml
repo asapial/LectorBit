@@ -1,0 +1,53 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/lectorbit_core",
+    "crates/lectorbit_services",
+    "crates/lectorbit_db",
+    "crates/lectorbit_media",
+    "crates/lectorbit_ai",
+    "crates/lectorbit_playback",
+    "plugins/tauri-plugin-lectorbit",
+    "src-tauri",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.97"
+license = "MIT OR Apache-2.0"
+repository = "https://example.invalid/lectorbit"
+
+[workspace.dependencies]
+# Internal crates
+lectorbit_core = { path = "crates/lectorbit_core" }
+lectorbit_services = { path = "crates/lectorbit_services" }
+lectorbit_db = { path = "crates/lectorbit_db" }
+lectorbit_media = { path = "crates/lectorbit_media" }
+lectorbit_ai = { path = "crates/lectorbit_ai" }
+lectorbit_playback = { path = "crates/lectorbit_playback" }
+tauri-plugin-lectorbit = { path = "plugins/tauri-plugin-lectorbit" }
+
+# Audited third-party (see project-docs/TECHNOLOGY_BASELINE_2026-08.md)
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+anyhow = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "tls-rustls-ring", "sqlite", "sqlx-sqlite", "macros", "chrono", "uuid"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", default-features = false, features = ["serde", "clock"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = "thin"
+opt-level = "s"
+strip = true
+
+[profile.dev]
+opt-level = 1

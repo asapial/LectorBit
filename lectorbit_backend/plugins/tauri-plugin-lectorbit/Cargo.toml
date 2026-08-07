@@ -1,0 +1,17 @@
+[package]
+name = "tauri-plugin-lectorbit"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Internal Tauri plugin exposing narrow, capability-gated LectorBit commands."
+
+[lib]
+name = "tauri_plugin_lectorbit"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[dependencies]
+tauri = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }

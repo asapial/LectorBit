@@ -1,0 +1,1 @@
+//! Playback progress + checkpoint durability.

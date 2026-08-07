@@ -1,0 +1,1 @@
+//! Embedded migrations. Append-only after release.

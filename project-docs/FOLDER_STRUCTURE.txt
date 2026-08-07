@@ -1,0 +1,58 @@
+LectorBit/
+├── lectorbit_frontend/                          # React desktop UI (Vite + React 19.2 + TS 6)
+│   ├── index.html
+│   ├── package.json
+│   ├── pnpm-lock.yaml
+│   ├── tsconfig.app.json
+│   ├── tsconfig.json
+│   ├── tsconfig.node.json
+│   ├── vite.config.ts
+│   ├── eslint.config.js
+│   ├── .prettierrc.json
+│   ├── public/
+│   └── src/
+│       ├── main.tsx
+│       ├── App.tsx
+│       ├── index.css
+│       ├── app/                                 # shell, providers, router table
+│       ├── routes/                              # thin route components
+│       │   ├── home/
+│       │   └── about/
+│       ├── features/                            # vertical slices (ui + hooks + tests)
+│       ├── components/                          # shared visual primitives
+│       ├── ipc/                                # ONLY place allowed to call tauri invoke/Channel
+│       ├── query/                               # tanstack query keys + invalidation
+│       ├── state/                               # zustand stores (UI/workflow only)
+│       ├── domain/                              # IDs, errors, units, DTOs
+│       ├── lib/                                 # generic helpers
+│       └── test/                                # vitest setup, tauri mock
+│
+├── lectorbit_backend/                           # Tauri 2 + Rust local privileged core
+│   ├── Cargo.toml                              # workspace root
+│   ├── crates/
+│   │   ├── lectorbit_core/                     # IDs, errors, units, traits
+│   │   ├── lectorbit_services/                  # use-cases (library, jobs, planner, ...)
+│   │   ├── lectorbit_db/                        # SQLx repos + migrations
+│   │   ├── lectorbit_media/                     # crawling, ffprobe/ffmpeg adapters
+│   │   ├── lectorbit_ai/                        # whisper.cpp, models, OCR, embeddings
+│   │   └── lectorbit_playback/                  # PlaybackEngine trait + mpv impl
+│   ├── plugins/
+│   │   └── tauri-plugin-lectorbit/              # internal narrow-scope plugin
+│   │       ├── src/lib.rs
+│   │       ├── permissions/default.toml
+│   │       └── tests/smoke.rs
+│   ├── src-tauri/                               # THIN app shell: bootstrap, windows, plugins
+│   │   ├── Cargo.toml
+│   │   ├── build.rs
+│   │   ├── tauri.conf.json
+│   │   ├── capabilities/default.json
+│   │   ├── icons/
+│   │   └── src/
+│   │       ├── main.rs
+│   │       └── lib.rs
+│   └── migrations/                              # SQLx migrations (append-only)
+│       └── 2026-08-08_0001_initial.sql
+│
+└── project-docs/
+    ├── TECHNOLOGY_BASELINE_2026-08.md
+    └── FOLDER_STRUCTURE.txt

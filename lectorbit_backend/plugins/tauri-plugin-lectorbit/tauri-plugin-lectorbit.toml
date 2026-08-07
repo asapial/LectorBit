@@ -1,0 +1,9 @@
+[package]
+name = "tauri-plugin-lectorbit"
+version.workspace = true
+description = "Internal narrow-scope plugin for LectorBit IPC."
+schema_version = 1
+[build]
+command = "cargo:build"
+[scripts]
+build = "cargo build --release"
