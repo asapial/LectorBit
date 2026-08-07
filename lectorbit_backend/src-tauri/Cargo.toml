@@ -22,6 +22,7 @@ tauri = { workspace = true }
 tauri-plugin-dialog = { workspace = true }
 tauri-plugin-lectorbit = { workspace = true }
 lectorbit_core = { workspace = true }
+lectorbit_db = { workspace = true }
 lectorbit_services = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

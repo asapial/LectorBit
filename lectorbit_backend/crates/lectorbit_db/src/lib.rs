@@ -1,5 +1,25 @@
-//! SQLx repositories, migrations, transactions, FTS5.
+//! SQLx repositories, migrations, transactions, FTS5 (planned).
+//!
+//! Feature 1 ships:
+//! - [`Db`] — a small wrapper around `sqlx::SqlitePool` that opens a file DB,
+//!   applies WAL/synchronous/foreign_keys/busy_timeout/temp_store PRAGMAs, and
+//!   runs the embedded migrations before any other crate can touch the pool.
+//! - [`redaction`] — a `MakeWriter` for `tracing_subscriber::fmt::Layer` that
+//!   masks file paths, bearer tokens, and emails in every log line.
+//!
+//! Later features (3, 4, 11, 14) will add SQLx repositories and FTS5 virtual
+//! tables on top of this foundation.
 
+#![deny(unsafe_code)]
+#![warn(rust_2018_idioms)]
+
+pub mod error;
 pub mod migrations;
+pub mod pool;
+pub mod redaction;
+
+pub use error::{DbError, DbResult};
+pub use pool::Db;
+pub use redaction::{redact, redact_event_fields, RedactingMakeWriter};
 
 pub async fn placeholder() {}
