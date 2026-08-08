@@ -1,3 +1,4 @@
+import { Link } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
 import { getAppVersion } from '../../ipc/app';
 import { PageHeader } from '../../components/layout/PageHeader';
@@ -66,6 +67,14 @@ export function AboutRoute() {
               <li>Tracks playback progress with durable checkpoints.</li>
               <li>Replans from real study actions, not intentions.</li>
             </ul>
+            <div className="mt-4">
+              <Link
+                to="/diagnostics"
+                className="text-sm font-medium text-primary hover:underline"
+              >
+                Open diagnostics panel →
+              </Link>
+            </div>
           </CardContent>
         </Card>
       </div>

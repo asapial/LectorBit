@@ -1,0 +1,238 @@
+import { useQuery } from '@tanstack/react-query';
+import {
+  getDiagnostics,
+  type DiagnosticsReport,
+} from '../../ipc/diagnostics';
+import { PageHeader } from '../../components/layout/PageHeader';
+import { EmptyState } from '../../components/feedback/EmptyState';
+import { Spinner } from '../../components/ui/Spinner';
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '../../components/ui/Card';
+import { Badge } from '../../components/ui/Badge';
+
+export function DiagnosticsRoute() {
+  const query = useQuery({
+    queryKey: ['diagnostics'],
+    queryFn: getDiagnostics,
+    // Diagnostics are cheap; refetch on focus so the page feels alive.
+    refetchOnWindowFocus: true,
+    staleTime: 5_000,
+  });
+
+  return (
+    <div className="space-y-6">
+      <PageHeader
+        eyebrow="Settings"
+        title="Diagnostics"
+        description="A redacted snapshot of the running app. Safe to share when filing a bug."
+        actions={
+          <button
+            type="button"
+            onClick={() => void query.refetch()}
+            className="inline-flex items-center justify-center rounded-md border border-input bg-background px-3 py-2 text-sm font-medium shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+          >
+            Refresh
+          </button>
+        }
+      />
+
+      {query.isPending && (
+        <div className="flex items-center gap-3 text-sm text-muted-foreground">
+          <Spinner /> Collecting diagnostics…
+        </div>
+      )}
+
+      {query.isError && (
+        <EmptyState
+          title="Diagnostics unavailable"
+          description={String(query.error)}
+        />
+      )}
+
+      {query.data && <DiagnosticsPanel report={query.data} />}
+    </div>
+  );
+}
+
+function DiagnosticsPanel({ report }: { report: DiagnosticsReport }) {
+  return (
+    <div className="grid gap-4 md:grid-cols-2">
+      <KpiCard
+        title="App"
+        rows={[
+          { label: 'Version', value: report.app.version },
+          { label: 'Build', value: report.app.build },
+          { label: 'Target', value: report.app.target_triple },
+          {
+            label: 'Running for',
+            value: formatDuration(report.app.elapsed_since_launch),
+          },
+        ]}
+      />
+
+      <KpiCard
+        title="Database"
+        rows={[
+          { label: 'Schema version', value: String(report.database.schema_version) },
+          {
+            label: 'Migrations applied',
+            value: String(report.database.migrations_applied),
+          },
+          { label: 'SQLite', value: report.database.sqlite_version },
+          { label: 'Journal mode', value: report.database.journal_mode.toUpperCase() },
+          {
+            label: 'Foreign keys',
+            value: report.database.foreign_keys ? 'ON' : 'OFF',
+            tone: report.database.foreign_keys ? 'success' : 'danger',
+          },
+          {
+            label: 'Size',
+            value:
+              report.database.size_bytes != null
+                ? formatBytes(report.database.size_bytes)
+                : '—',
+          },
+          {
+            label: 'Path',
+            value: report.database.path_redacted ?? '—',
+            mono: true,
+          },
+        ]}
+      />
+
+      <KpiCard
+        title="Library"
+        rows={[
+          {
+            label: 'Registered roots',
+            value: String(report.library.root_count),
+          },
+          {
+            label: 'Active roots',
+            value: String(report.library.active_root_count),
+          },
+          {
+            label: 'Media files',
+            value: String(report.library.media_count),
+          },
+        ]}
+      />
+
+      <KpiCard
+        title="AI models"
+        rows={[
+          {
+            label: 'Whisper',
+            value: report.ai.whisper_model_present ? 'present' : 'missing',
+            tone: report.ai.whisper_model_present ? 'success' : 'neutral',
+          },
+          {
+            label: 'OCR',
+            value: report.ai.ocr_model_present ? 'present' : 'missing',
+            tone: report.ai.ocr_model_present ? 'success' : 'neutral',
+          },
+          {
+            label: 'Embeddings',
+            value: report.ai.embeddings_model_present ? 'present' : 'missing',
+            tone: report.ai.embeddings_model_present ? 'success' : 'neutral',
+          },
+          {
+            label: 'Last consent',
+            value: report.ai.last_consent ?? '—',
+          },
+        ]}
+      />
+
+      <Card className="md:col-span-2">
+        <CardHeader>
+          <CardTitle>Recent errors</CardTitle>
+          <CardDescription>
+            Last five error rows from the audit log. Already redacted.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {report.recent_errors.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No errors recorded.</p>
+          ) : (
+            <ul className="space-y-2 font-mono text-xs">
+              {report.recent_errors.map((entry, i) => (
+                <li
+                  key={i}
+                  className="rounded-md border border-border bg-muted/30 px-3 py-2"
+                >
+                  {entry}
+                </li>
+              ))}
+            </ul>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function KpiCard({
+  title,
+  rows,
+}: {
+  title: string;
+  rows: Array<{ label: string; value: string; tone?: 'success' | 'danger' | 'neutral'; mono?: boolean }>;
+}) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>{title}</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <dl className="grid grid-cols-[max-content_1fr] gap-x-6 gap-y-2 text-sm">
+          {rows.map((row) => (
+            <div key={row.label} className="contents">
+              <dt className="text-muted-foreground">{row.label}</dt>
+              <dd className="flex items-center justify-end gap-2 text-right">
+                {row.tone && (
+                  <Badge tone={row.tone} className="text-[10px]">
+                    {row.tone === 'success'
+                      ? 'ok'
+                      : row.tone === 'danger'
+                        ? 'fail'
+                        : '—'}
+                  </Badge>
+                )}
+                <span className={row.mono ? 'font-mono text-xs' : undefined}>
+                  {row.value}
+                </span>
+              </dd>
+            </div>
+          ))}
+        </dl>
+      </CardContent>
+    </Card>
+  );
+}
+
+function formatDuration(d: { secs: number; nanos: number } | null): string {
+  if (!d) return '—';
+  const total = d.secs;
+  if (total < 60) return `${total}s`;
+  if (total < 3600) return `${Math.floor(total / 60)}m ${total % 60}s`;
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  return `${h}h ${m}m`;
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ['KB', 'MB', 'GB', 'TB'];
+  let v = bytes / 1024;
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i++;
+  }
+  return `${v.toFixed(v >= 10 ? 0 : 1)} ${units[i]}`;
+}

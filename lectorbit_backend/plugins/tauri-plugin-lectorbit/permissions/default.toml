@@ -11,3 +11,4 @@ core:default = { all = true }
 dialog:default = { all = true }
 "lectorbit:default" = { all = true }
 "lectorbit:allow-app-get-version" = true
+"lectorbit:allow-app-get-diagnostics" = true

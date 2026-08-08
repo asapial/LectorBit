@@ -6,6 +6,7 @@ import { LibraryRoute } from './library/LibraryRoute';
 import { PlanRoute } from './plan/PlanRoute';
 import { SearchRoute } from './search/SearchRoute';
 import { SettingsRoute } from './settings/SettingsRoute';
+import { DiagnosticsRoute } from './diagnostics/DiagnosticsRoute';
 import { NotFoundRoute } from './NotFoundRoute';
 
 export const routes: RouteObject[] = [
@@ -18,6 +19,7 @@ export const routes: RouteObject[] = [
       { path: 'plan', element: <PlanRoute /> },
       { path: 'search', element: <SearchRoute /> },
       { path: 'settings', element: <SettingsRoute /> },
+      { path: 'diagnostics', element: <DiagnosticsRoute /> },
       { path: 'about', element: <AboutRoute /> },
       { path: '*', element: <NotFoundRoute /> },
     ],

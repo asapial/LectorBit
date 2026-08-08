@@ -12,3 +12,5 @@ pub mod planner;
 pub mod progress;
 pub mod search;
 pub mod settings;
+
+pub use diagnostics::{DiagnosticsReport, DiagnosticsService};
