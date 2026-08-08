@@ -23,6 +23,9 @@ importers:
       '@tauri-apps/api':
         specifier: ^2.11.1
         version: 2.11.1
+      lucide-react:
+        specifier: ^1.30.0
+        version: 1.30.0(react@19.2.8)
       react:
         specifier: ^19.2.7
         version: 19.2.8
@@ -1517,6 +1520,11 @@ packages:
   lru-cache@11.5.2:
     resolution: {integrity: sha512-4pfM1Ff0x50o0tQwb5ucw/RzNyD0/YJME6IVcStalZuMWxdt3sR3huStTtxz4PUmvZfRguvDejasvQ2kifR11g==}
     engines: {node: 20 || >=22}
+
+  lucide-react@1.30.0:
+    resolution: {integrity: sha512-tUIr2jXLbWpCkdtH8XP7P7YppM9ueWgTky99lpWDY6z5REs6B+O6ZQ3U5tHkUUY59ANyOv/PBcs8E4Fe3KO3eA==}
+    peerDependencies:
+      react: ^16.5.1 || ^17.0.0 || ^18.0.0 || ^19.0.0
 
   lz-string@1.5.0:
     resolution: {integrity: sha512-h5bgJWpxJNswbU7qCrV0tIKQCaS3blPDrqKWx+QxzuzL1zGUzij9XCWLrSLsJPu5t+eWA/ycetzYAO5IOMcWAQ==}
@@ -3453,6 +3461,10 @@ snapshots:
       js-tokens: 4.0.0
 
   lru-cache@11.5.2: {}
+
+  lucide-react@1.30.0(react@19.2.8):
+    dependencies:
+      react: 19.2.8
 
   lz-string@1.5.0: {}
 
