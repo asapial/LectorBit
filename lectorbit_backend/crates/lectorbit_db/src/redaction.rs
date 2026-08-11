@@ -181,6 +181,7 @@ impl Visit for RedactingVisitor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tracing_subscriber::fmt::MakeWriter;
 
     #[test]
     fn redacts_windows_paths() {
@@ -259,7 +260,6 @@ mod tests {
         // the sink. This exercises the same code path the Tauri shell uses.
         use std::sync::{Arc, Mutex};
         use tracing_subscriber::layer::SubscriberExt;
-        use tracing_subscriber::util::SubscriberInitExt;
 
         let buf: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
         let sink = BufferSink(buf.clone());
