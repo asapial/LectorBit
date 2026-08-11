@@ -30,6 +30,12 @@ pub use repo::media::{
     DiscoveredMedia, MediaListItem, MediaPage, ProbeCandidate, ProbeTarget, Repo as MediaRepo,
     StoredProbe, StoredStream,
 };
-pub use repo::plans::{CommittedPlan, Repo as PlansRepo, RoutineDay, RoutineItem, RoutinePlan};
+pub use repo::plans::{
+    ActivePlanSeed, CommittedPlan, Repo as PlansRepo, RoutineDay, RoutineItem, RoutinePlan,
+};
+pub use repo::study::{
+    CheckpointResult, PlaybackItem, ProgressSnapshot, ReplanMediaState, Repo as StudyRepo,
+    StudyActionKind, COMPLETION_PERCENT,
+};
 
 pub async fn placeholder() {}

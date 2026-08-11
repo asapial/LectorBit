@@ -23,3 +23,6 @@ pub use planner::{
     AlternativePatch, PlanAlternative, PlanPreview, PlanRequest, PlannerCandidate,
     PlannerCandidatePage, PlannerService, PlannerServiceError, PlanningSelection,
 };
+pub use progress::{
+    PlaybackCapability, PlaybackService, PlaybackUpdate, PlaybackView, ProgressError,
+};

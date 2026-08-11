@@ -18,6 +18,13 @@ pub struct CommittedPlan {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ActivePlanSeed {
+    pub title: String,
+    pub constraints: PlanningConstraints,
+    pub selections_json: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RoutineItem {
     pub id: String,
     pub media_id: String,
@@ -196,6 +203,60 @@ impl Repo {
         })
     }
 
+    pub async fn get_active_seed(&self, user_id: &str) -> DbResult<Option<ActivePlanSeed>> {
+        let row = sqlx::query(
+            "SELECT p.title, pv.selections_json, cv.daily_budget_minutes, \
+                    cv.allowed_weekdays, cv.preferred_session_minutes, \
+                    cv.max_continuous_minutes, cv.minimum_break_minutes, \
+                    cv.playback_speed_milli, cv.horizon_days \
+             FROM plans p \
+             JOIN plan_versions pv ON pv.id = p.active_version_id \
+             JOIN study_constraint_versions cv ON cv.id = pv.constraint_version_id \
+             WHERE p.user_id = ? AND p.archived_at IS NULL \
+             ORDER BY p.created_at DESC LIMIT 1",
+        )
+        .bind(user_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        row.map(|row| {
+            let allowed_weekdays: String = row.try_get("allowed_weekdays")?;
+            let constraints = PlanningConstraints {
+                daily_budget_minutes: checked_u32(
+                    row.try_get("daily_budget_minutes")?,
+                    "daily budget",
+                )?,
+                allowed_weekdays: serde_json::from_str(&allowed_weekdays)
+                    .map_err(|_| DbError::Pool("stored weekdays are invalid".into()))?,
+                preferred_session_minutes: checked_u32(
+                    row.try_get("preferred_session_minutes")?,
+                    "preferred session",
+                )?,
+                max_continuous_minutes: checked_u32(
+                    row.try_get("max_continuous_minutes")?,
+                    "maximum continuous session",
+                )?,
+                minimum_break_minutes: checked_u32(
+                    row.try_get("minimum_break_minutes")?,
+                    "minimum break",
+                )?,
+                playback_speed_milli: checked_u16(
+                    row.try_get("playback_speed_milli")?,
+                    "playback speed",
+                )?,
+                horizon_days: checked_u16(row.try_get("horizon_days")?, "horizon")?,
+            };
+            constraints
+                .validate()
+                .map_err(|_| DbError::Pool("stored planning constraints are invalid".into()))?;
+            Ok(ActivePlanSeed {
+                title: row.try_get("title")?,
+                constraints,
+                selections_json: row.try_get("selections_json")?,
+            })
+        })
+        .transpose()
+    }
+
     pub async fn get_active_routine(
         &self,
         user_id: &str,
@@ -231,8 +292,19 @@ impl Repo {
             let item_rows = sqlx::query(
                 "SELECT i.id, i.media_id, COALESCE(m.display_name, 'Unavailable media') AS display_name, \
                         i.chunk_id, i.sequence, i.raw_start_ms, i.raw_end_ms, \
-                        i.effective_duration_ms, i.break_after_ms, i.status \
+                        i.effective_duration_ms, i.break_after_ms, \
+                        CASE action.kind \
+                          WHEN 'complete' THEN 'done' WHEN 'finished' THEN 'done' \
+                          WHEN 'skip' THEN 'skipped' WHEN 'skipped' THEN 'skipped' \
+                          WHEN 'postpone' THEN 'postponed' WHEN 'postponed' THEN 'postponed' \
+                          WHEN 'started' THEN 'in_progress' WHEN 'repeat' THEN 'pending' \
+                          WHEN 'must_watch' THEN 'pending' ELSE i.status END AS status \
                  FROM plan_version_items i LEFT JOIN media_files m ON m.id = i.media_id \
+                 LEFT JOIN study_actions action ON action.id = ( \
+                   SELECT latest.id FROM study_actions latest \
+                   WHERE latest.plan_version_item_id = i.id \
+                   ORDER BY latest.created_at DESC, latest.id DESC LIMIT 1 \
+                 ) \
                  WHERE i.plan_version_day_id = ? ORDER BY i.sequence",
             )
             .bind(&day_id)
@@ -300,6 +372,14 @@ fn nonnegative_u64(value: i64) -> u64 {
 
 fn nonnegative_u32(value: i64) -> u32 {
     u32::try_from(value.max(0)).unwrap_or(u32::MAX)
+}
+
+fn checked_u32(value: i64, field: &str) -> DbResult<u32> {
+    u32::try_from(value).map_err(|_| DbError::Pool(format!("stored {field} is invalid")))
+}
+
+fn checked_u16(value: i64, field: &str) -> DbResult<u16> {
+    u16::try_from(value).map_err(|_| DbError::Pool(format!("stored {field} is invalid")))
 }
 
 #[cfg(test)]

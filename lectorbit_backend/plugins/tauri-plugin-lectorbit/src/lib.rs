@@ -233,7 +233,47 @@ pub struct RoutinePlanDto {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase", tag = "event", content = "data")]
+pub struct PlaybackCapabilityDto {
+    pub available: bool,
+    pub backend: String,
+    pub expected_version: String,
+    pub detected_version: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PlaybackViewDto {
+    pub plan_item_id: String,
+    pub media_id: String,
+    pub display_name: String,
+    pub raw_start_ms: u64,
+    pub raw_end_ms: u64,
+    pub position_ms: u64,
+    pub duration_ms: u64,
+    pub paused: bool,
+    pub speed: f64,
+    pub progress_version: u64,
+    pub item_covered_ms: u64,
+    pub item_duration_ms: u64,
+    pub completed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case", tag = "event", content = "data")]
+pub enum PlaybackEventDto {
+    State(PlaybackViewDto),
+    Closed { plan_item_id: String },
+    Failed { message: String },
+}
+
+pub type PlaybackEventSink = Arc<dyn Fn(PlaybackEventDto) + Send + Sync>;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    tag = "event",
+    content = "data"
+)]
 pub enum ScanProgressDto {
     Started {
         job_id: String,
@@ -311,6 +351,31 @@ pub trait PlannerOps: Send + Sync + 'static {
         &self,
         day_limit: u32,
     ) -> BoxFuture<'_, Result<Option<RoutinePlanDto>, PlannerErrorCode>>;
+    fn replan(
+        &self,
+        horizon_start: String,
+    ) -> BoxFuture<'_, Result<PlanCommitResultDto, PlannerErrorCode>>;
+}
+
+pub trait PlaybackOps: Send + Sync + 'static {
+    fn capability(&self) -> BoxFuture<'_, Result<PlaybackCapabilityDto, PlaybackErrorCode>>;
+    fn open(
+        &self,
+        plan_item_id: String,
+        sink: PlaybackEventSink,
+    ) -> BoxFuture<'_, Result<PlaybackViewDto, PlaybackErrorCode>>;
+    fn play(&self) -> BoxFuture<'_, Result<PlaybackViewDto, PlaybackErrorCode>>;
+    fn pause(&self) -> BoxFuture<'_, Result<PlaybackViewDto, PlaybackErrorCode>>;
+    fn seek(&self, position_ms: u64) -> BoxFuture<'_, Result<PlaybackViewDto, PlaybackErrorCode>>;
+    fn set_speed(&self, speed: f64) -> BoxFuture<'_, Result<PlaybackViewDto, PlaybackErrorCode>>;
+    fn state(&self) -> BoxFuture<'_, Result<PlaybackViewDto, PlaybackErrorCode>>;
+    fn close(&self) -> BoxFuture<'_, Result<(), PlaybackErrorCode>>;
+    fn record_action(
+        &self,
+        plan_item_id: String,
+        kind: String,
+        at_ms: Option<u64>,
+    ) -> BoxFuture<'_, Result<(), PlaybackErrorCode>>;
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -357,6 +422,32 @@ pub enum PlannerErrorKind {
 
 impl PlannerErrorCode {
     pub fn new(kind: PlannerErrorKind, message: impl Into<String>) -> Self {
+        Self {
+            kind,
+            message: message.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlaybackErrorCode {
+    pub kind: PlaybackErrorKind,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PlaybackErrorKind {
+    InvalidInput,
+    ItemUnavailable,
+    NotOpen,
+    PlaybackUnavailable,
+    Database,
+    Internal,
+}
+
+impl PlaybackErrorCode {
+    pub fn new(kind: PlaybackErrorKind, message: impl Into<String>) -> Self {
         Self {
             kind,
             message: message.into(),
@@ -413,6 +504,34 @@ pub struct PlanCommitArgs {
 pub struct RoutineArgs {
     #[serde(default = "default_routine_days")]
     pub day_limit: u32,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ReplanArgs {
+    pub horizon_start: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PlaybackOpenArgs {
+    pub plan_item_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PlaybackSeekArgs {
+    pub position_ms: u64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PlaybackSpeedArgs {
+    pub speed: f64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct StudyActionArgs {
+    pub plan_item_id: String,
+    pub kind: String,
+    #[serde(default)]
+    pub at_ms: Option<u64>,
 }
 
 fn default_media_limit() -> u32 {
@@ -529,6 +648,86 @@ mod commands {
     ) -> Result<Option<RoutinePlanDto>, PlannerErrorCode> {
         ops.routine(args.unwrap_or_default().day_limit).await
     }
+
+    #[tauri::command]
+    pub(crate) async fn plan_replan(
+        ops: State<'_, Arc<dyn PlannerOps>>,
+        args: ReplanArgs,
+    ) -> Result<PlanCommitResultDto, PlannerErrorCode> {
+        ops.replan(args.horizon_start).await
+    }
+
+    #[tauri::command]
+    pub(crate) async fn playback_get_capability(
+        ops: State<'_, Arc<dyn PlaybackOps>>,
+    ) -> Result<PlaybackCapabilityDto, PlaybackErrorCode> {
+        ops.capability().await
+    }
+
+    #[tauri::command]
+    pub(crate) async fn playback_open(
+        ops: State<'_, Arc<dyn PlaybackOps>>,
+        args: PlaybackOpenArgs,
+        on_event: Channel<PlaybackEventDto>,
+    ) -> Result<PlaybackViewDto, PlaybackErrorCode> {
+        let sink: PlaybackEventSink = Arc::new(move |event| {
+            let _ = on_event.send(event);
+        });
+        ops.open(args.plan_item_id, sink).await
+    }
+
+    #[tauri::command]
+    pub(crate) async fn playback_play(
+        ops: State<'_, Arc<dyn PlaybackOps>>,
+    ) -> Result<PlaybackViewDto, PlaybackErrorCode> {
+        ops.play().await
+    }
+
+    #[tauri::command]
+    pub(crate) async fn playback_pause(
+        ops: State<'_, Arc<dyn PlaybackOps>>,
+    ) -> Result<PlaybackViewDto, PlaybackErrorCode> {
+        ops.pause().await
+    }
+
+    #[tauri::command]
+    pub(crate) async fn playback_seek(
+        ops: State<'_, Arc<dyn PlaybackOps>>,
+        args: PlaybackSeekArgs,
+    ) -> Result<PlaybackViewDto, PlaybackErrorCode> {
+        ops.seek(args.position_ms).await
+    }
+
+    #[tauri::command]
+    pub(crate) async fn playback_set_speed(
+        ops: State<'_, Arc<dyn PlaybackOps>>,
+        args: PlaybackSpeedArgs,
+    ) -> Result<PlaybackViewDto, PlaybackErrorCode> {
+        ops.set_speed(args.speed).await
+    }
+
+    #[tauri::command]
+    pub(crate) async fn playback_get_state(
+        ops: State<'_, Arc<dyn PlaybackOps>>,
+    ) -> Result<PlaybackViewDto, PlaybackErrorCode> {
+        ops.state().await
+    }
+
+    #[tauri::command]
+    pub(crate) async fn playback_close(
+        ops: State<'_, Arc<dyn PlaybackOps>>,
+    ) -> Result<(), PlaybackErrorCode> {
+        ops.close().await
+    }
+
+    #[tauri::command]
+    pub(crate) async fn study_record_action(
+        ops: State<'_, Arc<dyn PlaybackOps>>,
+        args: StudyActionArgs,
+    ) -> Result<(), PlaybackErrorCode> {
+        ops.record_action(args.plan_item_id, args.kind, args.at_ms)
+            .await
+    }
 }
 
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
@@ -559,6 +758,16 @@ mod plugin_builder {
                 super::commands::planner_preview,
                 super::commands::plan_commit,
                 super::commands::plan_get_routine,
+                super::commands::plan_replan,
+                super::commands::playback_get_capability,
+                super::commands::playback_open,
+                super::commands::playback_play,
+                super::commands::playback_pause,
+                super::commands::playback_seek,
+                super::commands::playback_set_speed,
+                super::commands::playback_get_state,
+                super::commands::playback_close,
+                super::commands::study_record_action,
             ])
             .build()
     }

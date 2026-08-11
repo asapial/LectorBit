@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-playback-open"
+description = "Enables the playback_open command without any pre-configured scope."
+commands.allow = ["playback_open"]
+
+[[permission]]
+identifier = "deny-playback-open"
+description = "Denies the playback_open command without any pre-configured scope."
+commands.deny = ["playback_open"]

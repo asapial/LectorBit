@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-plan-replan"
+description = "Enables the plan_replan command without any pre-configured scope."
+commands.allow = ["plan_replan"]
+
+[[permission]]
+identifier = "deny-plan-replan"
+description = "Denies the plan_replan command without any pre-configured scope."
+commands.deny = ["plan_replan"]

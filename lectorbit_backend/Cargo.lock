@@ -1833,6 +1833,7 @@ dependencies = [
  "lectorbit_core",
  "lectorbit_db",
  "lectorbit_media",
+ "lectorbit_playback",
  "lectorbit_services",
  "serde",
  "serde_json",
@@ -1906,9 +1907,11 @@ dependencies = [
  "async-trait",
  "lectorbit_core",
  "serde",
+ "serde_json",
  "thiserror 1.0.69",
  "tokio",
  "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -1918,6 +1921,7 @@ dependencies = [
  "chrono",
  "lectorbit_core",
  "lectorbit_db",
+ "lectorbit_playback",
  "serde",
  "serde_json",
  "sqlx",

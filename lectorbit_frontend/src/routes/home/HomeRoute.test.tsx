@@ -25,7 +25,10 @@ describe('HomeRoute', () => {
     getRoutineMock.mockResolvedValue(null);
     renderRoute();
     expect(await screen.findByText('No committed routine yet')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /Build your first plan/ })).toHaveAttribute('href', '/plan');
+    expect(screen.getByRole('link', { name: /Build your first plan/ })).toHaveAttribute(
+      'href',
+      '/plan',
+    );
   });
 
   it('renders the active immutable routine with timestamped blocks', async () => {
@@ -64,5 +67,9 @@ describe('HomeRoute', () => {
     expect(screen.getAllByText('Algorithms').length).toBeGreaterThan(0);
     expect(screen.getAllByText(/00:00:00–00:25:00/).length).toBeGreaterThan(0);
     expect(screen.getByText(/Active immutable version/)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Start focused study/ })).toHaveAttribute(
+      'href',
+      '/player/item',
+    );
   });
 });

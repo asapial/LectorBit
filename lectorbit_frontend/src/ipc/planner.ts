@@ -148,13 +148,7 @@ const RoutinePlanSchema = z.object({
 });
 
 const PlannerErrorSchema = z.object({
-  kind: z.enum([
-    'invalid_input',
-    'media_unavailable',
-    'infeasible',
-    'database',
-    'internal',
-  ]),
+  kind: z.enum(['invalid_input', 'media_unavailable', 'infeasible', 'database', 'internal']),
   message: z.string(),
 });
 
@@ -200,10 +194,7 @@ export async function previewPlan(request: PlanRequest): Promise<PlanPreview> {
   return call('planner_preview', { args: { request: validated } }, PlanPreviewSchema);
 }
 
-export async function commitPlan(
-  title: string,
-  request: PlanRequest,
-): Promise<PlanCommitResult> {
+export async function commitPlan(title: string, request: PlanRequest): Promise<PlanCommitResult> {
   const validatedTitle = PlanTitleSchema.parse(title);
   const validated = PlanRequestSchema.parse(request);
   return call(
@@ -214,11 +205,12 @@ export async function commitPlan(
 }
 
 export async function getRoutine(dayLimit = 14): Promise<RoutinePlan | null> {
-  return call(
-    'plan_get_routine',
-    { args: { day_limit: dayLimit } },
-    RoutinePlanSchema.nullable(),
-  );
+  return call('plan_get_routine', { args: { day_limit: dayLimit } }, RoutinePlanSchema.nullable());
+}
+
+export async function replanActive(horizonStart: string): Promise<PlanCommitResult> {
+  const validatedStart = z.iso.date().parse(horizonStart);
+  return call('plan_replan', { args: { horizon_start: validatedStart } }, PlanCommitResultSchema);
 }
 
 async function call<T>(

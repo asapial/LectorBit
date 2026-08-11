@@ -5,6 +5,7 @@ import {
   getRoutine,
   listPlanningCandidates,
   previewPlan,
+  replanActive,
   type PlanRequest,
 } from './planner';
 
@@ -21,9 +22,7 @@ const request: PlanRequest = {
     playback_speed_milli: 1000,
     horizon_days: 14,
   },
-  selections: [
-    { media_id: 'media', priority: 3, deadline: null, dependencies: [] },
-  ],
+  selections: [{ media_id: 'media', priority: 3, deadline: null, dependencies: [] }],
 };
 
 describe('ipc/planner', () => {
@@ -73,10 +72,7 @@ describe('ipc/planner', () => {
     });
     const preview = await previewPlan(request);
     expect(preview.alternatives[0].patch.kind).toBe('extend_horizon');
-    expect(invoke).toHaveBeenCalledWith(
-      'plugin:lectorbit|planner_preview',
-      { args: { request } },
-    );
+    expect(invoke).toHaveBeenCalledWith('plugin:lectorbit|planner_preview', { args: { request } });
   });
 
   it('commits by intent without sending renderer-authored plan items', async () => {
@@ -86,13 +82,10 @@ describe('ipc/planner', () => {
       created_at: '2026-08-10T00:00:00Z',
     });
     await commitPlan('My plan', request);
-    expect(invoke).toHaveBeenCalledWith(
-      'plugin:lectorbit|plan_commit',
-      { args: { title: 'My plan', request } },
-    );
-    expect(JSON.stringify(vi.mocked(invoke).mock.calls[0]?.[1])).not.toContain(
-      'raw_start_ms',
-    );
+    expect(invoke).toHaveBeenCalledWith('plugin:lectorbit|plan_commit', {
+      args: { title: 'My plan', request },
+    });
+    expect(JSON.stringify(vi.mocked(invoke).mock.calls[0]?.[1])).not.toContain('raw_start_ms');
   });
 
   it('rejects an invalid title before crossing IPC', async () => {
@@ -113,10 +106,22 @@ describe('ipc/planner', () => {
     expect((await getRoutine())?.plan_version_id).toBe('version');
   });
 
+  it('replans from a validated local date without renderer-authored items', async () => {
+    vi.mocked(invoke).mockResolvedValue({
+      plan_id: 'plan',
+      plan_version_id: 'version-2',
+      created_at: '2026-08-12T00:00:00Z',
+    });
+    await expect(replanActive('2026-08-12')).resolves.toMatchObject({
+      plan_version_id: 'version-2',
+    });
+    expect(invoke).toHaveBeenCalledWith('plugin:lectorbit|plan_replan', {
+      args: { horizon_start: '2026-08-12' },
+    });
+  });
+
   it('wraps raw bridge failures without exposing them', async () => {
-    vi.mocked(invoke).mockRejectedValueOnce(
-      new Error('C:\\private\\plan.sqlite'),
-    );
+    vi.mocked(invoke).mockRejectedValueOnce(new Error('C:\\private\\plan.sqlite'));
     let caught: unknown;
     try {
       await listPlanningCandidates();
@@ -124,9 +129,7 @@ describe('ipc/planner', () => {
       caught = error;
     }
     expect((caught as { kind?: string }).kind).toBe('internal');
-    expect((caught as Error).message).toBe(
-      'The planner service is unavailable.',
-    );
+    expect((caught as Error).message).toBe('The planner service is unavailable.');
     expect(String(caught)).not.toContain('plan.sqlite');
   });
 });

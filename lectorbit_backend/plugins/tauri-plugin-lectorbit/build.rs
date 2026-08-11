@@ -11,6 +11,16 @@ const COMMANDS: &[&str] = &[
     "planner_preview",
     "plan_commit",
     "plan_get_routine",
+    "plan_replan",
+    "playback_get_capability",
+    "playback_open",
+    "playback_play",
+    "playback_pause",
+    "playback_seek",
+    "playback_set_speed",
+    "playback_get_state",
+    "playback_close",
+    "study_record_action",
 ];
 
 fn main() {

@@ -3,10 +3,15 @@
 use std::io::stderr;
 use std::sync::Arc;
 
-use lectorbit_db::{ChunksRepo, LibraryRootsRepo, MediaRepo, PlansRepo, RedactingMakeWriter};
-use lectorbit_services::{DiagnosticsService, LibraryService, MediaService, PlannerService};
+use lectorbit_db::{
+    ChunksRepo, LibraryRootsRepo, MediaRepo, PlansRepo, RedactingMakeWriter, StudyRepo,
+};
+use lectorbit_playback::MpvEngine;
+use lectorbit_services::{
+    DiagnosticsService, LibraryService, MediaService, PlannerService, PlaybackService,
+};
 use tauri::Manager;
-use tauri_plugin_lectorbit::{DiagnosticsProvider, LibraryOps, PlannerOps};
+use tauri_plugin_lectorbit::{DiagnosticsProvider, LibraryOps, PlannerOps, PlaybackOps};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::EnvFilter;
@@ -14,9 +19,11 @@ use tracing_subscriber::EnvFilter;
 mod library_adapter;
 mod media_adapter;
 mod planner_adapter;
+mod playback_adapter;
 use library_adapter::LibraryAdapter;
 use media_adapter::ProbeScheduler;
 use planner_adapter::PlannerAdapter;
+use playback_adapter::PlaybackAdapter;
 
 struct DiagnosticsAdapter(DiagnosticsService);
 
@@ -69,6 +76,16 @@ pub fn run() {
             let planner_service = PlannerService::new(
                 ChunksRepo::new(database.pool().clone()),
                 PlansRepo::new(database.pool().clone()),
+                StudyRepo::new(database.pool().clone()),
+            );
+            let mpv_path = resolve_mpv_path(
+                app.path().resource_dir().ok().as_deref(),
+                std::env::var_os("LECTORBIT_MPV_PATH"),
+            );
+            let playback_service = PlaybackService::new(
+                Arc::new(MpvEngine::new(mpv_path)),
+                media_service.clone(),
+                StudyRepo::new(database.pool().clone()),
             );
             let ffprobe_path = resolve_ffprobe_path(
                 app.path().resource_dir().ok().as_deref(),
@@ -92,6 +109,7 @@ pub fn run() {
             app.manage(Arc::new(DiagnosticsAdapter(diagnostics)) as Arc<dyn DiagnosticsProvider>);
             app.manage(library_adapter as Arc<dyn LibraryOps>);
             app.manage(Arc::new(PlannerAdapter::new(planner_service)) as Arc<dyn PlannerOps>);
+            app.manage(Arc::new(PlaybackAdapter::new(playback_service)) as Arc<dyn PlaybackOps>);
 
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.show();
@@ -100,6 +118,25 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running LectorBit");
+}
+
+fn resolve_mpv_path(
+    resource_dir: Option<&std::path::Path>,
+    configured: Option<std::ffi::OsString>,
+) -> std::ffi::OsString {
+    let configured = configured.map(std::path::PathBuf::from);
+    if configured
+        .as_ref()
+        .is_some_and(|path| path.is_absolute() && path.is_file())
+    {
+        return configured.unwrap().into_os_string();
+    }
+    let filename = if cfg!(windows) { "mpv.exe" } else { "mpv" };
+    resource_dir
+        .map(|directory| directory.join("sidecars").join(filename))
+        .filter(|path| path.is_absolute() && path.is_file())
+        .map(std::path::PathBuf::into_os_string)
+        .unwrap_or_else(|| filename.into())
 }
 
 fn resolve_ffprobe_path(
@@ -130,5 +167,13 @@ mod tests {
     #[test]
     fn relative_sidecar_configuration_is_rejected() {
         assert_eq!(resolve_ffprobe_path(None, Some("ffprobe".into())), None);
+    }
+
+    #[test]
+    fn relative_mpv_configuration_falls_back_to_the_known_binary_name() {
+        assert_eq!(
+            resolve_mpv_path(None, Some("other-player".into())),
+            std::ffi::OsString::from(if cfg!(windows) { "mpv.exe" } else { "mpv" })
+        );
     }
 }

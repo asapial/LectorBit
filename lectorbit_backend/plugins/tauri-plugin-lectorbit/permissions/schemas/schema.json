@@ -415,6 +415,18 @@
           "markdownDescription": "Denies the plan_get_routine command without any pre-configured scope."
         },
         {
+          "description": "Enables the plan_replan command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-plan-replan",
+          "markdownDescription": "Enables the plan_replan command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the plan_replan command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-plan-replan",
+          "markdownDescription": "Denies the plan_replan command without any pre-configured scope."
+        },
+        {
           "description": "Enables the planner_list_candidates command without any pre-configured scope.",
           "type": "string",
           "const": "allow-planner-list-candidates",
@@ -439,10 +451,118 @@
           "markdownDescription": "Denies the planner_preview command without any pre-configured scope."
         },
         {
-          "description": "Default LectorBit permissions for the main window\n#### This default permission set includes:\n\n- `allow-app-get-version`\n- `allow-app-get-diagnostics`\n- `allow-library-list-roots`\n- `allow-library-pick-and-register-root`\n- `allow-library-revoke-root`\n- `allow-library-enqueue-scan`\n- `allow-library-list-scan-jobs`\n- `allow-library-list-media`\n- `allow-planner-list-candidates`\n- `allow-planner-preview`\n- `allow-plan-commit`\n- `allow-plan-get-routine`",
+          "description": "Enables the playback_close command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-playback-close",
+          "markdownDescription": "Enables the playback_close command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the playback_close command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-playback-close",
+          "markdownDescription": "Denies the playback_close command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the playback_get_capability command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-playback-get-capability",
+          "markdownDescription": "Enables the playback_get_capability command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the playback_get_capability command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-playback-get-capability",
+          "markdownDescription": "Denies the playback_get_capability command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the playback_get_state command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-playback-get-state",
+          "markdownDescription": "Enables the playback_get_state command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the playback_get_state command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-playback-get-state",
+          "markdownDescription": "Denies the playback_get_state command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the playback_open command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-playback-open",
+          "markdownDescription": "Enables the playback_open command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the playback_open command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-playback-open",
+          "markdownDescription": "Denies the playback_open command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the playback_pause command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-playback-pause",
+          "markdownDescription": "Enables the playback_pause command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the playback_pause command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-playback-pause",
+          "markdownDescription": "Denies the playback_pause command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the playback_play command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-playback-play",
+          "markdownDescription": "Enables the playback_play command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the playback_play command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-playback-play",
+          "markdownDescription": "Denies the playback_play command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the playback_seek command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-playback-seek",
+          "markdownDescription": "Enables the playback_seek command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the playback_seek command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-playback-seek",
+          "markdownDescription": "Denies the playback_seek command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the playback_set_speed command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-playback-set-speed",
+          "markdownDescription": "Enables the playback_set_speed command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the playback_set_speed command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-playback-set-speed",
+          "markdownDescription": "Denies the playback_set_speed command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the study_record_action command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-study-record-action",
+          "markdownDescription": "Enables the study_record_action command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the study_record_action command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-study-record-action",
+          "markdownDescription": "Denies the study_record_action command without any pre-configured scope."
+        },
+        {
+          "description": "Default LectorBit permissions for the main window\n#### This default permission set includes:\n\n- `allow-app-get-version`\n- `allow-app-get-diagnostics`\n- `allow-library-list-roots`\n- `allow-library-pick-and-register-root`\n- `allow-library-revoke-root`\n- `allow-library-enqueue-scan`\n- `allow-library-list-scan-jobs`\n- `allow-library-list-media`\n- `allow-planner-list-candidates`\n- `allow-planner-preview`\n- `allow-plan-commit`\n- `allow-plan-get-routine`\n- `allow-plan-replan`\n- `allow-playback-get-capability`\n- `allow-playback-open`\n- `allow-playback-play`\n- `allow-playback-pause`\n- `allow-playback-seek`\n- `allow-playback-set-speed`\n- `allow-playback-get-state`\n- `allow-playback-close`\n- `allow-study-record-action`",
           "type": "string",
           "const": "default",
-          "markdownDescription": "Default LectorBit permissions for the main window\n#### This default permission set includes:\n\n- `allow-app-get-version`\n- `allow-app-get-diagnostics`\n- `allow-library-list-roots`\n- `allow-library-pick-and-register-root`\n- `allow-library-revoke-root`\n- `allow-library-enqueue-scan`\n- `allow-library-list-scan-jobs`\n- `allow-library-list-media`\n- `allow-planner-list-candidates`\n- `allow-planner-preview`\n- `allow-plan-commit`\n- `allow-plan-get-routine`"
+          "markdownDescription": "Default LectorBit permissions for the main window\n#### This default permission set includes:\n\n- `allow-app-get-version`\n- `allow-app-get-diagnostics`\n- `allow-library-list-roots`\n- `allow-library-pick-and-register-root`\n- `allow-library-revoke-root`\n- `allow-library-enqueue-scan`\n- `allow-library-list-scan-jobs`\n- `allow-library-list-media`\n- `allow-planner-list-candidates`\n- `allow-planner-preview`\n- `allow-plan-commit`\n- `allow-plan-get-routine`\n- `allow-plan-replan`\n- `allow-playback-get-capability`\n- `allow-playback-open`\n- `allow-playback-play`\n- `allow-playback-pause`\n- `allow-playback-seek`\n- `allow-playback-set-speed`\n- `allow-playback-get-state`\n- `allow-playback-close`\n- `allow-study-record-action`"
         }
       ]
     }

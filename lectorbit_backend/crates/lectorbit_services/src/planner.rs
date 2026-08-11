@@ -3,7 +3,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::{Duration, NaiveDate};
-use lectorbit_db::{ChunksRepo, CommittedPlan, DbError, PlansRepo, RoutinePlan, SchedulableMedia};
+use lectorbit_db::{
+    ChunksRepo, CommittedPlan, DbError, PlansRepo, ReplanMediaState, RoutinePlan, SchedulableMedia,
+    StoredChunk, StudyRepo,
+};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -80,6 +83,8 @@ pub enum PlannerServiceError {
     Infeasible,
     #[error("the plan contains no remaining study work")]
     EmptyPlan,
+    #[error("there is no active plan to replan")]
+    NoActivePlan,
     #[error("invalid plan input: {0}")]
     InvalidInput(String),
     #[error("planner database operation failed")]
@@ -97,11 +102,16 @@ impl From<DbError> for PlannerServiceError {
 pub struct PlannerService {
     chunks: ChunksRepo,
     plans: PlansRepo,
+    study: StudyRepo,
 }
 
 impl PlannerService {
-    pub fn new(chunks: ChunksRepo, plans: PlansRepo) -> Self {
-        Self { chunks, plans }
+    pub fn new(chunks: ChunksRepo, plans: PlansRepo, study: StudyRepo) -> Self {
+        Self {
+            chunks,
+            plans,
+            study,
+        }
     }
 
     pub async fn list_candidates(
@@ -172,11 +182,62 @@ impl PlannerService {
             .get_active_routine(LOCAL_USER_ID, day_limit)
             .await?)
     }
+
+    pub async fn replan(
+        &self,
+        horizon_start: NaiveDate,
+    ) -> Result<CommittedPlan, PlannerServiceError> {
+        let seed = self
+            .plans
+            .get_active_seed(LOCAL_USER_ID)
+            .await?
+            .ok_or(PlannerServiceError::NoActivePlan)?;
+        let selections: Vec<PlanningSelection> = serde_json::from_str(&seed.selections_json)
+            .map_err(|_| PlannerServiceError::InvalidInput("stored selections".into()))?;
+        let request = PlanRequest {
+            horizon_start,
+            constraints: seed.constraints,
+            selections,
+        };
+        let available = self.chunks.list_schedulable().await?;
+        let states = self
+            .study
+            .replan_media_states()
+            .await?
+            .into_iter()
+            .map(|state| (state.media_id.clone(), state))
+            .collect::<BTreeMap<_, _>>();
+        let preview = build_preview_with_states(&request, available, &states)?;
+        if !preview.draft.is_feasible() {
+            return Err(PlannerServiceError::Infeasible);
+        }
+        if preview.draft.items.is_empty() {
+            return Err(PlannerServiceError::EmptyPlan);
+        }
+        Ok(self
+            .plans
+            .commit(
+                LOCAL_USER_ID,
+                &seed.title,
+                &request.constraints,
+                &seed.selections_json,
+                &preview.draft,
+            )
+            .await?)
+    }
 }
 
 fn build_preview(
     request: &PlanRequest,
     available: Vec<SchedulableMedia>,
+) -> Result<PlanPreview, PlannerServiceError> {
+    build_preview_with_states(request, available, &BTreeMap::new())
+}
+
+fn build_preview_with_states(
+    request: &PlanRequest,
+    available: Vec<SchedulableMedia>,
+    states: &BTreeMap<String, ReplanMediaState>,
 ) -> Result<PlanPreview, PlannerServiceError> {
     if request.selections.is_empty() {
         return Err(PlannerServiceError::EmptySelection);
@@ -203,22 +264,13 @@ fn build_preview(
             .remove(&selection.media_id)
             .ok_or_else(|| PlannerServiceError::MediaUnavailable(selection.media_id.clone()))?;
         labels.insert(selection.media_id.clone(), entry.media.display_name);
+        let chunks = adjusted_chunks(entry.chunks, states.get(&selection.media_id));
         media_work.push(MediaWork {
             media_id: selection.media_id.clone(),
             priority: selection.priority,
             deadline: selection.deadline,
             dependencies: selection.dependencies.clone(),
-            chunks: entry
-                .chunks
-                .into_iter()
-                .map(|chunk| PlanningChunk {
-                    id: chunk.id,
-                    ordinal: chunk.ordinal,
-                    start_ms: chunk.start_ms,
-                    end_ms: chunk.end_ms,
-                    remaining_start_ms: chunk.start_ms,
-                })
-                .collect(),
+            chunks,
         });
     }
     let draft = build_plan(request.horizon_start, &request.constraints, &media_work)
@@ -229,6 +281,71 @@ fn build_preview(
         labels,
         alternatives,
     })
+}
+
+fn adjusted_chunks(
+    chunks: Vec<StoredChunk>,
+    state: Option<&ReplanMediaState>,
+) -> Vec<PlanningChunk> {
+    let Some(state) = state else {
+        return chunks
+            .into_iter()
+            .map(|chunk| PlanningChunk {
+                id: chunk.id,
+                ordinal: chunk.ordinal,
+                start_ms: chunk.start_ms,
+                end_ms: chunk.end_ms,
+                remaining_start_ms: chunk.start_ms,
+            })
+            .collect();
+    };
+
+    let mut result = Vec::new();
+    for chunk in chunks {
+        let mut boundaries = vec![chunk.start_ms, chunk.end_ms];
+        for (start, end) in state
+            .completed_ranges
+            .iter()
+            .chain(state.forced_ranges.iter())
+        {
+            if *end > chunk.start_ms && *start < chunk.end_ms {
+                boundaries.push((*start).max(chunk.start_ms));
+                boundaries.push((*end).min(chunk.end_ms));
+            }
+        }
+        boundaries.extend(
+            state
+                .split_points
+                .iter()
+                .copied()
+                .filter(|point| *point > chunk.start_ms && *point < chunk.end_ms),
+        );
+        boundaries.sort_unstable();
+        boundaries.dedup();
+        for pair in boundaries.windows(2) {
+            let start = pair[0];
+            let end = pair[1];
+            let completed = range_contains(&state.completed_ranges, start, end);
+            let forced = range_contains(&state.forced_ranges, start, end);
+            if start < end && (!completed || forced) {
+                let ordinal = u32::try_from(result.len()).unwrap_or(u32::MAX);
+                result.push(PlanningChunk {
+                    id: format!("{}:replan:{start}:{end}", chunk.id),
+                    ordinal,
+                    start_ms: start,
+                    end_ms: end,
+                    remaining_start_ms: start,
+                });
+            }
+        }
+    }
+    result
+}
+
+fn range_contains(ranges: &[(u64, u64)], start: u64, end: u64) -> bool {
+    ranges
+        .iter()
+        .any(|(range_start, range_end)| *range_start <= start && *range_end >= end)
 }
 
 fn alternatives_for(request: &PlanRequest, draft: &PlanDraft) -> Vec<PlanAlternative> {
@@ -395,5 +512,29 @@ mod tests {
             alternative.patch,
             AlternativePatch::ExtendHorizon { .. }
         )));
+    }
+
+    #[test]
+    fn replan_subtracts_coverage_but_preserves_forced_and_split_ranges() {
+        let chunks = adjusted_chunks(
+            available().remove(0).chunks,
+            Some(&ReplanMediaState {
+                media_id: "media".into(),
+                completed_ranges: vec![(0, 50 * 60_000)],
+                forced_ranges: vec![(10 * 60_000, 20 * 60_000)],
+                split_points: vec![15 * 60_000],
+            }),
+        );
+        assert_eq!(
+            chunks
+                .iter()
+                .map(|chunk| (chunk.start_ms, chunk.end_ms))
+                .collect::<Vec<_>>(),
+            vec![
+                (10 * 60_000, 15 * 60_000),
+                (15 * 60_000, 20 * 60_000),
+                (50 * 60_000, 60 * 60_000),
+            ]
+        );
     }
 }

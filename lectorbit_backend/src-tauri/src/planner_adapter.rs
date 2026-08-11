@@ -132,6 +132,24 @@ impl PlannerOps for PlannerAdapter {
                 .map_err(map_error)
         })
     }
+
+    fn replan(
+        &self,
+        horizon_start: String,
+    ) -> BoxFuture<'_, Result<PlanCommitResultDto, PlannerErrorCode>> {
+        Box::pin(async move {
+            let horizon_start = parse_date(&horizon_start)?;
+            self.service
+                .replan(horizon_start)
+                .await
+                .map(|commit| PlanCommitResultDto {
+                    plan_id: commit.plan_id,
+                    plan_version_id: commit.plan_version_id,
+                    created_at: commit.created_at,
+                })
+                .map_err(map_error)
+        })
+    }
 }
 
 fn parse_request(dto: PlanRequestDto) -> Result<PlanRequest, PlannerErrorCode> {
@@ -287,6 +305,10 @@ fn map_error(error: PlannerServiceError) -> PlannerErrorCode {
         PlannerServiceError::EmptyPlan => (
             PlannerErrorKind::InvalidInput,
             "The selected media has no remaining study work.",
+        ),
+        PlannerServiceError::NoActivePlan => (
+            PlannerErrorKind::InvalidInput,
+            "Commit a plan before replanning.",
         ),
         PlannerServiceError::InvalidInput(_) => (
             PlannerErrorKind::InvalidInput,

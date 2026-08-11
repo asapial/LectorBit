@@ -8,6 +8,7 @@ license.workspace = true
 [dependencies]
 lectorbit_core = { workspace = true }
 lectorbit_db = { workspace = true }
+lectorbit_playback = { workspace = true }
 sqlx = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

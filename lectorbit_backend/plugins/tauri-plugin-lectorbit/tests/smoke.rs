@@ -55,6 +55,13 @@ impl PlannerOps for FakePlanner {
     ) -> BoxFuture<'_, Result<Option<RoutinePlanDto>, PlannerErrorCode>> {
         Box::pin(async { Ok(None) })
     }
+
+    fn replan(
+        &self,
+        _horizon_start: String,
+    ) -> BoxFuture<'_, Result<PlanCommitResultDto, PlannerErrorCode>> {
+        unreachable!("not used by this boundary smoke test")
+    }
 }
 
 #[tokio::test(flavor = "current_thread")]

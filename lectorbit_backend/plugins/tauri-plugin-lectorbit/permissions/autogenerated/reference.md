@@ -16,6 +16,16 @@ Default LectorBit permissions for the main window
 - `allow-planner-preview`
 - `allow-plan-commit`
 - `allow-plan-get-routine`
+- `allow-plan-replan`
+- `allow-playback-get-capability`
+- `allow-playback-open`
+- `allow-playback-play`
+- `allow-playback-pause`
+- `allow-playback-seek`
+- `allow-playback-set-speed`
+- `allow-playback-get-state`
+- `allow-playback-close`
+- `allow-study-record-action`
 
 ## Permission Table
 
@@ -289,6 +299,32 @@ Denies the plan_get_routine command without any pre-configured scope.
 <tr>
 <td>
 
+`lectorbit:allow-plan-replan`
+
+</td>
+<td>
+
+Enables the plan_replan command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:deny-plan-replan`
+
+</td>
+<td>
+
+Denies the plan_replan command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `lectorbit:allow-planner-list-candidates`
 
 </td>
@@ -334,6 +370,240 @@ Enables the planner_preview command without any pre-configured scope.
 <td>
 
 Denies the planner_preview command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:allow-playback-close`
+
+</td>
+<td>
+
+Enables the playback_close command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:deny-playback-close`
+
+</td>
+<td>
+
+Denies the playback_close command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:allow-playback-get-capability`
+
+</td>
+<td>
+
+Enables the playback_get_capability command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:deny-playback-get-capability`
+
+</td>
+<td>
+
+Denies the playback_get_capability command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:allow-playback-get-state`
+
+</td>
+<td>
+
+Enables the playback_get_state command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:deny-playback-get-state`
+
+</td>
+<td>
+
+Denies the playback_get_state command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:allow-playback-open`
+
+</td>
+<td>
+
+Enables the playback_open command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:deny-playback-open`
+
+</td>
+<td>
+
+Denies the playback_open command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:allow-playback-pause`
+
+</td>
+<td>
+
+Enables the playback_pause command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:deny-playback-pause`
+
+</td>
+<td>
+
+Denies the playback_pause command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:allow-playback-play`
+
+</td>
+<td>
+
+Enables the playback_play command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:deny-playback-play`
+
+</td>
+<td>
+
+Denies the playback_play command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:allow-playback-seek`
+
+</td>
+<td>
+
+Enables the playback_seek command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:deny-playback-seek`
+
+</td>
+<td>
+
+Denies the playback_seek command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:allow-playback-set-speed`
+
+</td>
+<td>
+
+Enables the playback_set_speed command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:deny-playback-set-speed`
+
+</td>
+<td>
+
+Denies the playback_set_speed command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:allow-study-record-action`
+
+</td>
+<td>
+
+Enables the study_record_action command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:deny-study-record-action`
+
+</td>
+<td>
+
+Denies the study_record_action command without any pre-configured scope.
 
 </td>
 </tr>
