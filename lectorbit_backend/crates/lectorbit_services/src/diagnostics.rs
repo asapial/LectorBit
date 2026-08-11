@@ -27,9 +27,9 @@ pub struct DiagnosticsReport {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppInfo {
-    pub version: &'static str,
-    pub build: &'static str,
-    pub target_triple: &'static str,
+    pub version: String,
+    pub build: String,
+    pub target_triple: String,
     pub elapsed_since_launch: Option<chrono::Duration>,
 }
 
@@ -101,12 +101,7 @@ impl DiagnosticsService {
 
     /// Override the AI model presence flags. Used by Feature 5 once the
     /// model registry exists; safe to call multiple times.
-    pub fn with_ai_presence(
-        mut self,
-        whisper: bool,
-        ocr: bool,
-        embeddings: bool,
-    ) -> Self {
+    pub fn with_ai_presence(mut self, whisper: bool, ocr: bool, embeddings: bool) -> Self {
         self.whisper_model_present = whisper;
         self.ocr_model_present = ocr;
         self.embeddings_model_present = embeddings;
@@ -122,8 +117,8 @@ impl DiagnosticsService {
         let generated_at = Utc::now();
 
         let app = AppInfo {
-            version: self.app_version,
-            build: self.app_build,
+            version: self.app_version.to_string(),
+            build: self.app_build.to_string(),
             target_triple: current_target_triple(),
             elapsed_since_launch: Some(generated_at.signed_duration_since(self.started_at)),
         };
@@ -146,24 +141,22 @@ impl DiagnosticsService {
     async fn collect_database(&self) -> DatabaseInfo {
         // Schema version lives in `schema_meta` (key = "version"). Default to 0
         // if the row is missing for any reason.
-        let schema_version: u32 = sqlx::query_scalar(
-            "SELECT value FROM schema_meta WHERE key = 'version'",
-        )
-        .fetch_optional(self.db.pool())
-        .await
-        .ok()
-        .flatten()
-        .and_then(|s: String| s.parse().ok())
-        .unwrap_or(0);
+        let schema_version: u32 =
+            sqlx::query_scalar("SELECT value FROM schema_meta WHERE key = 'version'")
+                .fetch_optional(self.db.pool())
+                .await
+                .ok()
+                .flatten()
+                .and_then(|s: String| s.parse().ok())
+                .unwrap_or(0);
 
-        let migrations_applied: u32 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM _sqlx_migrations WHERE success = 1",
-        )
-        .fetch_one(self.db.pool())
-        .await
-        .ok()
-        .and_then(|v: i64| u32::try_from(v).ok())
-        .unwrap_or(0);
+        let migrations_applied: u32 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM _sqlx_migrations WHERE success = 1")
+                .fetch_one(self.db.pool())
+                .await
+                .ok()
+                .and_then(|v: i64| u32::try_from(v).ok())
+                .unwrap_or(0);
 
         let sqlite_version: String = sqlx::query_scalar("SELECT sqlite_version()")
             .fetch_one(self.db.pool())
@@ -187,10 +180,7 @@ impl DiagnosticsService {
             .unwrap_or(0);
         let foreign_keys = foreign_keys != 0;
 
-        let path_redacted = self
-            .db
-            .path()
-            .map(|p| redact_path_for_display(p));
+        let path_redacted = self.db.path().map(|p| redact_path_for_display(p));
 
         let size_bytes = self.db.path().and_then(|p| fs_size(p));
 
@@ -210,12 +200,11 @@ impl DiagnosticsService {
             .fetch_one(self.db.pool())
             .await
             .unwrap_or(0);
-        let active_root_count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM library_roots WHERE revoked_at IS NULL",
-        )
-        .fetch_one(self.db.pool())
-        .await
-        .unwrap_or(0);
+        let active_root_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM library_roots WHERE revoked_at IS NULL")
+                .fetch_one(self.db.pool())
+                .await
+                .unwrap_or(0);
         let media_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM media_files")
             .fetch_one(self.db.pool())
             .await
@@ -372,7 +361,7 @@ mod collect_tests {
 
         let report = svc.collect().await;
         let elapsed = report.app.elapsed_since_launch.expect("elapsed");
-        assert!(elapsed.secs >= 7_200);
+        assert!(elapsed.num_seconds() >= 7_200);
     }
 
     #[tokio::test]
