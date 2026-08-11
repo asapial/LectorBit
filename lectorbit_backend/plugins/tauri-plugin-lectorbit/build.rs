@@ -21,6 +21,13 @@ const COMMANDS: &[&str] = &[
     "playback_get_state",
     "playback_close",
     "study_record_action",
+    "models_list",
+    "models_install",
+    "models_remove",
+    "analysis_start_transcription",
+    "analysis_get_transcript_state",
+    "analysis_list_jobs",
+    "search_query",
 ];
 
 fn main() {

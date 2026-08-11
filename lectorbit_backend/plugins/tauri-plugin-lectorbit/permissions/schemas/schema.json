@@ -295,6 +295,42 @@
       "type": "string",
       "oneOf": [
         {
+          "description": "Enables the analysis_get_transcript_state command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-analysis-get-transcript-state",
+          "markdownDescription": "Enables the analysis_get_transcript_state command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the analysis_get_transcript_state command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-analysis-get-transcript-state",
+          "markdownDescription": "Denies the analysis_get_transcript_state command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the analysis_list_jobs command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-analysis-list-jobs",
+          "markdownDescription": "Enables the analysis_list_jobs command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the analysis_list_jobs command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-analysis-list-jobs",
+          "markdownDescription": "Denies the analysis_list_jobs command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the analysis_start_transcription command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-analysis-start-transcription",
+          "markdownDescription": "Enables the analysis_start_transcription command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the analysis_start_transcription command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-analysis-start-transcription",
+          "markdownDescription": "Denies the analysis_start_transcription command without any pre-configured scope."
+        },
+        {
           "description": "Enables the app_get_diagnostics command without any pre-configured scope.",
           "type": "string",
           "const": "allow-app-get-diagnostics",
@@ -389,6 +425,42 @@
           "type": "string",
           "const": "deny-library-revoke-root",
           "markdownDescription": "Denies the library_revoke_root command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the models_install command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-models-install",
+          "markdownDescription": "Enables the models_install command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the models_install command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-models-install",
+          "markdownDescription": "Denies the models_install command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the models_list command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-models-list",
+          "markdownDescription": "Enables the models_list command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the models_list command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-models-list",
+          "markdownDescription": "Denies the models_list command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the models_remove command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-models-remove",
+          "markdownDescription": "Enables the models_remove command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the models_remove command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-models-remove",
+          "markdownDescription": "Denies the models_remove command without any pre-configured scope."
         },
         {
           "description": "Enables the plan_commit command without any pre-configured scope.",
@@ -547,6 +619,18 @@
           "markdownDescription": "Denies the playback_set_speed command without any pre-configured scope."
         },
         {
+          "description": "Enables the search_query command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-search-query",
+          "markdownDescription": "Enables the search_query command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the search_query command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-search-query",
+          "markdownDescription": "Denies the search_query command without any pre-configured scope."
+        },
+        {
           "description": "Enables the study_record_action command without any pre-configured scope.",
           "type": "string",
           "const": "allow-study-record-action",
@@ -559,10 +643,10 @@
           "markdownDescription": "Denies the study_record_action command without any pre-configured scope."
         },
         {
-          "description": "Default LectorBit permissions for the main window\n#### This default permission set includes:\n\n- `allow-app-get-version`\n- `allow-app-get-diagnostics`\n- `allow-library-list-roots`\n- `allow-library-pick-and-register-root`\n- `allow-library-revoke-root`\n- `allow-library-enqueue-scan`\n- `allow-library-list-scan-jobs`\n- `allow-library-list-media`\n- `allow-planner-list-candidates`\n- `allow-planner-preview`\n- `allow-plan-commit`\n- `allow-plan-get-routine`\n- `allow-plan-replan`\n- `allow-playback-get-capability`\n- `allow-playback-open`\n- `allow-playback-play`\n- `allow-playback-pause`\n- `allow-playback-seek`\n- `allow-playback-set-speed`\n- `allow-playback-get-state`\n- `allow-playback-close`\n- `allow-study-record-action`",
+          "description": "Default LectorBit permissions for the main window\n#### This default permission set includes:\n\n- `allow-app-get-version`\n- `allow-app-get-diagnostics`\n- `allow-library-list-roots`\n- `allow-library-pick-and-register-root`\n- `allow-library-revoke-root`\n- `allow-library-enqueue-scan`\n- `allow-library-list-scan-jobs`\n- `allow-library-list-media`\n- `allow-planner-list-candidates`\n- `allow-planner-preview`\n- `allow-plan-commit`\n- `allow-plan-get-routine`\n- `allow-plan-replan`\n- `allow-playback-get-capability`\n- `allow-playback-open`\n- `allow-playback-play`\n- `allow-playback-pause`\n- `allow-playback-seek`\n- `allow-playback-set-speed`\n- `allow-playback-get-state`\n- `allow-playback-close`\n- `allow-study-record-action`\n- `allow-models-list`\n- `allow-models-install`\n- `allow-models-remove`\n- `allow-analysis-start-transcription`\n- `allow-analysis-get-transcript-state`\n- `allow-analysis-list-jobs`\n- `allow-search-query`",
           "type": "string",
           "const": "default",
-          "markdownDescription": "Default LectorBit permissions for the main window\n#### This default permission set includes:\n\n- `allow-app-get-version`\n- `allow-app-get-diagnostics`\n- `allow-library-list-roots`\n- `allow-library-pick-and-register-root`\n- `allow-library-revoke-root`\n- `allow-library-enqueue-scan`\n- `allow-library-list-scan-jobs`\n- `allow-library-list-media`\n- `allow-planner-list-candidates`\n- `allow-planner-preview`\n- `allow-plan-commit`\n- `allow-plan-get-routine`\n- `allow-plan-replan`\n- `allow-playback-get-capability`\n- `allow-playback-open`\n- `allow-playback-play`\n- `allow-playback-pause`\n- `allow-playback-seek`\n- `allow-playback-set-speed`\n- `allow-playback-get-state`\n- `allow-playback-close`\n- `allow-study-record-action`"
+          "markdownDescription": "Default LectorBit permissions for the main window\n#### This default permission set includes:\n\n- `allow-app-get-version`\n- `allow-app-get-diagnostics`\n- `allow-library-list-roots`\n- `allow-library-pick-and-register-root`\n- `allow-library-revoke-root`\n- `allow-library-enqueue-scan`\n- `allow-library-list-scan-jobs`\n- `allow-library-list-media`\n- `allow-planner-list-candidates`\n- `allow-planner-preview`\n- `allow-plan-commit`\n- `allow-plan-get-routine`\n- `allow-plan-replan`\n- `allow-playback-get-capability`\n- `allow-playback-open`\n- `allow-playback-play`\n- `allow-playback-pause`\n- `allow-playback-seek`\n- `allow-playback-set-speed`\n- `allow-playback-get-state`\n- `allow-playback-close`\n- `allow-study-record-action`\n- `allow-models-list`\n- `allow-models-install`\n- `allow-models-remove`\n- `allow-analysis-start-transcription`\n- `allow-analysis-get-transcript-state`\n- `allow-analysis-list-jobs`\n- `allow-search-query`"
         }
       ]
     }

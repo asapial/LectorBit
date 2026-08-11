@@ -378,6 +378,123 @@ pub trait PlaybackOps: Send + Sync + 'static {
     ) -> BoxFuture<'_, Result<(), PlaybackErrorCode>>;
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ModelDto {
+    pub id: String,
+    pub version: String,
+    pub provider: String,
+    pub expected_size_bytes: u64,
+    pub architecture: String,
+    pub analyzer_compatibility: String,
+    pub license: String,
+    pub state: String,
+    pub bytes_downloaded: u64,
+    pub verified_at: Option<String>,
+    pub last_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AnalysisJobDto {
+    pub id: String,
+    pub kind: String,
+    pub status: String,
+    pub attempt: u32,
+    pub last_error: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TranscriptStateDto {
+    pub media_id: String,
+    pub status: String,
+    pub segment_count: u64,
+    pub updated_at: Option<String>,
+    pub job: Option<AnalysisJobDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    tag = "event",
+    content = "data"
+)]
+pub enum AnalysisProgressDto {
+    Queued {
+        job_id: String,
+    },
+    Downloading {
+        job_id: String,
+        downloaded_bytes: u64,
+        total_bytes: u64,
+    },
+    Extracting {
+        job_id: String,
+    },
+    Transcribing {
+        job_id: String,
+    },
+    Indexing {
+        job_id: String,
+        segments: u64,
+    },
+    Completed {
+        job_id: String,
+    },
+    Failed {
+        job_id: String,
+        message: String,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SearchHitDto {
+    pub media_id: String,
+    pub display_name: String,
+    pub plan_item_id: Option<String>,
+    pub source: String,
+    pub start_ms: Option<u64>,
+    pub end_ms: Option<u64>,
+    /// Safe plain text with matched terms wrapped in `<mark>` tags only.
+    pub snippet: String,
+    pub score: u32,
+}
+
+pub type AnalysisEventSink = Arc<dyn Fn(AnalysisProgressDto) + Send + Sync>;
+
+pub trait AnalysisOps: Send + Sync + 'static {
+    fn list_models(&self) -> BoxFuture<'_, Result<Vec<ModelDto>, AnalysisErrorCode>>;
+    fn install_model(
+        &self,
+        model_id: String,
+        sink: AnalysisEventSink,
+    ) -> BoxFuture<'_, Result<AnalysisJobDto, AnalysisErrorCode>>;
+    fn remove_model(&self, model_id: String) -> BoxFuture<'_, Result<(), AnalysisErrorCode>>;
+    fn start_transcription(
+        &self,
+        media_id: String,
+        model_id: String,
+        sink: AnalysisEventSink,
+    ) -> BoxFuture<'_, Result<AnalysisJobDto, AnalysisErrorCode>>;
+    fn transcript_state(
+        &self,
+        media_id: String,
+    ) -> BoxFuture<'_, Result<TranscriptStateDto, AnalysisErrorCode>>;
+    fn list_jobs(
+        &self,
+        kind: String,
+    ) -> BoxFuture<'_, Result<Vec<AnalysisJobDto>, AnalysisErrorCode>>;
+}
+
+pub trait SearchOps: Send + Sync + 'static {
+    fn search(
+        &self,
+        text: String,
+        limit: u32,
+    ) -> BoxFuture<'_, Result<Vec<SearchHitDto>, SearchErrorCode>>;
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LibraryErrorCode {
     pub kind: LibraryErrorKind,
@@ -448,6 +565,56 @@ pub enum PlaybackErrorKind {
 
 impl PlaybackErrorCode {
     pub fn new(kind: PlaybackErrorKind, message: impl Into<String>) -> Self {
+        Self {
+            kind,
+            message: message.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AnalysisErrorCode {
+    pub kind: AnalysisErrorKind,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AnalysisErrorKind {
+    InvalidInput,
+    ModelNotFound,
+    ModelNotReady,
+    MediaUnavailable,
+    SidecarUnavailable,
+    Database,
+    Internal,
+}
+
+impl AnalysisErrorCode {
+    pub fn new(kind: AnalysisErrorKind, message: impl Into<String>) -> Self {
+        Self {
+            kind,
+            message: message.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SearchErrorCode {
+    pub kind: SearchErrorKind,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SearchErrorKind {
+    InvalidInput,
+    Database,
+    Internal,
+}
+
+impl SearchErrorCode {
+    pub fn new(kind: SearchErrorKind, message: impl Into<String>) -> Self {
         Self {
             kind,
             message: message.into(),
@@ -534,12 +701,44 @@ pub struct StudyActionArgs {
     pub at_ms: Option<u64>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct ModelArgs {
+    pub model_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TranscriptionArgs {
+    pub media_id: String,
+    pub model_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TranscriptStateArgs {
+    pub media_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AnalysisJobsArgs {
+    pub kind: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SearchArgs {
+    pub text: String,
+    #[serde(default = "default_search_limit")]
+    pub limit: u32,
+}
+
 fn default_media_limit() -> u32 {
     50
 }
 
 fn default_routine_days() -> u32 {
     14
+}
+
+fn default_search_limit() -> u32 {
+    30
 }
 
 mod commands {
@@ -728,6 +927,70 @@ mod commands {
         ops.record_action(args.plan_item_id, args.kind, args.at_ms)
             .await
     }
+
+    #[tauri::command]
+    pub(crate) async fn models_list(
+        ops: State<'_, Arc<dyn AnalysisOps>>,
+    ) -> Result<Vec<ModelDto>, AnalysisErrorCode> {
+        ops.list_models().await
+    }
+
+    #[tauri::command]
+    pub(crate) async fn models_install(
+        ops: State<'_, Arc<dyn AnalysisOps>>,
+        args: ModelArgs,
+        on_event: Channel<AnalysisProgressDto>,
+    ) -> Result<AnalysisJobDto, AnalysisErrorCode> {
+        let sink: AnalysisEventSink = Arc::new(move |event| {
+            let _ = on_event.send(event);
+        });
+        ops.install_model(args.model_id, sink).await
+    }
+
+    #[tauri::command]
+    pub(crate) async fn models_remove(
+        ops: State<'_, Arc<dyn AnalysisOps>>,
+        args: ModelArgs,
+    ) -> Result<(), AnalysisErrorCode> {
+        ops.remove_model(args.model_id).await
+    }
+
+    #[tauri::command]
+    pub(crate) async fn analysis_start_transcription(
+        ops: State<'_, Arc<dyn AnalysisOps>>,
+        args: TranscriptionArgs,
+        on_event: Channel<AnalysisProgressDto>,
+    ) -> Result<AnalysisJobDto, AnalysisErrorCode> {
+        let sink: AnalysisEventSink = Arc::new(move |event| {
+            let _ = on_event.send(event);
+        });
+        ops.start_transcription(args.media_id, args.model_id, sink)
+            .await
+    }
+
+    #[tauri::command]
+    pub(crate) async fn analysis_get_transcript_state(
+        ops: State<'_, Arc<dyn AnalysisOps>>,
+        args: TranscriptStateArgs,
+    ) -> Result<TranscriptStateDto, AnalysisErrorCode> {
+        ops.transcript_state(args.media_id).await
+    }
+
+    #[tauri::command]
+    pub(crate) async fn analysis_list_jobs(
+        ops: State<'_, Arc<dyn AnalysisOps>>,
+        args: AnalysisJobsArgs,
+    ) -> Result<Vec<AnalysisJobDto>, AnalysisErrorCode> {
+        ops.list_jobs(args.kind).await
+    }
+
+    #[tauri::command]
+    pub(crate) async fn search_query(
+        ops: State<'_, Arc<dyn SearchOps>>,
+        args: SearchArgs,
+    ) -> Result<Vec<SearchHitDto>, SearchErrorCode> {
+        ops.search(args.text, args.limit).await
+    }
 }
 
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
@@ -768,6 +1031,13 @@ mod plugin_builder {
                 super::commands::playback_get_state,
                 super::commands::playback_close,
                 super::commands::study_record_action,
+                super::commands::models_list,
+                super::commands::models_install,
+                super::commands::models_remove,
+                super::commands::analysis_start_transcription,
+                super::commands::analysis_get_transcript_state,
+                super::commands::analysis_list_jobs,
+                super::commands::search_query,
             ])
             .build()
     }
@@ -809,5 +1079,18 @@ mod tests {
         .expect("serialize");
         assert_eq!(value["patch"]["kind"], "increase_daily_budget");
         assert_eq!(value["patch"]["minutes"], 60);
+    }
+
+    #[test]
+    fn analysis_progress_uses_camel_case_channel_fields() {
+        let value = serde_json::to_value(AnalysisProgressDto::Downloading {
+            job_id: "job".into(),
+            downloaded_bytes: 10,
+            total_bytes: 20,
+        })
+        .expect("serialize");
+        assert_eq!(value["event"], "downloading");
+        assert_eq!(value["data"]["jobId"], "job");
+        assert_eq!(value["data"]["downloadedBytes"], 10);
     }
 }

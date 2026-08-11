@@ -26,4 +26,11 @@ permissions = [
   "allow-playback-get-state",
   "allow-playback-close",
   "allow-study-record-action",
+  "allow-models-list",
+  "allow-models-install",
+  "allow-models-remove",
+  "allow-analysis-start-transcription",
+  "allow-analysis-get-transcript-state",
+  "allow-analysis-list-jobs",
+  "allow-search-query",
 ]

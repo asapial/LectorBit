@@ -26,6 +26,13 @@ Default LectorBit permissions for the main window
 - `allow-playback-get-state`
 - `allow-playback-close`
 - `allow-study-record-action`
+- `allow-models-list`
+- `allow-models-install`
+- `allow-models-remove`
+- `allow-analysis-start-transcription`
+- `allow-analysis-get-transcript-state`
+- `allow-analysis-list-jobs`
+- `allow-search-query`
 
 ## Permission Table
 
@@ -35,6 +42,84 @@ Default LectorBit permissions for the main window
 <th>Description</th>
 </tr>
 
+
+<tr>
+<td>
+
+`lectorbit:allow-analysis-get-transcript-state`
+
+</td>
+<td>
+
+Enables the analysis_get_transcript_state command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:deny-analysis-get-transcript-state`
+
+</td>
+<td>
+
+Denies the analysis_get_transcript_state command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:allow-analysis-list-jobs`
+
+</td>
+<td>
+
+Enables the analysis_list_jobs command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:deny-analysis-list-jobs`
+
+</td>
+<td>
+
+Denies the analysis_list_jobs command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:allow-analysis-start-transcription`
+
+</td>
+<td>
+
+Enables the analysis_start_transcription command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:deny-analysis-start-transcription`
+
+</td>
+<td>
+
+Denies the analysis_start_transcription command without any pre-configured scope.
+
+</td>
+</tr>
 
 <tr>
 <td>
@@ -240,6 +325,84 @@ Enables the library_revoke_root command without any pre-configured scope.
 <td>
 
 Denies the library_revoke_root command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:allow-models-install`
+
+</td>
+<td>
+
+Enables the models_install command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:deny-models-install`
+
+</td>
+<td>
+
+Denies the models_install command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:allow-models-list`
+
+</td>
+<td>
+
+Enables the models_list command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:deny-models-list`
+
+</td>
+<td>
+
+Denies the models_list command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:allow-models-remove`
+
+</td>
+<td>
+
+Enables the models_remove command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:deny-models-remove`
+
+</td>
+<td>
+
+Denies the models_remove command without any pre-configured scope.
 
 </td>
 </tr>
@@ -578,6 +741,32 @@ Enables the playback_set_speed command without any pre-configured scope.
 <td>
 
 Denies the playback_set_speed command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:allow-search-query`
+
+</td>
+<td>
+
+Enables the search_query command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:deny-search-query`
+
+</td>
+<td>
+
+Denies the search_query command without any pre-configured scope.
 
 </td>
 </tr>

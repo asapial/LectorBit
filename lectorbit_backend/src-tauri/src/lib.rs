@@ -4,22 +4,28 @@ use std::io::stderr;
 use std::sync::Arc;
 
 use lectorbit_db::{
-    ChunksRepo, LibraryRootsRepo, MediaRepo, PlansRepo, RedactingMakeWriter, StudyRepo,
+    AnalysisRepo, ChunksRepo, LibraryRootsRepo, MediaRepo, PlansRepo, RedactingMakeWriter,
+    StudyRepo,
 };
 use lectorbit_playback::MpvEngine;
 use lectorbit_services::{
-    DiagnosticsService, LibraryService, MediaService, PlannerService, PlaybackService,
+    AnalysisService, DiagnosticsService, LibraryService, MediaService, PlannerService,
+    PlaybackService, SearchService,
 };
 use tauri::Manager;
-use tauri_plugin_lectorbit::{DiagnosticsProvider, LibraryOps, PlannerOps, PlaybackOps};
+use tauri_plugin_lectorbit::{
+    AnalysisOps, DiagnosticsProvider, LibraryOps, PlannerOps, PlaybackOps, SearchOps,
+};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::EnvFilter;
 
+mod analysis_adapter;
 mod library_adapter;
 mod media_adapter;
 mod planner_adapter;
 mod playback_adapter;
+use analysis_adapter::AnalysisAdapter;
 use library_adapter::LibraryAdapter;
 use media_adapter::ProbeScheduler;
 use planner_adapter::PlannerAdapter;
@@ -73,6 +79,14 @@ pub fn run() {
             let library_service =
                 LibraryService::new(LibraryRootsRepo::new(database.pool().clone()));
             let media_service = MediaService::new(MediaRepo::new(database.pool().clone()));
+            let analysis_repo = AnalysisRepo::new(database.pool().clone());
+            let models_dir = app_data.join("models");
+            std::fs::create_dir_all(&models_dir)
+                .map_err(|error| format!("create model directory: {error}"))?;
+            let analysis_service =
+                AnalysisService::new(analysis_repo.clone(), media_service.clone(), models_dir);
+            tauri::async_runtime::block_on(analysis_service.initialize_catalog())
+                .map_err(|error| format!("initialize model catalog: {error}"))?;
             let planner_service = PlannerService::new(
                 ChunksRepo::new(database.pool().clone()),
                 PlansRepo::new(database.pool().clone()),
@@ -91,6 +105,34 @@ pub fn run() {
                 app.path().resource_dir().ok().as_deref(),
                 std::env::var_os("LECTORBIT_FFPROBE_PATH"),
             );
+            let resource_dir = app.path().resource_dir().ok();
+            let whisper_path = resolve_named_sidecar(
+                resource_dir.as_deref(),
+                std::env::var_os("LECTORBIT_WHISPER_PATH"),
+                if cfg!(windows) {
+                    "whisper-cli.exe"
+                } else {
+                    "whisper-cli"
+                },
+            );
+            let ffmpeg_path = resolve_named_sidecar(
+                resource_dir.as_deref(),
+                std::env::var_os("LECTORBIT_FFMPEG_PATH"),
+                if cfg!(windows) {
+                    "ffmpeg.exe"
+                } else {
+                    "ffmpeg"
+                },
+            );
+            let analysis_adapter = Arc::new(tauri::async_runtime::block_on(AnalysisAdapter::new(
+                analysis_service,
+                SearchService::new(analysis_repo),
+                whisper_path,
+                ffmpeg_path,
+                app_data.join("analysis-work"),
+            )));
+            std::fs::create_dir_all(app_data.join("analysis-work"))
+                .map_err(|error| format!("create analysis work directory: {error}"))?;
             let probe_scheduler = tauri::async_runtime::block_on(ProbeScheduler::new(
                 media_service.clone(),
                 ffprobe_path,
@@ -105,11 +147,15 @@ pub fn run() {
                 .map_err(|error| format!("recover interrupted jobs: {error}"))?;
             tauri::async_runtime::block_on(probe_scheduler.recover_and_resume())
                 .map_err(|error| format!("recover probe jobs: {error}"))?;
+            tauri::async_runtime::block_on(analysis_adapter.recover_and_resume())
+                .map_err(|error| format!("recover analysis jobs: {error}"))?;
 
             app.manage(Arc::new(DiagnosticsAdapter(diagnostics)) as Arc<dyn DiagnosticsProvider>);
             app.manage(library_adapter as Arc<dyn LibraryOps>);
             app.manage(Arc::new(PlannerAdapter::new(planner_service)) as Arc<dyn PlannerOps>);
             app.manage(Arc::new(PlaybackAdapter::new(playback_service)) as Arc<dyn PlaybackOps>);
+            app.manage(analysis_adapter.clone() as Arc<dyn AnalysisOps>);
+            app.manage(analysis_adapter as Arc<dyn SearchOps>);
 
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.show();
@@ -155,6 +201,23 @@ fn resolve_ffprobe_path(
     } else {
         "ffprobe"
     };
+    resource_dir
+        .map(|directory| directory.join("sidecars").join(filename))
+        .filter(|path| path.is_absolute() && path.is_file())
+}
+
+fn resolve_named_sidecar(
+    resource_dir: Option<&std::path::Path>,
+    configured: Option<std::ffi::OsString>,
+    filename: &str,
+) -> Option<std::path::PathBuf> {
+    let configured = configured.map(std::path::PathBuf::from);
+    if configured
+        .as_ref()
+        .is_some_and(|path| path.is_absolute() && path.is_file())
+    {
+        return configured;
+    }
     resource_dir
         .map(|directory| directory.join("sidecars").join(filename))
         .filter(|path| path.is_absolute() && path.is_file())

@@ -35,7 +35,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "1"
 anyhow = "1"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "process", "time"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "process", "time", "fs", "io-util"] }
 sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "sqlite", "sqlx-sqlite", "macros", "migrate", "chrono", "uuid"] }
 uuid = { version = "1", features = ["v4", "v7", "serde"] }
 chrono = { version = "0.4", default-features = false, features = ["serde", "clock"] }
@@ -43,6 +43,9 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "registry"] }
 log = "0.4"
 tempfile = "3"
+reqwest = { version = "0.12", default-features = false, features = ["native-tls", "stream"] }
+sha2 = "0.10"
+fs2 = "0.4"
 
 [profile.release]
 panic = "abort"

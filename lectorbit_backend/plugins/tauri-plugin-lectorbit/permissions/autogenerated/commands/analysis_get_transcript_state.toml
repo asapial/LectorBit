@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-analysis-get-transcript-state"
+description = "Enables the analysis_get_transcript_state command without any pre-configured scope."
+commands.allow = ["analysis_get_transcript_state"]
+
+[[permission]]
+identifier = "deny-analysis-get-transcript-state"
+description = "Denies the analysis_get_transcript_state command without any pre-configured scope."
+commands.deny = ["analysis_get_transcript_state"]

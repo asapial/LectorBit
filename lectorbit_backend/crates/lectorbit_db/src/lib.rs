@@ -22,6 +22,9 @@ pub mod repo;
 pub use error::{DbError, DbResult};
 pub use pool::Db;
 pub use redaction::{redact, redact_event_fields, RedactingMakeWriter};
+pub use repo::analysis::{
+    ModelInstallRow, ModelManifestRow, Repo as AnalysisRepo, SearchRow, TranscriptSegmentInput,
+};
 pub use repo::chunks::{
     PlannerCandidatePage, PlannerCandidateRow, Repo as ChunksRepo, SchedulableMedia, StoredChunk,
 };

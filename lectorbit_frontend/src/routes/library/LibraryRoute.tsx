@@ -5,6 +5,7 @@ import FolderSearch from 'lucide-react/dist/esm/icons/folder-search';
 import FileAudio from 'lucide-react/dist/esm/icons/file-audio';
 import FileVideo from 'lucide-react/dist/esm/icons/file-video';
 import ScanLine from 'lucide-react/dist/esm/icons/scan-line';
+import Captions from 'lucide-react/dist/esm/icons/captions';
 import X from 'lucide-react/dist/esm/icons/x';
 import {
   useInfiniteQuery,
@@ -41,6 +42,11 @@ import {
   CardTitle,
 } from '../../components/ui/Card';
 import { cn } from '../../lib/cn';
+import {
+  listModels,
+  startTranscription,
+  type AnalysisProgress,
+} from '../../ipc/analysis';
 
 interface LiveScan {
   status: StatusKind;
@@ -54,6 +60,7 @@ export function LibraryRoute() {
   const [banner, setBanner] = useState<string | null>(null);
   const [revokeTarget, setRevokeTarget] = useState<LibraryRoot | null>(null);
   const [liveScans, setLiveScans] = useState<Record<string, LiveScan>>({});
+  const [analysisProgress, setAnalysisProgress] = useState<Record<string, AnalysisProgress>>({});
 
   const roots = useQuery({
     queryKey: ['library', 'roots'] as const,
@@ -83,6 +90,27 @@ export function LibraryRoute() {
       )
         ? 1_500
         : false,
+  });
+
+  const models = useQuery({
+    queryKey: ['analysis', 'models'] as const,
+    queryFn: listModels,
+    staleTime: 5_000,
+  });
+  const readyModelId = models.data?.find((model) => model.state === 'ready')?.id;
+
+  const transcribe = useMutation({
+    mutationFn: ({ mediaId, modelId }: { mediaId: string; modelId: string }) =>
+      startTranscription(mediaId, modelId, (event) => {
+        setAnalysisProgress((current) => ({ ...current, [mediaId]: event }));
+        if (event.event === 'completed') {
+          setBanner('Transcript indexed. Its timestamped moments are now searchable.');
+          void queryClient.invalidateQueries({ queryKey: ['search'] });
+        }
+        if (event.event === 'failed') setBanner(event.data.message);
+      }),
+    onSuccess: () => setBanner('Transcription queued locally. You can keep studying while it runs.'),
+    onError: (error) => setBanner(error instanceof Error ? error.message : 'Transcription could not start.'),
   });
 
   const scan = useMutation({
@@ -257,6 +285,10 @@ export function LibraryRoute() {
             loadingMore={media.isFetchingNextPage}
             onRetry={() => void media.refetch()}
             onLoadMore={() => void media.fetchNextPage()}
+            readyModelId={readyModelId}
+            analysisProgress={analysisProgress}
+            pendingMediaId={transcribe.variables?.mediaId}
+            onTranscribe={(mediaId, modelId) => transcribe.mutate({ mediaId, modelId })}
           />
         </>
       ) : null}
@@ -281,6 +313,10 @@ function MediaLibraryCard({
   loadingMore,
   onRetry,
   onLoadMore,
+  readyModelId,
+  analysisProgress,
+  pendingMediaId,
+  onTranscribe,
 }: {
   items: MediaListItem[];
   pending: boolean;
@@ -289,6 +325,10 @@ function MediaLibraryCard({
   loadingMore: boolean;
   onRetry: () => void;
   onLoadMore: () => void;
+  readyModelId?: string;
+  analysisProgress: Record<string, AnalysisProgress>;
+  pendingMediaId?: string;
+  onTranscribe: (mediaId: string, modelId: string) => void;
 }) {
   const mediaScrollRef = useRef<HTMLDivElement>(null);
   const virtualized = items.length > 200;
@@ -307,7 +347,7 @@ function MediaLibraryCard({
       <CardHeader>
         <CardTitle>Media index</CardTitle>
         <CardDescription>
-          Duration and stream details are read locally with ffprobe. Files stay in place.
+          Duration and streams come from ffprobe. Verified local Whisper models add searchable transcripts.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -360,6 +400,10 @@ function MediaLibraryCard({
                     key={items[row.index].id}
                     item={items[row.index]}
                     virtualStart={row.start}
+                    readyModelId={readyModelId}
+                    analysisEvent={analysisProgress[items[row.index].id]}
+                    pending={pendingMediaId === items[row.index].id}
+                    onTranscribe={onTranscribe}
                   />
                 ))}
               </tbody>
@@ -381,9 +425,17 @@ function MediaLibraryCard({
 function MediaRow({
   item,
   virtualStart,
+  readyModelId,
+  analysisEvent,
+  pending,
+  onTranscribe,
 }: {
   item: MediaListItem;
   virtualStart?: number;
+  readyModelId?: string;
+  analysisEvent?: AnalysisProgress;
+  pending: boolean;
+  onTranscribe: (mediaId: string, modelId: string) => void;
 }) {
   return (
     <tr
@@ -427,9 +479,37 @@ function MediaRow({
       </td>
       <td className="w-[18%] py-4 align-top">
         <ProbeState item={item} />
+        {item.probe_status === 'ready' ? (
+          <div className="mt-2">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={!readyModelId || pending || isAnalysisActive(analysisEvent)}
+              onClick={() => readyModelId && onTranscribe(item.id, readyModelId)}
+              leftIcon={<Captions className="size-3.5" />}
+              title={readyModelId ? 'Create or refresh the local transcript' : 'Install a model in Settings first'}
+            >
+              {analysisLabel(analysisEvent, pending)}
+            </Button>
+          </div>
+        ) : null}
       </td>
     </tr>
   );
+}
+
+function isAnalysisActive(event?: AnalysisProgress) {
+  return event !== undefined && ['queued', 'extracting', 'transcribing', 'indexing'].includes(event.event);
+}
+
+function analysisLabel(event: AnalysisProgress | undefined, pending: boolean) {
+  if (pending || event?.event === 'queued') return 'Queued';
+  if (event?.event === 'extracting') return 'Extracting audio…';
+  if (event?.event === 'transcribing') return 'Transcribing…';
+  if (event?.event === 'indexing') return 'Indexing…';
+  if (event?.event === 'completed') return 'Transcribed';
+  if (event?.event === 'failed') return 'Try transcript again';
+  return 'Transcribe';
 }
 
 function ProbeState({ item }: { item: MediaListItem }) {

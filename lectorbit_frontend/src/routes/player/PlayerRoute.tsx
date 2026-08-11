@@ -12,7 +12,7 @@ import Rewind from 'lucide-react/dist/esm/icons/rewind';
 import Scissors from 'lucide-react/dist/esm/icons/scissors';
 import Square from 'lucide-react/dist/esm/icons/square';
 import TriangleAlert from 'lucide-react/dist/esm/icons/triangle-alert';
-import { Link, useNavigate, useParams } from 'react-router';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import { PageHeader } from '../../components/layout/PageHeader';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
@@ -53,6 +53,7 @@ const actionMessages: Record<StudyAction, string> = {
 
 export function PlayerRoute() {
   const { itemId = '' } = useParams();
+  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [phase, setPhase] = useState<Phase>('loading');
@@ -98,8 +99,16 @@ export function PlayerRoute() {
           setPhase('error');
           return;
         }
-        const nextView = await openPlayback(itemId, handleEvent);
+        let nextView = await openPlayback(itemId, handleEvent);
         opened = true;
+        const requestedTimestamp = Number(searchParams.get('t'));
+        if (
+          Number.isFinite(requestedTimestamp) &&
+          requestedTimestamp >= nextView.raw_start_ms &&
+          requestedTimestamp <= nextView.raw_end_ms
+        ) {
+          nextView = await seekPlayback(requestedTimestamp);
+        }
         if (disposed) {
           await closePlayback().catch(() => undefined);
           return;
@@ -119,7 +128,7 @@ export function PlayerRoute() {
       disposed = true;
       if (opened) void closePlayback().catch(() => undefined);
     };
-  }, [itemId]);
+  }, [itemId, searchParams]);
 
   const watchedPercent = useMemo(() => {
     if (!view || view.item_duration_ms === 0) return 0;

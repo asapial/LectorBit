@@ -26,6 +26,7 @@ lectorbit_db = { workspace = true }
 lectorbit_services = { workspace = true }
 lectorbit_media = { workspace = true }
 lectorbit_playback = { workspace = true }
+lectorbit_ai = { workspace = true }
 sqlx = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -33,3 +34,4 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 chrono = { workspace = true }
+reqwest = { workspace = true }

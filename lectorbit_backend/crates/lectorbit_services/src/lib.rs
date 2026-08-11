@@ -1,5 +1,6 @@
 //! Application use-cases for LectorBit's modular monolith.
 
+pub mod analysis;
 pub mod diagnostics;
 pub mod jobs;
 pub mod library;
@@ -9,6 +10,11 @@ pub mod planner;
 pub mod progress;
 pub mod search;
 pub mod settings;
+
+pub use analysis::{
+    AnalysisError, AnalysisService, JobEnqueue as AnalysisEnqueue, ModelDownloadPayload, ModelView,
+    TranscriptState, TranscriptionPayload,
+};
 
 pub use diagnostics::{DiagnosticsReport, DiagnosticsService};
 pub use jobs::{
@@ -26,3 +32,4 @@ pub use planner::{
 pub use progress::{
     PlaybackCapability, PlaybackService, PlaybackUpdate, PlaybackView, ProgressError,
 };
+pub use search::{SearchError, SearchHit, SearchService, SearchSource};

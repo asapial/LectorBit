@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-analysis-list-jobs"
+description = "Enables the analysis_list_jobs command without any pre-configured scope."
+commands.allow = ["analysis_list_jobs"]
+
+[[permission]]
+identifier = "deny-analysis-list-jobs"
+description = "Denies the analysis_list_jobs command without any pre-configured scope."
+commands.deny = ["analysis_list_jobs"]

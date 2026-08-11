@@ -1,18 +1,241 @@
+import { useMemo, useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import CheckCircle2 from 'lucide-react/dist/esm/icons/circle-check-big';
+import Cpu from 'lucide-react/dist/esm/icons/cpu';
+import Download from 'lucide-react/dist/esm/icons/download';
+import HardDrive from 'lucide-react/dist/esm/icons/hard-drive';
+import Trash2 from 'lucide-react/dist/esm/icons/trash-2';
+import TriangleAlert from 'lucide-react/dist/esm/icons/triangle-alert';
 import { PageHeader } from '../../components/layout/PageHeader';
-import { EmptyState } from '../../components/feedback/EmptyState';
+import { Button } from '../../components/ui/Button';
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '../../components/ui/Card';
+import { StatusBadge, type StatusKind } from '../../components/ui/StatusBadge';
+import {
+  installModel,
+  listAnalysisJobs,
+  listModels,
+  removeModel,
+  type AnalysisProgress,
+  type LocalModel,
+} from '../../ipc/analysis';
 
 export function SettingsRoute() {
+  const queryClient = useQueryClient();
+  const [notice, setNotice] = useState<string>();
+  const [progress, setProgress] = useState<Record<string, AnalysisProgress>>({});
+  const [removeTarget, setRemoveTarget] = useState<LocalModel>();
+  const models = useQuery({
+    queryKey: ['analysis', 'models'] as const,
+    queryFn: listModels,
+    refetchInterval: (query) =>
+      query.state.data?.some((model) => model.state === 'downloading') ? 1_500 : false,
+  });
+  const jobs = useQuery({
+    queryKey: ['analysis', 'model-jobs'] as const,
+    queryFn: () => listAnalysisJobs('model_download'),
+    refetchInterval: (query) =>
+      query.state.data?.some((job) => job.status === 'queued' || job.status === 'running')
+        ? 1_500
+        : false,
+  });
+
+  const install = useMutation({
+    mutationFn: (modelId: string) =>
+      installModel(modelId, (event) => {
+        setProgress((current) => ({ ...current, [modelId]: event }));
+        if (event.event === 'completed' || event.event === 'failed') {
+          void queryClient.invalidateQueries({ queryKey: ['analysis'] });
+        }
+      }),
+    onSuccess: () => {
+      setNotice('Model download queued. It will resume automatically after a restart.');
+      void queryClient.invalidateQueries({ queryKey: ['analysis'] });
+    },
+    onError: (error) => setNotice(messageFrom(error)),
+  });
+
+  const remove = useMutation({
+    mutationFn: removeModel,
+    onSuccess: () => {
+      setNotice('Model removed. Existing transcripts remain searchable.');
+      setRemoveTarget(undefined);
+      void queryClient.invalidateQueries({ queryKey: ['analysis'] });
+    },
+    onError: (error) => setNotice(messageFrom(error)),
+  });
+
+  const activeJobs = useMemo(
+    () =>
+      jobs.data?.filter((job) => job.status === 'queued' || job.status === 'running').length ?? 0,
+    [jobs.data],
+  );
+
   return (
-    <>
+    <div className="space-y-6">
       <PageHeader
         eyebrow="Settings"
-        title="Constraints & privacy"
-        description="Tune your study constraints, manage consent, and inspect diagnostics."
+        title="Local AI models"
+        description="Install verified Whisper models on demand. Media and transcripts stay on this device."
       />
-      <EmptyState
-        title="Settings not yet available"
-        description="Constraint editor arrives in Feature 6, consent in Feature 13, diagnostics in Feature 2."
-      />
-    </>
+
+      {notice ? (
+        <div className="rounded-lg border border-border bg-card px-4 py-3 text-sm shadow-sm" role="status">
+          {notice}
+        </div>
+      ) : null}
+
+      <Card>
+        <CardHeader>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <CardTitle>Transcription models</CardTitle>
+              <CardDescription className="mt-1">
+                Downloads are resumable, size-checked, and SHA-256 verified before use.
+              </CardDescription>
+            </div>
+            <span className="rounded-md bg-muted px-2.5 py-1 font-mono text-xs text-muted-foreground">
+              {activeJobs} active
+            </span>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {models.isPending ? (
+            <div className="h-36 animate-pulse rounded-lg bg-muted motion-reduce:animate-none" />
+          ) : null}
+          {models.isError ? (
+            <div className="flex items-start gap-3 rounded-lg border border-destructive/30 bg-destructive/10 p-4" role="alert">
+              <TriangleAlert className="mt-0.5 size-5 text-destructive" />
+              <div>
+                <p className="text-sm font-medium">Models could not be loaded</p>
+                <Button className="mt-3" variant="outline" size="sm" onClick={() => void models.refetch()}>
+                  Try again
+                </Button>
+              </div>
+            </div>
+          ) : null}
+          <div className="divide-y divide-border">
+            {models.data?.map((model) => (
+              <ModelRow
+                key={model.id}
+                model={model}
+                event={progress[model.id]}
+                pendingInstall={install.isPending && install.variables === model.id}
+                pendingRemove={remove.isPending && remove.variables === model.id}
+                onInstall={() => install.mutate(model.id)}
+                onRemove={() => setRemoveTarget(model)}
+              />
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Privacy boundary</CardTitle>
+          <CardDescription>Local analysis is optional enrichment, never a planning dependency.</CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-3 text-sm text-muted-foreground sm:grid-cols-3">
+          <PrivacyFact icon={<Cpu className="size-4" />} label="Runs through local whisper.cpp" />
+          <PrivacyFact icon={<HardDrive className="size-4" />} label="Stores timestamp text in SQLite" />
+          <PrivacyFact icon={<CheckCircle2 className="size-4" />} label="Sends no media to a provider" />
+        </CardContent>
+      </Card>
+
+      {removeTarget ? (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-stone-950/60 px-4 backdrop-blur-[2px]" role="dialog" aria-modal="true" aria-labelledby="remove-model-title">
+          <div className="w-full max-w-md rounded-lg border border-border bg-background p-6 shadow-md">
+            <h2 id="remove-model-title" className="font-display text-lg font-semibold">Remove local model?</h2>
+            <p className="mt-2 text-sm text-muted-foreground">
+              This removes {removeTarget.id} from disk. Existing transcript text remains searchable.
+            </p>
+            <div className="mt-5 flex justify-end gap-2">
+              <Button variant="ghost" disabled={remove.isPending} onClick={() => setRemoveTarget(undefined)}>Cancel</Button>
+              <Button variant="destructive" disabled={remove.isPending} onClick={() => remove.mutate(removeTarget.id)}>
+                {remove.isPending ? 'Removing…' : 'Remove model'}
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </div>
   );
 }
+
+function ModelRow({
+  model,
+  event,
+  pendingInstall,
+  pendingRemove,
+  onInstall,
+  onRemove,
+}: {
+  model: LocalModel;
+  event?: AnalysisProgress;
+  pendingInstall: boolean;
+  pendingRemove: boolean;
+  onInstall: () => void;
+  onRemove: () => void;
+}) {
+  const state = modelState(model, event);
+  const percentage = event?.event === 'downloading'
+    ? Math.min(100, Math.round((event.data.downloadedBytes / event.data.totalBytes) * 100))
+    : model.state === 'downloading' && model.expected_size_bytes > 0
+      ? Math.min(100, Math.round((model.bytes_downloaded / model.expected_size_bytes) * 100))
+      : undefined;
+  return (
+    <div className="grid gap-4 py-5 first:pt-1 last:pb-1 md:grid-cols-[minmax(0,1fr)_14rem_auto] md:items-center">
+      <div>
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="font-medium">Whisper base English</p>
+          <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">{model.analyzer_compatibility}</span>
+        </div>
+        <p className="mt-1 text-xs text-muted-foreground">
+          {formatBytes(model.expected_size_bytes)} · {model.provider} · {model.architecture}
+        </p>
+        <p className="mt-1 text-xs text-muted-foreground">{model.license}</p>
+      </div>
+      <div className="space-y-2">
+        <StatusBadge status={state.kind} />
+        <p className="text-xs text-muted-foreground">{state.label}</p>
+        {percentage !== undefined ? (
+          <div className="h-1.5 overflow-hidden rounded-full bg-muted" role="progressbar" aria-label="Model download" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percentage}>
+            <div className="h-full rounded-full bg-primary transition-[width] duration-200 motion-reduce:transition-none" style={{ width: `${percentage}%` }} />
+          </div>
+        ) : null}
+      </div>
+      {model.state === 'ready' ? (
+        <Button variant="outline" size="sm" disabled={pendingRemove} onClick={onRemove} leftIcon={<Trash2 className="size-4" />}>Remove</Button>
+      ) : (
+        <Button size="sm" disabled={pendingInstall || model.state === 'downloading'} onClick={onInstall} leftIcon={<Download className="size-4" />}>
+          {model.state === 'failed' ? 'Try again' : model.state === 'downloading' ? 'Downloading…' : 'Install'}
+        </Button>
+      )}
+    </div>
+  );
+}
+
+function modelState(model: LocalModel, event?: AnalysisProgress): { kind: StatusKind; label: string } {
+  if (event?.event === 'completed') return { kind: 'completed', label: 'Verified and ready' };
+  if (event?.event === 'failed') return { kind: 'failed', label: event.data.message };
+  if (event && ['queued', 'downloading'].includes(event.event)) return { kind: event.event === 'queued' ? 'queued' : 'processing', label: event.event === 'queued' ? 'Waiting for download worker' : 'Downloading and verifying' };
+  switch (model.state) {
+    case 'ready': return { kind: 'completed', label: model.verified_at ? `Verified ${formatDate(model.verified_at)}` : 'Verified and ready' };
+    case 'downloading': return { kind: 'processing', label: 'Download will resume if interrupted' };
+    case 'failed': return { kind: 'failed', label: model.last_error ?? 'Verification did not complete' };
+    default: return { kind: 'queued', label: 'Not installed' };
+  }
+}
+
+function PrivacyFact({ icon, label }: { icon: React.ReactNode; label: string }) {
+  return <div className="flex items-center gap-2 rounded-md bg-muted/60 px-3 py-2">{icon}<span>{label}</span></div>;
+}
+
+function formatBytes(bytes: number) { return `${(bytes / 1024 / 1024).toFixed(0)} MB`; }
+function formatDate(value: string) { const date = new Date(value); return Number.isNaN(date.valueOf()) ? 'locally' : date.toLocaleDateString(); }
+function messageFrom(error: unknown) { return error instanceof Error ? error.message : 'The model operation could not continue.'; }
