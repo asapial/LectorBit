@@ -1873,6 +1873,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "lectorbit_core",
+ "log",
  "regex",
  "serde",
  "serde_json",

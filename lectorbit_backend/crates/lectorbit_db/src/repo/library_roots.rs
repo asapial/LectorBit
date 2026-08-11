@@ -107,7 +107,7 @@ impl Repo {
                 registered_at: now,
                 revoked_at: None,
             })),
-            Err(sqlx::Error::Database(db_err)) if is_unique_violation(&db_err) => {
+            Err(sqlx::Error::Database(db_err)) if is_unique_violation(db_err.as_ref()) => {
                 let mut existing = self
                     .find_by_canonical_path(canonical_path)
                     .await?
@@ -248,7 +248,7 @@ fn row_to_root(row: sqlx::sqlite::SqliteRow) -> DbResult<LibraryRoot> {
     })
 }
 
-fn is_unique_violation(err: &sqlx::error::DatabaseError) -> bool {
+fn is_unique_violation(err: &dyn sqlx::error::DatabaseError) -> bool {
     // SQLite reports UNIQUE violations as `SQLITE_CONSTRAINT_UNIQUE` (code 2067)
     // and generic constraint failures as `SQLITE_CONSTRAINT` (code 19). We
     // accept either because sqlx sometimes collapses them.

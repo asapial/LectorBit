@@ -17,10 +17,9 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::time::Duration;
 
-use sqlx::sqlite::{
-    SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous,
-};
-use sqlx::{ConnectOptions, Executor, SqlitePool};
+use log::LevelFilter;
+use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
+use sqlx::{ConnectOptions, SqlitePool};
 
 use crate::error::{DbError, DbResult};
 
@@ -47,8 +46,8 @@ impl Db {
             .synchronous(SqliteSynchronous::Normal)
             .busy_timeout(Duration::from_secs(5))
             .foreign_keys(true)
-            .log_statements(tracing::Level::Debug)
-            .log_slow_statements(tracing::Level::Warn, Duration::from_millis(500));
+            .log_statements(LevelFilter::Debug)
+            .log_slow_statements(LevelFilter::Warn, Duration::from_millis(500));
 
         let pool = SqlitePoolOptions::new()
             .max_connections(5)
@@ -139,22 +138,20 @@ impl Db {
 
 /// Apply the LectorBit house-style PRAGMAs to every connection in `pool`.
 async fn apply_pragmas(pool: &SqlitePool) -> DbResult<()> {
-    let pragmas: &[(&str, &str)] = &[
-        ("journal_mode", "WAL"),
-        ("foreign_keys", "ON"),
-        ("busy_timeout", "5000"),
-        ("synchronous", "NORMAL"),
-        ("temp_store", "MEMORY"),
-        ("cache_size", "-64000"),
+    let pragmas: &[(&str, &str, &str)] = &[
+        ("journal_mode", "WAL", "PRAGMA journal_mode = WAL"),
+        ("foreign_keys", "ON", "PRAGMA foreign_keys = ON"),
+        ("busy_timeout", "5000", "PRAGMA busy_timeout = 5000"),
+        ("synchronous", "NORMAL", "PRAGMA synchronous = NORMAL"),
+        ("temp_store", "MEMORY", "PRAGMA temp_store = MEMORY"),
+        ("cache_size", "-64000", "PRAGMA cache_size = -64000"),
     ];
 
-    for (key, value) in pragmas {
-        // PRAGMAs return rows on `query`, not `execute`. We just consume the
-        // row indirectly by using `execute` on a literal statement that
-        // embeds the value; we have to be careful: the values are static
-        // and trusted (hard-coded above).
-        let stmt = format!("PRAGMA {key} = {value}");
-        sqlx::query(&stmt)
+    for (key, value, statement) in pragmas {
+        // SQLx 0.9 accepts literal SQL by default. Keeping each PRAGMA as a
+        // literal preserves that audit boundary and prevents configuration
+        // values from becoming dynamic SQL later.
+        sqlx::query(*statement)
             .execute(pool)
             .await
             .map_err(|e| DbError::Pragma(format!("{key} -> {value}: {e}")))?;
@@ -162,10 +159,10 @@ async fn apply_pragmas(pool: &SqlitePool) -> DbResult<()> {
 
     // Verify journal_mode came back as WAL (it will silently degrade to MEMORY
     // for `:memory:` or read-only files; we don't fail on that, we just log).
-    let journal: (String,) =
-        sqlx::query_as("PRAGMA journal_mode").fetch_one(pool).await?;
-    let journal = SqliteJournalMode::from_str(&journal.0)
-        .unwrap_or(SqliteJournalMode::Memory);
+    let journal: (String,) = sqlx::query_as("PRAGMA journal_mode")
+        .fetch_one(pool)
+        .await?;
+    let journal = SqliteJournalMode::from_str(&journal.0).unwrap_or(SqliteJournalMode::Memory);
     tracing::debug!(target: "lectorbit_db", ?journal, "sqlite journal mode applied");
 
     Ok(())

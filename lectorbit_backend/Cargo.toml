@@ -36,11 +36,12 @@ serde_json = "1"
 thiserror = "1"
 anyhow = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "process", "time"] }
-sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "sqlite", "sqlx-sqlite", "macros", "chrono", "uuid"] }
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "sqlite", "sqlx-sqlite", "macros", "migrate", "chrono", "uuid"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", default-features = false, features = ["serde", "clock"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "registry"] }
+log = "0.4"
 tempfile = "3"
 
 [profile.release]
