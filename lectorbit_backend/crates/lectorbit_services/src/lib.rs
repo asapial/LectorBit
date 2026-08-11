@@ -1,8 +1,4 @@
-//! Application use-cases. Each module owns one bounded area and depends on
-//! `lectorbit_core`, `lectorbit_db`, and adapters as needed.
-//!
-//! Splitting rules: only break a module into its own crate if it grows large,
-//! needs different platform deps, or materially improves compile/test isolation.
+//! Application use-cases for LectorBit's modular monolith.
 
 pub mod diagnostics;
 pub mod jobs;
@@ -14,3 +10,10 @@ pub mod search;
 pub mod settings;
 
 pub use diagnostics::{DiagnosticsReport, DiagnosticsService};
+pub use jobs::{
+    enqueue, list_by_kind, mark_completed, mark_failed, mark_running, recover_interrupted, Job,
+    JobError, JobEvent, JobStatus,
+};
+pub use library::{
+    AuthorizedRoot, LibraryError, LibraryRootView, LibraryService, ScanEnqueue, ScanJobPayload,
+};

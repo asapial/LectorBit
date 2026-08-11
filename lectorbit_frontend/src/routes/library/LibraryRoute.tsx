@@ -1,24 +1,529 @@
+import { useEffect, useMemo, useRef, useState } from 'react';
+import Ban from 'lucide-react/dist/esm/icons/ban';
+import CircleCheck from 'lucide-react/dist/esm/icons/circle-check';
+import FolderSearch from 'lucide-react/dist/esm/icons/folder-search';
+import ScanLine from 'lucide-react/dist/esm/icons/scan-line';
+import X from 'lucide-react/dist/esm/icons/x';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  listRoots,
+  listScanJobs,
+  pickAndRegisterRoot,
+  revokeRoot,
+  startScan,
+  LibraryRpcError,
+  type LibraryErrorKind,
+  type LibraryRoot,
+  type ScanEvent,
+  type ScanJob,
+} from '../../ipc/library';
 import { PageHeader } from '../../components/layout/PageHeader';
-import { EmptyState } from '../../components/feedback/EmptyState';
+import { EmptyState, ErrorPanel } from '../../components/feedback/EmptyState';
+import { Spinner } from '../../components/ui/Spinner';
 import { Button } from '../../components/ui/Button';
+import { Badge } from '../../components/ui/Badge';
+import { StatusBadge, type StatusKind } from '../../components/ui/StatusBadge';
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '../../components/ui/Card';
+import { cn } from '../../lib/cn';
+
+interface LiveScan {
+  status: StatusKind;
+  label: string;
+  current?: number;
+  total?: number;
+}
 
 export function LibraryRoute() {
+  const queryClient = useQueryClient();
+  const [banner, setBanner] = useState<string | null>(null);
+  const [revokeTarget, setRevokeTarget] = useState<LibraryRoot | null>(null);
+  const [liveScans, setLiveScans] = useState<Record<string, LiveScan>>({});
+
+  const roots = useQuery({
+    queryKey: ['library', 'roots'] as const,
+    queryFn: listRoots,
+    refetchOnWindowFocus: true,
+    staleTime: 5_000,
+  });
+
+  const jobs = useQuery({
+    queryKey: ['library', 'scan-jobs'] as const,
+    queryFn: () => listScanJobs(),
+    staleTime: 1_000,
+    refetchInterval: (query) =>
+      query.state.data?.some((job) => isActiveJob(job)) ? 1_500 : false,
+  });
+
+  const scan = useMutation({
+    mutationFn: ({ rootId }: { rootId: string }) =>
+      startScan(rootId, (event) => {
+        setLiveScans((current) => ({
+          ...current,
+          [rootId]: liveScanFromEvent(event),
+        }));
+        if (event.event === 'completed' || event.event === 'failed') {
+          void queryClient.invalidateQueries({
+            queryKey: ['library', 'scan-jobs'],
+          });
+          void queryClient.invalidateQueries({ queryKey: ['diagnostics'] });
+        }
+      }),
+    onMutate: ({ rootId }) => {
+      setLiveScans((current) => ({
+        ...current,
+        [rootId]: { status: 'queued', label: 'Queued locally' },
+      }));
+    },
+    onSuccess: (_job, { rootId }) => {
+      void queryClient.invalidateQueries({ queryKey: ['library', 'scan-jobs'] });
+      setBanner('Scan queued. You can keep using LectorBit while it runs.');
+      setLiveScans((current) => ({
+        ...current,
+        [rootId]: current[rootId] ?? {
+          status: 'queued',
+          label: 'Queued locally',
+        },
+      }));
+    },
+    onError: (error, { rootId }) => {
+      setLiveScans((current) => ({
+        ...current,
+        [rootId]: { status: 'failed', label: humanizeError(error) },
+      }));
+      setBanner(humanizeError(error));
+    },
+  });
+
+  const register = useMutation({
+    mutationFn: pickAndRegisterRoot,
+    onSuccess: (root) => {
+      if (!root) return;
+      void queryClient.invalidateQueries({ queryKey: ['library', 'roots'] });
+      void queryClient.invalidateQueries({ queryKey: ['diagnostics'] });
+      setBanner(`Added “${root.display_name}”. Starting its first local scan.`);
+      scan.mutate({ rootId: root.id });
+    },
+    onError: (error) => setBanner(humanizeError(error)),
+  });
+
+  const revoke = useMutation({
+    mutationFn: (id: string) => revokeRoot(id),
+    onMutate: async (id) => {
+      await queryClient.cancelQueries({ queryKey: ['library', 'roots'] });
+      const previous = queryClient.getQueryData<LibraryRoot[]>([
+        'library',
+        'roots',
+      ]);
+      queryClient.setQueryData<LibraryRoot[]>(['library', 'roots'], (current) =>
+        (current ?? []).map((root) =>
+          root.id === id
+            ? { ...root, is_active: false, revoked_at: new Date().toISOString() }
+            : root,
+        ),
+      );
+      return { previous };
+    },
+    onSuccess: (root) => {
+      setRevokeTarget(null);
+      setBanner(`Revoked “${root.display_name}”. Future scans will skip it.`);
+    },
+    onError: (_error, _id, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(['library', 'roots'], context.previous);
+      }
+      setBanner('Could not revoke that folder. Please try again.');
+    },
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: ['library', 'roots'] });
+      void queryClient.invalidateQueries({ queryKey: ['diagnostics'] });
+    },
+  });
+
   return (
-    <>
+    <div className="space-y-6">
       <PageHeader
         eyebrow="Library"
         title="Indexed media"
-        description="Authorized folders, scanned files, and analysis state. Coming in Feature 3."
+        description="Add approved folders, scan them without copying files, and keep the local index current."
         actions={
-          <Button disabled aria-disabled="true" title="Wired in Feature 3">
-            Add folder
+          <Button
+            onClick={() => register.mutate()}
+            disabled={register.isPending || roots.isPending}
+            leftIcon={<FolderSearch className="size-4" />}
+          >
+            {register.isPending ? 'Adding…' : 'Add folder'}
           </Button>
         }
       />
-      <EmptyState
-        title="No roots registered"
-        description="The folder picker and scan machinery land in Feature 3. Until then, the UI is intentionally empty."
-      />
-    </>
+
+      {banner ? (
+        <div
+          role="status"
+          className="flex items-start justify-between gap-3 rounded-lg border border-border bg-card px-4 py-3 text-sm shadow-sm"
+        >
+          <span>{banner}</span>
+          <button
+            type="button"
+            onClick={() => setBanner(null)}
+            className="rounded-md p-0.5 text-muted-foreground transition-colors hover:text-foreground"
+            aria-label="Dismiss"
+          >
+            <X aria-hidden="true" className="size-3.5" />
+          </button>
+        </div>
+      ) : null}
+
+      {roots.isPending ? (
+        <div className="flex items-center gap-3 text-sm text-muted-foreground">
+          <Spinner label="Loading registered roots" />
+        </div>
+      ) : null}
+
+      {roots.isError ? (
+        <ErrorPanel
+          title="Could not load roots"
+          error={roots.error}
+          onRetry={() => void roots.refetch()}
+        />
+      ) : null}
+
+      {roots.data && roots.data.length === 0 && !roots.isPending ? (
+        <EmptyState
+          title="No folders yet"
+          description="Choose a folder of lectures or tutorials. LectorBit indexes it locally and never copies or uploads your media."
+          action={
+            <Button
+              onClick={() => register.mutate()}
+              disabled={register.isPending}
+              leftIcon={<FolderSearch className="size-4" />}
+            >
+              Add your first folder
+            </Button>
+          }
+        />
+      ) : null}
+
+      {roots.data && roots.data.length > 0 ? (
+        <RootsTable
+          roots={roots.data}
+          jobs={jobs.data ?? []}
+          liveScans={liveScans}
+          pendingScanRootId={scan.variables?.rootId ?? null}
+          pendingRevokeId={revoke.variables ?? null}
+          onScan={(rootId) => scan.mutate({ rootId })}
+          onRequestRevoke={setRevokeTarget}
+        />
+      ) : null}
+
+      {revokeTarget ? (
+        <RevokeDialog
+          root={revokeTarget}
+          pending={revoke.isPending}
+          onCancel={() => setRevokeTarget(null)}
+          onConfirm={() => revoke.mutate(revokeTarget.id)}
+        />
+      ) : null}
+    </div>
   );
+}
+
+function RootsTable({
+  roots,
+  jobs,
+  liveScans,
+  pendingScanRootId,
+  pendingRevokeId,
+  onScan,
+  onRequestRevoke,
+}: {
+  roots: LibraryRoot[];
+  jobs: ScanJob[];
+  liveScans: Record<string, LiveScan>;
+  pendingScanRootId: string | null;
+  pendingRevokeId: string | null;
+  onScan: (rootId: string) => void;
+  onRequestRevoke: (root: LibraryRoot) => void;
+}) {
+  const sorted = useMemo(
+    () =>
+      [...roots].sort((left, right) => {
+        if (left.is_active === right.is_active) return 0;
+        return left.is_active ? -1 : 1;
+      }),
+    [roots],
+  );
+  const active = roots.filter((root) => root.is_active).length;
+  const latestJobByRoot = useMemo(() => {
+    const map = new Map<string, ScanJob>();
+    for (const job of jobs) {
+      if (!map.has(job.root_id)) map.set(job.root_id, job);
+    }
+    return map;
+  }, [jobs]);
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Approved folders</CardTitle>
+        <CardDescription>
+          {active} active · {roots.length - active} revoked
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[760px] text-sm">
+            <thead>
+              <tr className="border-b border-border text-left text-xs font-medium uppercase tracking-[0.08em] text-muted-foreground">
+                <th className="py-2.5 pr-4">Folder</th>
+                <th className="py-2.5 pr-4">Access</th>
+                <th className="py-2.5 pr-4">Latest scan</th>
+                <th className="py-2.5 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {sorted.map((root) => {
+                const job = latestJobByRoot.get(root.id);
+                const live = liveScans[root.id];
+                const activeJob = job ? isActiveJob(job) : false;
+                const scanPending =
+                  pendingScanRootId === root.id || activeJob || live?.status === 'processing';
+                return (
+                  <tr key={root.id} className={cn(!root.is_active && 'opacity-60')}>
+                    <td className="py-4 pr-4 align-top">
+                      <div className="flex flex-col gap-0.5">
+                        <span className="font-medium">{root.display_name}</span>
+                        <span className="font-mono text-xs text-muted-foreground">
+                          {root.path_redacted}
+                        </span>
+                      </div>
+                    </td>
+                    <td className="py-4 pr-4 align-top">
+                      {root.is_active ? (
+                        <Badge tone="success">
+                          <CircleCheck aria-hidden="true" className="size-3.5" />
+                          Active
+                        </Badge>
+                      ) : (
+                        <Badge tone="neutral">
+                          <Ban aria-hidden="true" className="size-3.5" />
+                          Revoked
+                        </Badge>
+                      )}
+                    </td>
+                    <td className="min-w-64 py-4 pr-4 align-top">
+                      <ScanState live={live} job={job} />
+                    </td>
+                    <td className="py-4 text-right align-top">
+                      {root.is_active ? (
+                        <div className="flex justify-end gap-2">
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            disabled={scanPending}
+                            onClick={() => onScan(root.id)}
+                            leftIcon={<ScanLine className="size-3.5" />}
+                          >
+                            {scanPending ? 'Scanning…' : job ? 'Scan again' : 'Scan'}
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={pendingRevokeId === root.id}
+                            onClick={() => onRequestRevoke(root)}
+                          >
+                            {pendingRevokeId === root.id ? 'Revoking…' : 'Revoke'}
+                          </Button>
+                        </div>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">—</span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function ScanState({ live, job }: { live?: LiveScan; job?: ScanJob }) {
+  const state = live ?? (job ? liveScanFromJob(job) : undefined);
+  if (!state) {
+    return <span className="text-xs text-muted-foreground">Not scanned yet</span>;
+  }
+  const hasProgress =
+    state.current !== undefined && state.total !== undefined && state.total > 0;
+  const progress = hasProgress
+    ? Math.min(100, Math.round((state.current! / state.total!) * 100))
+    : undefined;
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex items-center gap-2">
+        <StatusBadge status={state.status} />
+        <span className="text-xs text-muted-foreground">{state.label}</span>
+      </div>
+      {progress !== undefined && state.status === 'processing' ? (
+        <div
+          role="progressbar"
+          aria-label="Scan progress"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={progress}
+          className="h-1.5 overflow-hidden rounded-full bg-muted"
+        >
+          <div
+            className="h-full rounded-full bg-primary transition-[width] duration-200 ease-out"
+            style={{ width: `${progress}%` }}
+          />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function RevokeDialog({
+  root,
+  pending,
+  onCancel,
+  onConfirm,
+}: {
+  root: LibraryRoot;
+  pending: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    cancelRef.current?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !pending) onCancel();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [onCancel, pending]);
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="revoke-title"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-stone-950/60 px-4 backdrop-blur-[2px]"
+    >
+      <div className="w-full max-w-md rounded-lg border border-border bg-background p-6 shadow-md">
+        <h2 id="revoke-title" className="font-display text-lg font-semibold">
+          Revoke “{root.display_name}”?
+        </h2>
+        <p className="mt-2 text-sm text-muted-foreground">
+          Future scans will skip this folder. Existing progress stays intact and
+          files remain untouched on disk.
+        </p>
+        <p className="mt-3 rounded-md bg-muted px-3 py-2 font-mono text-xs text-muted-foreground">
+          {root.path_redacted}
+        </p>
+        <div className="mt-5 flex justify-end gap-2">
+          <Button ref={cancelRef} variant="ghost" onClick={onCancel} disabled={pending}>
+            Cancel
+          </Button>
+          <Button variant="destructive" onClick={onConfirm} disabled={pending}>
+            {pending ? 'Revoking…' : 'Revoke root'}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function liveScanFromEvent(event: ScanEvent): LiveScan {
+  switch (event.event) {
+    case 'started':
+      return { status: 'processing', label: 'Reading approved folder' };
+    case 'discovering':
+      return {
+        status: 'processing',
+        label: `${event.data.mediaCandidates.toLocaleString()} media found`,
+      };
+    case 'indexing':
+      return {
+        status: 'processing',
+        label: `Indexing ${event.data.current.toLocaleString()} of ${event.data.total.toLocaleString()}`,
+        current: event.data.current,
+        total: event.data.total,
+      };
+    case 'completed':
+      return {
+        status: 'completed',
+        label:
+          event.data.issues > 0
+            ? `${event.data.indexed.toLocaleString()} indexed · ${event.data.issues.toLocaleString()} skipped`
+            : `${event.data.indexed.toLocaleString()} indexed`,
+      };
+    case 'failed':
+      return { status: 'failed', label: event.data.message };
+  }
+}
+
+function liveScanFromJob(job: ScanJob): LiveScan {
+  switch (job.status) {
+    case 'queued':
+      return { status: 'queued', label: 'Waiting for a worker' };
+    case 'running':
+      return { status: 'processing', label: 'Scanning in background' };
+    case 'completed':
+      return { status: 'completed', label: formatTimestamp(job.updated_at) };
+    case 'failed':
+    case 'cancelled':
+      return { status: 'failed', label: job.last_error ?? 'Scan stopped' };
+    case 'paused':
+    case 'retry_wait':
+      return { status: 'attention', label: 'Waiting to resume' };
+  }
+}
+
+function isActiveJob(job: ScanJob): boolean {
+  return job.status === 'queued' || job.status === 'running' || job.status === 'retry_wait';
+}
+
+function humanizeError(error: unknown): string {
+  if (error instanceof LibraryRpcError) {
+    return humanize(error.kind, error.message);
+  }
+  return error instanceof Error ? error.message : String(error);
+}
+
+function humanize(kind: LibraryErrorKind, fallback: string): string {
+  switch (kind) {
+    case 'empty_path':
+      return 'No folder was selected.';
+    case 'not_a_directory':
+      return 'That location is not an available folder.';
+    case 'not_found':
+      return 'That folder is no longer available.';
+    case 'io':
+      return 'LectorBit could not read that folder.';
+    case 'database':
+      return 'The local database could not save this change.';
+    case 'internal':
+      return fallback;
+  }
+}
+
+function formatTimestamp(iso: string): string {
+  const timestamp = Date.parse(iso);
+  if (Number.isNaN(timestamp)) return '—';
+  return new Date(timestamp).toLocaleString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 }

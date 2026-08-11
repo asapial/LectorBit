@@ -1,53 +1,37 @@
-//! LectorBit Tauri app shell.
-//!
-//! Responsibilities (kept intentionally thin):
-//! - bootstrap tracing with the redaction MakeWriter
-//! - open the SQLite database and run migrations
-//! - register plugins
-//! - open the main window with a narrow capability
-//! - hand control over to services / IPC adapters
-//!
-//! Business logic lives in `lectorbit_services`. Privileged IPC is exposed via
-//! `tauri-plugin-lectorbit` so commands can be capability-gated per-window.
+//! Thin Tauri shell: bootstrap, managed adapters, and capability-gated plugins.
 
 use std::io::stderr;
 use std::sync::Arc;
 
-use lectorbit_db::RedactingMakeWriter;
-use lectorbit_services::DiagnosticsService;
+use lectorbit_db::{LibraryRootsRepo, RedactingMakeWriter};
+use lectorbit_services::{DiagnosticsService, LibraryService};
 use tauri::Manager;
-use tauri_plugin_lectorbit::DiagnosticsProvider;
+use tauri_plugin_lectorbit::{DiagnosticsProvider, LibraryOps};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::EnvFilter;
 
-/// Adapter that wraps `DiagnosticsService` so the plugin's `DiagnosticsProvider`
-/// trait can be satisfied without depending on `lectorbit_services`.
+mod library_adapter;
+use library_adapter::LibraryAdapter;
+
 struct DiagnosticsAdapter(DiagnosticsService);
 
 impl DiagnosticsProvider for DiagnosticsAdapter {
     fn snapshot(&self) -> serde_json::Value {
-        // We can't await in a sync trait. Build a small dedicated runtime
-        // for the one-shot snapshot — diagnostics are rare and tiny, so the
-        // overhead is fine and keeps the plugin API sync.
-        let svc = self.0.clone();
-        let value = tauri::async_runtime::block_on(async move {
-            let report = svc.collect().await;
-            serde_json::to_value(&report).unwrap_or_else(|e| {
-                tracing::warn!(target: "diagnostics", error = %e, "snapshot serialization failed");
+        let service = self.0.clone();
+        tauri::async_runtime::block_on(async move {
+            serde_json::to_value(service.collect().await).unwrap_or_else(|error| {
+                tracing::warn!(target: "diagnostics", %error, "snapshot serialization failed");
                 serde_json::json!({ "error": "diagnostics serialization failed" })
             })
-        });
-        value
+        })
     }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tracing_subscriber::registry()
-        .with(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
-        )
+        .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))
         .with(
             tracing_subscriber::fmt::layer()
                 .with_writer(RedactingMakeWriter::new(stderr()))
@@ -59,36 +43,36 @@ pub fn run() {
         .plugin(tauri_plugin_lectorbit::init())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
-            // Determine the SQLite file path. We use Tauri's `app_data_dir()`
-            // because it gives us a per-OS, writable location that's already
-            // routed correctly for sandboxing.
             let app_data = app
                 .path()
                 .app_data_dir()
-                .map_err(|e| format!("resolve app_data_dir: {e}"))?;
+                .map_err(|error| format!("resolve app data directory: {error}"))?;
             std::fs::create_dir_all(&app_data)
-                .map_err(|e| format!("create app_data_dir {}: {e}", app_data.display()))?;
-            let db_path = app_data.join("lectordb.sqlite");
+                .map_err(|error| format!("create app data directory: {error}"))?;
+            let database_path = app_data.join("lectordb.sqlite");
+            let database = tauri::async_runtime::block_on(lectorbit_db::Db::open(&database_path))
+                .map_err(|error| format!("open application database: {error}"))?;
 
-            // Open DB (runs migrations on first start). Failure here should be
-            // surfaced cleanly to the user; for now we panic with a useful
-            // message because there's no UI plumbing yet.
-            let db = tauri::async_runtime::block_on(lectorbit_db::Db::open(&db_path))
-                .map_err(|e| format!("open database {}: {e}", db_path.display()))?;
-
-            let started_at = chrono::Utc::now();
             let diagnostics = DiagnosticsService::new(
-                db,
+                database.clone(),
                 env!("CARGO_PKG_VERSION"),
                 env!("LECTORBIT_BUILD", "dev"),
-                started_at,
+                chrono::Utc::now(),
             );
+            let library_service =
+                LibraryService::new(LibraryRootsRepo::new(database.pool().clone()));
+            let library_adapter = Arc::new(LibraryAdapter::new(
+                library_service,
+                database.pool().clone(),
+            ));
+            tauri::async_runtime::block_on(library_adapter.recover_and_resume())
+                .map_err(|error| format!("recover interrupted jobs: {error}"))?;
 
-            // Register the adapter for `app_get_diagnostics`.
             app.manage(Arc::new(DiagnosticsAdapter(diagnostics)) as Arc<dyn DiagnosticsProvider>);
+            app.manage(library_adapter as Arc<dyn LibraryOps>);
 
-            if let Some(win) = app.get_webview_window("main") {
-                let _ = win.show();
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
             }
             Ok(())
         })

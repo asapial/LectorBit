@@ -1832,9 +1832,11 @@ dependencies = [
  "chrono",
  "lectorbit_core",
  "lectorbit_db",
+ "lectorbit_media",
  "lectorbit_services",
  "serde",
  "serde_json",
+ "sqlx",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
@@ -1842,6 +1844,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]
@@ -1888,6 +1891,7 @@ version = "0.1.0"
 dependencies = [
  "lectorbit_core",
  "serde",
+ "tempfile",
  "thiserror 1.0.69",
  "tokio",
  "tracing",
@@ -1913,9 +1917,13 @@ dependencies = [
  "lectorbit_core",
  "lectorbit_db",
  "serde",
+ "serde_json",
+ "sqlx",
+ "tempfile",
  "thiserror 1.0.69",
  "tokio",
  "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -3840,7 +3848,9 @@ dependencies = [
  "serde",
  "serde_json",
  "tauri",
+ "tauri-plugin-dialog",
  "thiserror 1.0.69",
+ "tokio",
 ]
 
 [[package]]

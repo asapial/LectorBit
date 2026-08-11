@@ -8,11 +8,15 @@ license.workspace = true
 [dependencies]
 lectorbit_core = { workspace = true }
 lectorbit_db = { workspace = true }
+sqlx = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 chrono = { workspace = true }
+uuid = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt"] }
+tempfile = { workspace = true }

@@ -17,9 +17,11 @@ pub mod error;
 pub mod migrations;
 pub mod pool;
 pub mod redaction;
+pub mod repo;
 
 pub use error::{DbError, DbResult};
 pub use pool::Db;
 pub use redaction::{redact, redact_event_fields, RedactingMakeWriter};
+pub use repo::library_roots::{InsertOutcome, LibraryRoot, Repo as LibraryRootsRepo};
 
 pub async fn placeholder() {}

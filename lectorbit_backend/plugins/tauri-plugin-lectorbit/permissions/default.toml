@@ -1,14 +1,14 @@
-# Capabilities consumed by the main window.
-#
-# Only LectorBit-specific, narrowly scoped permissions are listed here.
-# Do NOT add generic filesystem / SQL / shell / network / updater permissions.
+# Generated command permissions are composed explicitly here. The renderer has
+# no generic filesystem, shell, process, or SQL permission.
 
-[$parent]
-remote = { urls = ["http://127.0.0.1:1420"] }
-
-[permissions]
-core:default = { all = true }
-dialog:default = { all = true }
-"lectorbit:default" = { all = true }
-"lectorbit:allow-app-get-version" = true
-"lectorbit:allow-app-get-diagnostics" = true
+[default]
+description = "Default LectorBit permissions for the main window"
+permissions = [
+  "allow-app-get-version",
+  "allow-app-get-diagnostics",
+  "allow-library-list-roots",
+  "allow-library-pick-and-register-root",
+  "allow-library-revoke-root",
+  "allow-library-enqueue-scan",
+  "allow-library-list-scan-jobs",
+]

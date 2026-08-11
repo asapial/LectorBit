@@ -1,58 +1,108 @@
-//! Command smoke tests for the internal plugin.
-//!
-//! These run without a Tauri runtime so they stay cheap and don't depend on a
-//! webview harness. They cover:
-//! - `app_get_version` returns a non-empty version string.
-//! - The `DiagnosticsProvider` trait wrapper serializes a hand-built payload
-//!   without leaking sensitive fields.
-
 use std::sync::Arc;
 
-use serde::Serialize;
-use tauri_plugin_lectorbit::{app_get_version, AppVersion, DiagnosticsProvider};
+use tauri_plugin_lectorbit::{
+    app_get_version, BoxFuture, DiagnosticsProvider, LibraryErrorCode, LibraryErrorKind,
+    LibraryOps, LibraryRootDto, ScanEventSink, ScanJobDto,
+};
 
 #[test]
-fn app_get_version_returns_a_version_string() {
-    let v: AppVersion = app_get_version();
-    assert!(!v.version.is_empty());
+fn app_version_is_available_without_a_runtime() {
+    assert!(!app_get_version().version.is_empty());
 }
 
-#[derive(Serialize)]
-struct FakeReport {
-    app: &'static str,
-    redaction_marker_present: bool,
-}
+struct FakeDiagnostics;
 
-struct FakeProvider;
-
-impl DiagnosticsProvider for FakeProvider {
+impl DiagnosticsProvider for FakeDiagnostics {
     fn snapshot(&self) -> serde_json::Value {
-        serde_json::json!({
-            "app": "lectorbit-test",
-            "redaction_marker_present": true,
-        })
+        serde_json::json!({ "redacted": true })
     }
 }
 
 #[test]
-fn diagnostics_provider_trait_produces_a_serializable_snapshot() {
-    let provider: Arc<dyn DiagnosticsProvider> = Arc::new(FakeProvider);
-    let value = provider.snapshot();
-
-    assert_eq!(value["app"], "lectorbit-test");
-    assert_eq!(value["redaction_marker_present"], true);
+fn diagnostics_boundary_is_serializable() {
+    let provider: Arc<dyn DiagnosticsProvider> = Arc::new(FakeDiagnostics);
+    assert_eq!(provider.snapshot()["redacted"], true);
 }
 
-#[test]
-fn fake_report_serializes_cleanly() {
-    // Round-trip a tiny diagnostic-shaped struct through serde_json so we
-    // know the trait's `serde_json::Value` boundary is happy with whatever
-    // the real `DiagnosticsReport` will produce.
-    let report = FakeReport {
-        app: "lectorbit-test",
-        redaction_marker_present: true,
-    };
-    let value = serde_json::to_value(report).expect("serialize");
-    assert_eq!(value["app"], "lectorbit-test");
-    assert!(value["redaction_marker_present"].as_bool().unwrap());
+struct FakeLibrary;
+
+impl LibraryOps for FakeLibrary {
+    fn list_roots(&self) -> BoxFuture<'_, Result<Vec<LibraryRootDto>, LibraryErrorCode>> {
+        Box::pin(async {
+            Ok(vec![LibraryRootDto {
+                id: "root".into(),
+                display_name: "Videos".into(),
+                path_redacted: "[REDACTED]/Videos".into(),
+                registered_at: "2026-08-08T00:00:00Z".into(),
+                revoked_at: None,
+                is_active: true,
+            }])
+        })
+    }
+
+    fn register_selected_root(
+        &self,
+        _selected_path: String,
+    ) -> BoxFuture<'_, Result<LibraryRootDto, LibraryErrorCode>> {
+        Box::pin(async {
+            Err(LibraryErrorCode::new(
+                LibraryErrorKind::NotADirectory,
+                "invalid folder",
+            ))
+        })
+    }
+
+    fn revoke_root(&self, _id: String) -> BoxFuture<'_, Result<LibraryRootDto, LibraryErrorCode>> {
+        Box::pin(async {
+            Err(LibraryErrorCode::new(
+                LibraryErrorKind::NotFound,
+                "unknown root",
+            ))
+        })
+    }
+
+    fn enqueue_scan(
+        &self,
+        root_id: String,
+        _sink: ScanEventSink,
+    ) -> BoxFuture<'_, Result<ScanJobDto, LibraryErrorCode>> {
+        Box::pin(async move {
+            Ok(ScanJobDto {
+                id: "job".into(),
+                root_id,
+                status: "queued".into(),
+                attempt: 0,
+                last_error: None,
+                created_at: "2026-08-08T00:00:00Z".into(),
+                updated_at: "2026-08-08T00:00:00Z".into(),
+            })
+        })
+    }
+
+    fn list_scan_jobs(
+        &self,
+        _root_id: Option<String>,
+    ) -> BoxFuture<'_, Result<Vec<ScanJobDto>, LibraryErrorCode>> {
+        Box::pin(async { Ok(Vec::new()) })
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn library_boundary_exposes_only_safe_root_metadata() {
+    let library: Arc<dyn LibraryOps> = Arc::new(FakeLibrary);
+    let root = library.list_roots().await.expect("roots").remove(0);
+    let serialized = serde_json::to_value(root).expect("serialize");
+    assert_eq!(serialized["path_redacted"], "[REDACTED]/Videos");
+    assert!(serialized.get("canonical_path").is_none());
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn scan_job_is_keyed_by_authorized_root_id() {
+    let library: Arc<dyn LibraryOps> = Arc::new(FakeLibrary);
+    let job = library
+        .enqueue_scan("root".into(), Arc::new(|_| {}))
+        .await
+        .expect("enqueue");
+    assert_eq!(job.root_id, "root");
+    assert_eq!(job.status, "queued");
 }
