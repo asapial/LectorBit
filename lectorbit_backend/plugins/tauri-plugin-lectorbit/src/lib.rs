@@ -495,6 +495,43 @@ pub trait SearchOps: Send + Sync + 'static {
     ) -> BoxFuture<'_, Result<Vec<SearchHitDto>, SearchErrorCode>>;
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct UpdateCheckDto {
+    pub status: String,
+    pub current_version: String,
+    pub version: Option<String>,
+    pub notes: Option<String>,
+    pub published_at: Option<String>,
+    pub target: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(
+    tag = "event",
+    content = "data",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+pub enum UpdateProgressDto {
+    Downloading {
+        downloaded_bytes: u64,
+        total_bytes: Option<u64>,
+    },
+    Installing,
+    Relaunching,
+}
+
+pub type UpdateEventSink = Arc<dyn Fn(UpdateProgressDto) + Send + Sync>;
+
+pub trait UpdateOps: Send + Sync + 'static {
+    fn check(&self) -> BoxFuture<'_, Result<UpdateCheckDto, UpdateErrorCode>>;
+    fn install(
+        &self,
+        version: String,
+        sink: UpdateEventSink,
+    ) -> BoxFuture<'_, Result<(), UpdateErrorCode>>;
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LibraryErrorCode {
     pub kind: LibraryErrorKind,
@@ -622,6 +659,33 @@ impl SearchErrorCode {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateErrorCode {
+    pub kind: UpdateErrorKind,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum UpdateErrorKind {
+    NotConfigured,
+    InvalidRequest,
+    Busy,
+    Network,
+    Verification,
+    Install,
+    Internal,
+}
+
+impl UpdateErrorCode {
+    pub fn new(kind: UpdateErrorKind, message: impl Into<String>) -> Self {
+        Self {
+            kind,
+            message: message.into(),
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub struct RevokeRootArgs {
     pub id: String,
@@ -727,6 +791,11 @@ pub struct SearchArgs {
     pub text: String,
     #[serde(default = "default_search_limit")]
     pub limit: u32,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateInstallArgs {
+    pub version: String,
 }
 
 fn default_media_limit() -> u32 {
@@ -991,6 +1060,25 @@ mod commands {
     ) -> Result<Vec<SearchHitDto>, SearchErrorCode> {
         ops.search(args.text, args.limit).await
     }
+
+    #[tauri::command]
+    pub(crate) async fn updates_check(
+        ops: State<'_, Arc<dyn UpdateOps>>,
+    ) -> Result<UpdateCheckDto, UpdateErrorCode> {
+        ops.check().await
+    }
+
+    #[tauri::command]
+    pub(crate) async fn updates_install(
+        ops: State<'_, Arc<dyn UpdateOps>>,
+        args: UpdateInstallArgs,
+        on_event: Channel<UpdateProgressDto>,
+    ) -> Result<(), UpdateErrorCode> {
+        let sink: UpdateEventSink = Arc::new(move |event| {
+            let _ = on_event.send(event);
+        });
+        ops.install(args.version, sink).await
+    }
 }
 
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
@@ -1038,6 +1126,8 @@ mod plugin_builder {
                 super::commands::analysis_get_transcript_state,
                 super::commands::analysis_list_jobs,
                 super::commands::search_query,
+                super::commands::updates_check,
+                super::commands::updates_install,
             ])
             .build()
     }
@@ -1092,5 +1182,19 @@ mod tests {
         assert_eq!(value["event"], "downloading");
         assert_eq!(value["data"]["jobId"], "job");
         assert_eq!(value["data"]["downloadedBytes"], 10);
+    }
+
+    #[test]
+    fn update_progress_uses_a_tagged_safe_wire_shape() {
+        let value = serde_json::to_value(UpdateProgressDto::Downloading {
+            downloaded_bytes: 512,
+            total_bytes: Some(1024),
+        })
+        .expect("serialize update progress");
+        assert_eq!(value["event"], "downloading");
+        assert_eq!(value["data"]["downloadedBytes"], 512);
+        assert_eq!(value["data"]["totalBytes"], 1024);
+        assert!(value.get("download_url").is_none());
+        assert!(value.get("signature").is_none());
     }
 }

@@ -33,6 +33,8 @@ Default LectorBit permissions for the main window
 - `allow-analysis-get-transcript-state`
 - `allow-analysis-list-jobs`
 - `allow-search-query`
+- `allow-updates-check`
+- `allow-updates-install`
 
 ## Permission Table
 
@@ -793,6 +795,58 @@ Enables the study_record_action command without any pre-configured scope.
 <td>
 
 Denies the study_record_action command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:allow-updates-check`
+
+</td>
+<td>
+
+Enables the updates_check command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:deny-updates-check`
+
+</td>
+<td>
+
+Denies the updates_check command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:allow-updates-install`
+
+</td>
+<td>
+
+Enables the updates_install command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:deny-updates-install`
+
+</td>
+<td>
+
+Denies the updates_install command without any pre-configured scope.
 
 </td>
 </tr>

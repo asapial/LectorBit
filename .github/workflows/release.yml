@@ -1,0 +1,264 @@
+name: Signed release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    environment: release
+    outputs:
+      channel: ${{ steps.release.outputs.channel }}
+      version: ${{ steps.release.outputs.version }}
+      pub_date: ${{ steps.release.outputs.pub_date }}
+    env:
+      UPDATE_PUBKEY: ${{ vars.LECTORBIT_UPDATER_PUBKEY }}
+      STABLE_ENDPOINT: ${{ vars.LECTORBIT_STABLE_UPDATER_ENDPOINT }}
+      BETA_ENDPOINT: ${{ vars.LECTORBIT_BETA_UPDATER_ENDPOINT }}
+      SIDECAR_RELEASE: ${{ vars.LECTORBIT_SIDECAR_RELEASE }}
+      SIDECAR_WINDOWS_SHA256: ${{ vars.LECTORBIT_SIDECAR_WINDOWS_X86_64_SHA256 }}
+      SIDECAR_MACOS_SHA256: ${{ vars.LECTORBIT_SIDECAR_MACOS_X86_64_SHA256 }}
+      SIDECAR_LINUX_SHA256: ${{ vars.LECTORBIT_SIDECAR_LINUX_X86_64_SHA256 }}
+      UPDATE_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+      WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: release
+        name: Validate protected release configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]]
+          channel=stable
+          [[ "$GITHUB_REF_NAME" == *-* ]] && channel=beta
+          endpoint="$STABLE_ENDPOINT"
+          [[ "$channel" == beta ]] && endpoint="$BETA_ENDPOINT"
+          [[ "$endpoint" == https://* ]]
+          for value in UPDATE_PUBKEY SIDECAR_RELEASE SIDECAR_WINDOWS_SHA256 SIDECAR_MACOS_SHA256 SIDECAR_LINUX_SHA256 UPDATE_PRIVATE_KEY WINDOWS_CERTIFICATE WINDOWS_CERTIFICATE_PASSWORD APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+            [[ -n "${!value:-}" ]] || { echo "Missing protected release value: $value" >&2; exit 1; }
+          done
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+          echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          echo "pub_date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+      - name: Validate checked-in provenance metadata
+        run: >-
+          python scripts/release/verify_provenance.py
+          --manifest-dir lectorbit_backend/sidecars/manifests
+          --model-catalog lectorbit_backend/crates/lectorbit_ai/model-catalog.json
+
+  supply-chain:
+    needs: preflight
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: lectorbit_frontend/pnpm-lock.yaml
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.97.1
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-about@0.9.1
+      - name: Install locked frontend graph
+        working-directory: lectorbit_frontend
+        run: pnpm install --frozen-lockfile
+      - name: Generate third-party notices
+        run: |
+          mkdir -p release-supply-chain
+          cargo about generate --manifest-path lectorbit_backend/Cargo.toml scripts/release/third-party-notices.hbs > release-supply-chain/THIRD-PARTY-NOTICES.md
+          pnpm --dir lectorbit_frontend licenses list --long --json > release-supply-chain/npm-licenses.json
+      - uses: anchore/sbom-action@v0
+        with:
+          path: .
+          format: spdx-json
+          output-file: release-supply-chain/lectorbit.spdx.json
+          upload-artifact: false
+      - uses: actions/upload-artifact@v4
+        with:
+          name: supply-chain
+          path: release-supply-chain
+          if-no-files-found: error
+
+  build:
+    needs: preflight
+    environment: release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            platform: windows-x86_64
+            bundles: nsis
+            archive: sidecars-x86_64-pc-windows-msvc.zip
+            sidecar_checksum: LECTORBIT_SIDECAR_WINDOWS_X86_64_SHA256
+          - os: macos-14
+            target: x86_64-apple-darwin
+            platform: darwin-x86_64
+            bundles: dmg
+            archive: sidecars-x86_64-apple-darwin.zip
+            sidecar_checksum: LECTORBIT_SIDECAR_MACOS_X86_64_SHA256
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            platform: linux-x86_64
+            bundles: appimage
+            archive: sidecars-x86_64-unknown-linux-gnu.zip
+            sidecar_checksum: LECTORBIT_SIDECAR_LINUX_X86_64_SHA256
+    runs-on: ${{ matrix.os }}
+    env:
+      LECTORBIT_BUILD: ${{ github.sha }}
+      LECTORBIT_UPDATER_PUBKEY: ${{ vars.LECTORBIT_UPDATER_PUBKEY }}
+      LECTORBIT_UPDATER_ENDPOINT: ${{ needs.preflight.outputs.channel == 'stable' && vars.LECTORBIT_STABLE_UPDATER_ENDPOINT || vars.LECTORBIT_BETA_UPDATER_ENDPOINT }}
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      SIDECAR_RELEASE: ${{ vars.LECTORBIT_SIDECAR_RELEASE }}
+      LECTORBIT_SIDECAR_WINDOWS_X86_64_SHA256: ${{ vars.LECTORBIT_SIDECAR_WINDOWS_X86_64_SHA256 }}
+      LECTORBIT_SIDECAR_MACOS_X86_64_SHA256: ${{ vars.LECTORBIT_SIDECAR_MACOS_X86_64_SHA256 }}
+      LECTORBIT_SIDECAR_LINUX_X86_64_SHA256: ${{ vars.LECTORBIT_SIDECAR_LINUX_X86_64_SHA256 }}
+      APPLE_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: lectorbit_frontend/pnpm-lock.yaml
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.97.1
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: lectorbit_backend
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: tauri-cli@2.11.4
+      - name: Install Tauri Linux dependencies
+        if: runner.os == 'Linux'
+        run: >-
+          sudo apt-get update && sudo apt-get install -y
+          libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - name: Install frontend dependencies
+        working-directory: lectorbit_frontend
+        run: pnpm install --frozen-lockfile
+      - name: Download immutable sidecar bundle
+        shell: bash
+        run: >-
+          gh release download "$SIDECAR_RELEASE" --repo "$GITHUB_REPOSITORY"
+          --pattern "${{ matrix.archive }}" --dir "$RUNNER_TEMP"
+      - name: Verify and extract sidecar bundle
+        shell: bash
+        run: |
+          case "${{ matrix.platform }}" in
+            windows-x86_64) checksum="$LECTORBIT_SIDECAR_WINDOWS_X86_64_SHA256" ;;
+            darwin-x86_64) checksum="$LECTORBIT_SIDECAR_MACOS_X86_64_SHA256" ;;
+            linux-x86_64) checksum="$LECTORBIT_SIDECAR_LINUX_X86_64_SHA256" ;;
+            *) echo "Unknown sidecar platform" >&2; exit 1 ;;
+          esac
+          python scripts/release/extract_sidecar_bundle.py \
+            --archive "$RUNNER_TEMP/${{ matrix.archive }}" \
+            --sha256 "$checksum" \
+            --destination lectorbit_backend/src-tauri/resources/sidecars
+          python scripts/release/verify_provenance.py \
+            --manifest-dir lectorbit_backend/sidecars/manifests \
+            --model-catalog lectorbit_backend/crates/lectorbit_ai/model-catalog.json \
+            --artifact-dir lectorbit_backend/src-tauri/resources/sidecars \
+            --require-target "${{ matrix.target }}"
+      - uses: apple-actions/import-codesign-certs@v3
+        if: runner.os == 'macOS'
+        with:
+          p12-file-base64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          p12-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      - name: Import Windows signing certificate
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          $certificatePath = Join-Path $env:RUNNER_TEMP 'lectorbit-release.pfx'
+          [IO.File]::WriteAllBytes($certificatePath, [Convert]::FromBase64String($env:CERTIFICATE_BASE64))
+          $password = ConvertTo-SecureString $env:CERTIFICATE_PASSWORD -AsPlainText -Force
+          $certificate = Import-PfxCertificate -FilePath $certificatePath -CertStoreLocation Cert:\CurrentUser\My -Password $password
+          "WINDOWS_CERTIFICATE_THUMBPRINT=$($certificate.Thumbprint)" | Out-File -FilePath $env:GITHUB_ENV -Append
+      - name: Write release-only Tauri config
+        shell: bash
+        run: >-
+          python scripts/release/write_tauri_release_config.py
+          --output lectorbit_backend/src-tauri/tauri.release.conf.json
+      - name: Build signed and notarized bundle
+        working-directory: lectorbit_backend
+        run: >-
+          cargo tauri build --locked --target ${{ matrix.target }}
+          --bundles ${{ matrix.bundles }} --config src-tauri/tauri.release.conf.json
+      - name: Stage signed release artifacts
+        shell: bash
+        run: >-
+          python scripts/release/stage_release.py
+          --bundle-dir "lectorbit_backend/target/${{ matrix.target }}/release/bundle"
+          --output "release-${{ matrix.platform }}"
+          --version "${{ needs.preflight.outputs.version }}"
+          --platform "${{ matrix.platform }}"
+          --base-url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}"
+          --notes "LectorBit ${GITHUB_REF_NAME}"
+          --pub-date "${{ needs.preflight.outputs.pub_date }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.platform }}
+          path: release-${{ matrix.platform }}
+          if-no-files-found: error
+
+  publish:
+    needs: [preflight, supply-chain, build]
+    runs-on: ubuntu-latest
+    environment: release
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Merge platform updater metadata
+        shell: bash
+        run: |
+          metadata=latest.json
+          [[ "${{ needs.preflight.outputs.channel }}" == beta ]] && metadata=beta.json
+          python scripts/release/generate_updater_manifest.py merge artifacts/release-*/updater-*.json --output "artifacts/$metadata"
+          find artifacts -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > artifacts/SHA256SUMS
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: artifacts/release-*/*
+      - uses: softprops/action-gh-release@v2
+        with:
+          prerelease: ${{ needs.preflight.outputs.channel == 'beta' }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            artifacts/release-*/*
+            artifacts/supply-chain/*
+            artifacts/*.json
+            artifacts/SHA256SUMS

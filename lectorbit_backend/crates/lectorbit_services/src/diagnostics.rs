@@ -73,9 +73,6 @@ pub struct DiagnosticsService {
     app_version: &'static str,
     app_build: &'static str,
     started_at: DateTime<Utc>,
-    whisper_model_present: bool,
-    ocr_model_present: bool,
-    embeddings_model_present: bool,
 }
 
 impl DiagnosticsService {
@@ -90,22 +87,7 @@ impl DiagnosticsService {
             app_version,
             app_build,
             started_at,
-            // Feature 5 will populate these from the actual model registry on
-            // disk. Until then, the UI shows "missing" which is the honest
-            // answer for a fresh install.
-            whisper_model_present: false,
-            ocr_model_present: false,
-            embeddings_model_present: false,
         }
-    }
-
-    /// Override the AI model presence flags. Used by Feature 5 once the
-    /// model registry exists; safe to call multiple times.
-    pub fn with_ai_presence(mut self, whisper: bool, ocr: bool, embeddings: bool) -> Self {
-        self.whisper_model_present = whisper;
-        self.ocr_model_present = ocr;
-        self.embeddings_model_present = embeddings;
-        self
     }
 
     /// Build the report. Every string is redacted before being returned.
@@ -125,7 +107,7 @@ impl DiagnosticsService {
 
         let database = self.collect_database().await;
         let library = self.collect_library().await;
-        let ai = self.collect_ai();
+        let ai = self.collect_ai().await;
         let recent_errors = self.collect_recent_errors().await;
 
         DiagnosticsReport {
@@ -217,12 +199,36 @@ impl DiagnosticsService {
         }
     }
 
-    fn collect_ai(&self) -> AiSummary {
+    async fn collect_ai(&self) -> AiSummary {
+        let installed: Vec<String> = sqlx::query_scalar(
+            "SELECT m.id FROM models m JOIN model_installs i ON i.model_id = m.id \
+             WHERE i.state = 'ready' AND i.verified_at IS NOT NULL",
+        )
+        .fetch_all(self.db.pool())
+        .await
+        .unwrap_or_else(|error| {
+            warn!(target: "diagnostics", %error, "verified model query failed");
+            Vec::new()
+        });
+        let last_consent: Option<(String, i64)> = sqlx::query_as(
+            "SELECT scope, granted FROM consent_events ORDER BY created_at DESC LIMIT 1",
+        )
+        .fetch_optional(self.db.pool())
+        .await
+        .unwrap_or_else(|error| {
+            warn!(target: "diagnostics", %error, "consent summary query failed");
+            None
+        });
         AiSummary {
-            whisper_model_present: self.whisper_model_present,
-            ocr_model_present: self.ocr_model_present,
-            embeddings_model_present: self.embeddings_model_present,
-            last_consent: None, // Feature 5 will populate this.
+            whisper_model_present: installed.iter().any(|id| id.starts_with("whisper")),
+            ocr_model_present: installed.iter().any(|id| id.starts_with("ocr-")),
+            embeddings_model_present: installed.iter().any(|id| id.starts_with("embeddings-")),
+            last_consent: last_consent.map(|(scope, granted)| {
+                format!(
+                    "{scope}: {}",
+                    if granted == 0 { "denied" } else { "granted" }
+                )
+            }),
         }
     }
 
@@ -334,7 +340,7 @@ mod collect_tests {
 
         // DB fields
         assert_eq!(report.database.schema_version, 0);
-        assert_eq!(report.database.migrations_applied, 1);
+        assert_eq!(report.database.migrations_applied, 6);
         assert!(report.database.sqlite_version.starts_with("3."));
         // journal_mode is "memory" for in-memory DBs, not wal; we don't assert a value.
         assert!(report.database.foreign_keys);
@@ -344,7 +350,7 @@ mod collect_tests {
         assert_eq!(report.library.active_root_count, 0);
         assert_eq!(report.library.media_count, 0);
 
-        // AI fields start as false (Feature 5 will populate them).
+        // A fresh install has no verified models.
         assert!(!report.ai.whisper_model_present);
         assert!(!report.ai.ocr_model_present);
         assert!(!report.ai.embeddings_model_present);
@@ -362,6 +368,38 @@ mod collect_tests {
         let report = svc.collect().await;
         let elapsed = report.app.elapsed_since_launch.expect("elapsed");
         assert!(elapsed.num_seconds() >= 7_200);
+    }
+
+    #[tokio::test]
+    async fn collect_reports_only_verified_ready_models() {
+        let db = lectorbit_db::Db::open_in_memory().await.expect("db");
+        let now = Utc::now().to_rfc3339();
+        sqlx::query(
+            "INSERT INTO models (id, version, provider, source_url, expected_size_bytes, sha256, \
+             architecture, analyzer_compatibility, license) VALUES (?, '1', 'local', \
+             'https://example.invalid/model', 1, ?, 'any', '1', 'test')",
+        )
+        .bind("whisper-base.en")
+        .bind("0".repeat(64))
+        .execute(db.pool())
+        .await
+        .expect("model");
+        sqlx::query(
+            "INSERT INTO model_installs (model_id, state, bytes_downloaded, installed_path, \
+             verified_at, last_error, updated_at) VALUES (?, 'ready', 1, '[REDACTED]', ?, NULL, ?)",
+        )
+        .bind("whisper-base.en")
+        .bind(&now)
+        .bind(&now)
+        .execute(db.pool())
+        .await
+        .expect("install");
+
+        let report = DiagnosticsService::new(db, "0.1.0", "test", Utc::now())
+            .collect()
+            .await;
+        assert!(report.ai.whisper_model_present);
+        assert!(!report.ai.ocr_model_present);
     }
 
     #[tokio::test]

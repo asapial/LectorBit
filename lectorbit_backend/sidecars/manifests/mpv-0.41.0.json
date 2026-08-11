@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "kind": "sidecar",
+  "component": "mpv",
+  "version": "0.41.0",
+  "source": "https://github.com/mpv-player/mpv/archive/refs/tags/v0.41.0.tar.gz",
+  "source_revision": "v0.41.0",
+  "license_spdx": "GPL-2.0-or-later",
+  "license_note": "The packaged build must include mpv's copyright notice and the corresponding GPL source offer or source distribution.",
+  "supported_targets": [
+    "x86_64-pc-windows-msvc",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+    "x86_64-unknown-linux-gnu"
+  ],
+  "artifacts": []
+}

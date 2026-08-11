@@ -29,20 +29,27 @@ pub struct ModelManifest {
     pub license: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct ModelCatalog {
+    schema_version: u32,
+    catalog_version: String,
+    models: Vec<ModelManifest>,
+}
+
 /// Audited model catalog. Model bytes are downloaded only after an explicit
 /// user action and verified before they can be selected for transcription.
 pub fn builtin_models() -> Vec<ModelManifest> {
-    vec![ModelManifest {
-        id: "whisper-base.en".into(),
-        version: "openai-whisper-base.en@80da2d8".into(),
-        provider: "ggerganov/whisper.cpp".into(),
-        source_url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/80da2d8bfee42b0e836fc3a9890373e5defc00a6/ggml-base.en.bin".into(),
-        expected_size_bytes: 147_964_211,
-        sha256: "a03779c86df3323075f5e796cb2ce5029f00ec8869eee3fdfb897afe36c6d002".into(),
-        architecture: "any".into(),
-        analyzer_compatibility: EXPECTED_WHISPER_VERSION.into(),
-        license: "MIT model conversion; upstream OpenAI model terms apply".into(),
-    }]
+    let catalog: ModelCatalog = serde_json::from_str(include_str!("../model-catalog.json"))
+        .expect("embedded model catalog must be valid JSON");
+    assert_eq!(
+        catalog.schema_version, 1,
+        "unsupported model catalog schema"
+    );
+    assert_eq!(
+        catalog.catalog_version, MODEL_CATALOG_VERSION,
+        "model catalog version mismatch"
+    );
+    catalog.models
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

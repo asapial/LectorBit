@@ -28,6 +28,8 @@ const COMMANDS: &[&str] = &[
     "analysis_get_transcript_state",
     "analysis_list_jobs",
     "search_query",
+    "updates_check",
+    "updates_install",
 ];
 
 fn main() {

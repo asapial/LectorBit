@@ -17,9 +17,14 @@ dist/
 target/
 **/*.rs.bk
 Cargo.lock.bak
+__pycache__/
+*.py[cod]
 
 # Tauri generated
-src-tauri/gen/
+**/src-tauri/gen/
+lectorbit_backend/src-tauri/capabilities/e2e.json
+lectorbit_backend/src-tauri/resources/sidecars/
+lectorbit_backend/src-tauri/tauri.release.conf.json
 
 # Local env
 .env

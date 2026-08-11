@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "kind": "sidecar",
+  "component": "whisper-cli",
+  "version": "1.9.2",
+  "source": "https://github.com/ggml-org/whisper.cpp/archive/refs/tags/v1.9.2.tar.gz",
+  "source_revision": "v1.9.2",
+  "license_spdx": "MIT",
+  "license_note": "Package the upstream MIT license with every whisper-cli binary.",
+  "supported_targets": [
+    "x86_64-pc-windows-msvc",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+    "x86_64-unknown-linux-gnu"
+  ],
+  "artifacts": []
+}

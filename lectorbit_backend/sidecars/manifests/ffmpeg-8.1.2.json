@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "kind": "sidecar",
-  "component": "ffprobe",
+  "component": "ffmpeg",
   "version": "8.1.2",
   "source": "https://ffmpeg.org/releases/ffmpeg-8.1.2.tar.xz",
   "source_revision": "n8.1.2",

@@ -1,5 +1,7 @@
 # LectorBit
 
+> Public releases use the fail-closed signing, provenance, SBOM, and updater workflow documented in `project-docs/RELEASE.md`. Private signing material is supplied only by the protected GitHub `release` environment.
+
 Local-first desktop study planner. Authoritative setup: `project-docs/TECHNOLOGY_BASELINE_2026-08.md`. Full tree: `project-docs/FOLDER_STRUCTURE.txt`.
 
 ## Layout

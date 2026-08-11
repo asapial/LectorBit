@@ -14,7 +14,7 @@ use lectorbit_services::{
 };
 use tauri::Manager;
 use tauri_plugin_lectorbit::{
-    AnalysisOps, DiagnosticsProvider, LibraryOps, PlannerOps, PlaybackOps, SearchOps,
+    AnalysisOps, DiagnosticsProvider, LibraryOps, PlannerOps, PlaybackOps, SearchOps, UpdateOps,
 };
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -25,11 +25,13 @@ mod library_adapter;
 mod media_adapter;
 mod planner_adapter;
 mod playback_adapter;
+mod update_adapter;
 use analysis_adapter::AnalysisAdapter;
 use library_adapter::LibraryAdapter;
 use media_adapter::ProbeScheduler;
 use planner_adapter::PlannerAdapter;
 use playback_adapter::PlaybackAdapter;
+use update_adapter::UpdateAdapter;
 
 struct DiagnosticsAdapter(DiagnosticsService);
 
@@ -56,9 +58,15 @@ pub fn run() {
         )
         .init();
 
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_lectorbit::init())
-        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_dialog::init());
+    #[cfg(feature = "e2e")]
+    let builder = builder
+        .plugin(tauri_plugin_wdio::init())
+        .plugin(tauri_plugin_wdio_webdriver::init());
+    builder
         .setup(|app| {
             let app_data = app
                 .path()
@@ -156,6 +164,7 @@ pub fn run() {
             app.manage(Arc::new(PlaybackAdapter::new(playback_service)) as Arc<dyn PlaybackOps>);
             app.manage(analysis_adapter.clone() as Arc<dyn AnalysisOps>);
             app.manage(analysis_adapter as Arc<dyn SearchOps>);
+            app.manage(Arc::new(UpdateAdapter::new(app.handle().clone())) as Arc<dyn UpdateOps>);
 
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.show();

@@ -33,4 +33,6 @@ permissions = [
   "allow-analysis-get-transcript-state",
   "allow-analysis-list-jobs",
   "allow-search-query",
+  "allow-updates-check",
+  "allow-updates-install",
 ]

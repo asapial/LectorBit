@@ -4,6 +4,8 @@ import CheckCircle2 from 'lucide-react/dist/esm/icons/circle-check-big';
 import Cpu from 'lucide-react/dist/esm/icons/cpu';
 import Download from 'lucide-react/dist/esm/icons/download';
 import HardDrive from 'lucide-react/dist/esm/icons/hard-drive';
+import RefreshCw from 'lucide-react/dist/esm/icons/refresh-cw';
+import ShieldCheck from 'lucide-react/dist/esm/icons/shield-check';
 import Trash2 from 'lucide-react/dist/esm/icons/trash-2';
 import TriangleAlert from 'lucide-react/dist/esm/icons/triangle-alert';
 import { PageHeader } from '../../components/layout/PageHeader';
@@ -24,12 +26,20 @@ import {
   type AnalysisProgress,
   type LocalModel,
 } from '../../ipc/analysis';
+import {
+  checkForUpdates,
+  installUpdate,
+  type UpdateCheck,
+  type UpdateProgress,
+} from '../../ipc/updates';
 
 export function SettingsRoute() {
   const queryClient = useQueryClient();
   const [notice, setNotice] = useState<string>();
   const [progress, setProgress] = useState<Record<string, AnalysisProgress>>({});
   const [removeTarget, setRemoveTarget] = useState<LocalModel>();
+  const [update, setUpdate] = useState<UpdateCheck>();
+  const [updateProgress, setUpdateProgress] = useState<UpdateProgress>();
   const models = useQuery({
     queryKey: ['analysis', 'models'] as const,
     queryFn: listModels,
@@ -75,6 +85,24 @@ export function SettingsRoute() {
       jobs.data?.filter((job) => job.status === 'queued' || job.status === 'running').length ?? 0,
     [jobs.data],
   );
+  const updateCheck = useMutation({
+    mutationFn: checkForUpdates,
+    onSuccess: (result) => {
+      setUpdate(result);
+      setNotice(
+        result.status === 'available'
+          ? `LectorBit ${result.version} is available.`
+          : result.status === 'current'
+            ? 'LectorBit is up to date.'
+            : 'Signed updates are disabled in this development build.',
+      );
+    },
+    onError: (error) => setNotice(messageFrom(error)),
+  });
+  const updateInstall = useMutation({
+    mutationFn: (version: string) => installUpdate(version, (event) => setUpdateProgress(event)),
+    onError: (error) => setNotice(messageFrom(error)),
+  });
 
   return (
     <div className="space-y-6">
@@ -85,7 +113,10 @@ export function SettingsRoute() {
       />
 
       {notice ? (
-        <div className="rounded-lg border border-border bg-card px-4 py-3 text-sm shadow-sm" role="status">
+        <div
+          className="rounded-lg border border-border bg-card px-4 py-3 text-sm shadow-sm"
+          role="status"
+        >
           {notice}
         </div>
       ) : null}
@@ -109,11 +140,19 @@ export function SettingsRoute() {
             <div className="h-36 animate-pulse rounded-lg bg-muted motion-reduce:animate-none" />
           ) : null}
           {models.isError ? (
-            <div className="flex items-start gap-3 rounded-lg border border-destructive/30 bg-destructive/10 p-4" role="alert">
+            <div
+              className="flex items-start gap-3 rounded-lg border border-destructive/30 bg-destructive/10 p-4"
+              role="alert"
+            >
               <TriangleAlert className="mt-0.5 size-5 text-destructive" />
               <div>
                 <p className="text-sm font-medium">Models could not be loaded</p>
-                <Button className="mt-3" variant="outline" size="sm" onClick={() => void models.refetch()}>
+                <Button
+                  className="mt-3"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void models.refetch()}
+                >
                   Try again
                 </Button>
               </div>
@@ -137,32 +176,180 @@ export function SettingsRoute() {
 
       <Card>
         <CardHeader>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <CardTitle>App updates</CardTitle>
+              <CardDescription className="mt-1">
+                Checks happen only when you ask. Every public update must pass signature
+                verification before installation.
+              </CardDescription>
+            </div>
+            <ShieldCheck className="size-5 text-primary" aria-hidden="true" />
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <UpdateSummary update={update} progress={updateProgress} />
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="outline"
+              disabled={updateCheck.isPending || updateInstall.isPending}
+              onClick={() => updateCheck.mutate()}
+              leftIcon={
+                <RefreshCw
+                  className={
+                    updateCheck.isPending
+                      ? 'size-4 animate-spin motion-reduce:animate-none'
+                      : 'size-4'
+                  }
+                />
+              }
+            >
+              {updateCheck.isPending ? 'Checking…' : 'Check for updates'}
+            </Button>
+            {update?.status === 'available' && update.version ? (
+              <Button
+                disabled={updateInstall.isPending}
+                onClick={() => updateInstall.mutate(update.version!)}
+              >
+                {updateInstall.isPending ? 'Installing…' : `Install ${update.version}`}
+              </Button>
+            ) : null}
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
           <CardTitle>Privacy boundary</CardTitle>
-          <CardDescription>Local analysis is optional enrichment, never a planning dependency.</CardDescription>
+          <CardDescription>
+            Local analysis is optional enrichment, never a planning dependency.
+          </CardDescription>
         </CardHeader>
         <CardContent className="grid gap-3 text-sm text-muted-foreground sm:grid-cols-3">
           <PrivacyFact icon={<Cpu className="size-4" />} label="Runs through local whisper.cpp" />
-          <PrivacyFact icon={<HardDrive className="size-4" />} label="Stores timestamp text in SQLite" />
-          <PrivacyFact icon={<CheckCircle2 className="size-4" />} label="Sends no media to a provider" />
+          <PrivacyFact
+            icon={<HardDrive className="size-4" />}
+            label="Stores timestamp text in SQLite"
+          />
+          <PrivacyFact
+            icon={<CheckCircle2 className="size-4" />}
+            label="Sends no media to a provider"
+          />
         </CardContent>
       </Card>
 
       {removeTarget ? (
-        <div className="fixed inset-0 z-50 grid place-items-center bg-stone-950/60 px-4 backdrop-blur-[2px]" role="dialog" aria-modal="true" aria-labelledby="remove-model-title">
+        <div
+          className="fixed inset-0 z-50 grid place-items-center bg-stone-950/60 px-4 backdrop-blur-[2px]"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="remove-model-title"
+        >
           <div className="w-full max-w-md rounded-lg border border-border bg-background p-6 shadow-md">
-            <h2 id="remove-model-title" className="font-display text-lg font-semibold">Remove local model?</h2>
+            <h2 id="remove-model-title" className="font-display text-lg font-semibold">
+              Remove local model?
+            </h2>
             <p className="mt-2 text-sm text-muted-foreground">
               This removes {removeTarget.id} from disk. Existing transcript text remains searchable.
             </p>
             <div className="mt-5 flex justify-end gap-2">
-              <Button variant="ghost" disabled={remove.isPending} onClick={() => setRemoveTarget(undefined)}>Cancel</Button>
-              <Button variant="destructive" disabled={remove.isPending} onClick={() => remove.mutate(removeTarget.id)}>
+              <Button
+                variant="ghost"
+                disabled={remove.isPending}
+                onClick={() => setRemoveTarget(undefined)}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                disabled={remove.isPending}
+                onClick={() => remove.mutate(removeTarget.id)}
+              >
                 {remove.isPending ? 'Removing…' : 'Remove model'}
               </Button>
             </div>
           </div>
         </div>
       ) : null}
+    </div>
+  );
+}
+
+function UpdateSummary({ update, progress }: { update?: UpdateCheck; progress?: UpdateProgress }) {
+  if (progress?.event === 'downloading') {
+    const percentage = progress.data.totalBytes
+      ? Math.min(100, Math.round((progress.data.downloadedBytes / progress.data.totalBytes) * 100))
+      : undefined;
+    return (
+      <div className="space-y-2" role="status">
+        <StatusBadge status="processing" />
+        <p className="text-sm text-muted-foreground">
+          Downloading verified update{percentage === undefined ? '…' : ` — ${percentage}%`}
+        </p>
+        {percentage !== undefined ? (
+          <div
+            className="h-1.5 overflow-hidden rounded-full bg-muted"
+            role="progressbar"
+            aria-label="Update download"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={percentage}
+          >
+            <div
+              className="h-full rounded-full bg-primary transition-[width] duration-200 motion-reduce:transition-none"
+              style={{ width: `${percentage}%` }}
+            />
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+  if (progress?.event === 'installing' || progress?.event === 'relaunching') {
+    return (
+      <div className="flex items-center gap-3" role="status">
+        <StatusBadge status="processing" />
+        <p className="text-sm text-muted-foreground">
+          {progress.event === 'installing'
+            ? 'Installing verified update…'
+            : 'Relaunching LectorBit…'}
+        </p>
+      </div>
+    );
+  }
+  if (!update)
+    return (
+      <p className="text-sm text-muted-foreground">Current version status has not been checked.</p>
+    );
+  if (update.status === 'disabled')
+    return (
+      <div className="flex items-center gap-3">
+        <StatusBadge status="attention" />
+        <p className="text-sm text-muted-foreground">
+          Development build — no release endpoint or public key is embedded.
+        </p>
+      </div>
+    );
+  if (update.status === 'current')
+    return (
+      <div className="flex items-center gap-3">
+        <StatusBadge status="completed" />
+        <p className="text-sm text-muted-foreground">
+          Version {update.current_version} is current.
+        </p>
+      </div>
+    );
+  return (
+    <div className="rounded-lg border border-primary/25 bg-accent/45 p-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <StatusBadge status="attention" />
+        <p className="font-medium">Version {update.version} is ready</p>
+      </div>
+      {update.notes ? (
+        <p className="mt-2 whitespace-pre-line text-sm text-muted-foreground">{update.notes}</p>
+      ) : null}
+      <p className="mt-2 font-mono text-xs text-muted-foreground">
+        Signed for {update.target ?? 'this platform'}
+      </p>
     </div>
   );
 }
@@ -183,17 +370,20 @@ function ModelRow({
   onRemove: () => void;
 }) {
   const state = modelState(model, event);
-  const percentage = event?.event === 'downloading'
-    ? Math.min(100, Math.round((event.data.downloadedBytes / event.data.totalBytes) * 100))
-    : model.state === 'downloading' && model.expected_size_bytes > 0
-      ? Math.min(100, Math.round((model.bytes_downloaded / model.expected_size_bytes) * 100))
-      : undefined;
+  const percentage =
+    event?.event === 'downloading'
+      ? Math.min(100, Math.round((event.data.downloadedBytes / event.data.totalBytes) * 100))
+      : model.state === 'downloading' && model.expected_size_bytes > 0
+        ? Math.min(100, Math.round((model.bytes_downloaded / model.expected_size_bytes) * 100))
+        : undefined;
   return (
     <div className="grid gap-4 py-5 first:pt-1 last:pb-1 md:grid-cols-[minmax(0,1fr)_14rem_auto] md:items-center">
       <div>
         <div className="flex flex-wrap items-center gap-2">
           <p className="font-medium">Whisper base English</p>
-          <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">{model.analyzer_compatibility}</span>
+          <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">
+            {model.analyzer_compatibility}
+          </span>
         </div>
         <p className="mt-1 text-xs text-muted-foreground">
           {formatBytes(model.expected_size_bytes)} · {model.provider} · {model.architecture}
@@ -204,38 +394,93 @@ function ModelRow({
         <StatusBadge status={state.kind} />
         <p className="text-xs text-muted-foreground">{state.label}</p>
         {percentage !== undefined ? (
-          <div className="h-1.5 overflow-hidden rounded-full bg-muted" role="progressbar" aria-label="Model download" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percentage}>
-            <div className="h-full rounded-full bg-primary transition-[width] duration-200 motion-reduce:transition-none" style={{ width: `${percentage}%` }} />
+          <div
+            className="h-1.5 overflow-hidden rounded-full bg-muted"
+            role="progressbar"
+            aria-label="Model download"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={percentage}
+          >
+            <div
+              className="h-full rounded-full bg-primary transition-[width] duration-200 motion-reduce:transition-none"
+              style={{ width: `${percentage}%` }}
+            />
           </div>
         ) : null}
       </div>
       {model.state === 'ready' ? (
-        <Button variant="outline" size="sm" disabled={pendingRemove} onClick={onRemove} leftIcon={<Trash2 className="size-4" />}>Remove</Button>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={pendingRemove}
+          onClick={onRemove}
+          leftIcon={<Trash2 className="size-4" />}
+        >
+          Remove
+        </Button>
       ) : (
-        <Button size="sm" disabled={pendingInstall || model.state === 'downloading'} onClick={onInstall} leftIcon={<Download className="size-4" />}>
-          {model.state === 'failed' ? 'Try again' : model.state === 'downloading' ? 'Downloading…' : 'Install'}
+        <Button
+          size="sm"
+          disabled={pendingInstall || model.state === 'downloading'}
+          onClick={onInstall}
+          leftIcon={<Download className="size-4" />}
+        >
+          {model.state === 'failed'
+            ? 'Try again'
+            : model.state === 'downloading'
+              ? 'Downloading…'
+              : 'Install'}
         </Button>
       )}
     </div>
   );
 }
 
-function modelState(model: LocalModel, event?: AnalysisProgress): { kind: StatusKind; label: string } {
+function modelState(
+  model: LocalModel,
+  event?: AnalysisProgress,
+): { kind: StatusKind; label: string } {
   if (event?.event === 'completed') return { kind: 'completed', label: 'Verified and ready' };
   if (event?.event === 'failed') return { kind: 'failed', label: event.data.message };
-  if (event && ['queued', 'downloading'].includes(event.event)) return { kind: event.event === 'queued' ? 'queued' : 'processing', label: event.event === 'queued' ? 'Waiting for download worker' : 'Downloading and verifying' };
+  if (event && ['queued', 'downloading'].includes(event.event))
+    return {
+      kind: event.event === 'queued' ? 'queued' : 'processing',
+      label: event.event === 'queued' ? 'Waiting for download worker' : 'Downloading and verifying',
+    };
   switch (model.state) {
-    case 'ready': return { kind: 'completed', label: model.verified_at ? `Verified ${formatDate(model.verified_at)}` : 'Verified and ready' };
-    case 'downloading': return { kind: 'processing', label: 'Download will resume if interrupted' };
-    case 'failed': return { kind: 'failed', label: model.last_error ?? 'Verification did not complete' };
-    default: return { kind: 'queued', label: 'Not installed' };
+    case 'ready':
+      return {
+        kind: 'completed',
+        label: model.verified_at
+          ? `Verified ${formatDate(model.verified_at)}`
+          : 'Verified and ready',
+      };
+    case 'downloading':
+      return { kind: 'processing', label: 'Download will resume if interrupted' };
+    case 'failed':
+      return { kind: 'failed', label: model.last_error ?? 'Verification did not complete' };
+    default:
+      return { kind: 'queued', label: 'Not installed' };
   }
 }
 
 function PrivacyFact({ icon, label }: { icon: React.ReactNode; label: string }) {
-  return <div className="flex items-center gap-2 rounded-md bg-muted/60 px-3 py-2">{icon}<span>{label}</span></div>;
+  return (
+    <div className="flex items-center gap-2 rounded-md bg-muted/60 px-3 py-2">
+      {icon}
+      <span>{label}</span>
+    </div>
+  );
 }
 
-function formatBytes(bytes: number) { return `${(bytes / 1024 / 1024).toFixed(0)} MB`; }
-function formatDate(value: string) { const date = new Date(value); return Number.isNaN(date.valueOf()) ? 'locally' : date.toLocaleDateString(); }
-function messageFrom(error: unknown) { return error instanceof Error ? error.message : 'The model operation could not continue.'; }
+function formatBytes(bytes: number) {
+  return `${(bytes / 1024 / 1024).toFixed(0)} MB`;
+}
+function formatDate(value: string) {
+  const date = new Date(value);
+  return Number.isNaN(date.valueOf()) ? 'locally' : date.toLocaleDateString();
+}
+function messageFrom(error: unknown) {
+  return error instanceof Error ? error.message : 'The operation could not continue.';
+}
