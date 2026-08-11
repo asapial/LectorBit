@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "tool": "ffprobe",
+  "version": "8.1.2",
+  "source": "https://ffmpeg.org/releases/ffmpeg-8.1.2.tar.xz",
+  "license": "FFmpeg licensing depends on the selected build configuration; record the packaged build flags and notices.",
+  "artifacts": []
+}

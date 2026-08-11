@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import {
   LibraryRpcError,
   listRoots,
+  listMedia,
   listScanJobs,
   pickAndRegisterRoot,
   revokeRoot,
@@ -30,6 +31,31 @@ const job = {
   updated_at: '2026-08-08T00:00:00Z',
 };
 
+const mediaPage = {
+  items: [
+    {
+      id: 'media-1',
+      root_id: 'root-1',
+      display_name: 'lesson.mp4',
+      path_redacted: '[REDACTED]/lesson.mp4',
+      media_kind: 'video',
+      size_bytes: 2048,
+      duration_ms: 90500,
+      container: 'matroska',
+      video_codec: 'h264',
+      audio_codec: 'aac',
+      width: 1920,
+      height: 1080,
+      audio_streams: 1,
+      subtitle_streams: 1,
+      probe_status: 'ready',
+      probe_error: null,
+      discovered_at: '2026-08-08T00:00:00Z',
+    },
+  ],
+  next_cursor: null,
+};
+
 vi.mock('@tauri-apps/api/core', () => {
   class MockChannel<T> {
     onmessage: (message: T) => void = () => undefined;
@@ -45,6 +71,9 @@ vi.mock('@tauri-apps/api/core', () => {
       }
       if (command === 'plugin:lectorbit|library_list_scan_jobs') {
         return Promise.resolve([job]);
+      }
+      if (command === 'plugin:lectorbit|library_list_media') {
+        return Promise.resolve(mediaPage);
       }
       if (command === 'plugin:lectorbit|library_enqueue_scan') {
         const channel = payload?.onEvent as MockChannel<unknown>;
@@ -71,6 +100,17 @@ describe('ipc/library', () => {
     expect(result[0]).not.toHaveProperty('canonical_path');
   });
 
+  it('does not expose raw bridge failures', async () => {
+    vi.mocked(invoke).mockRejectedValueOnce(
+      new Error("Cannot read properties of undefined (reading 'invoke')"),
+    );
+
+    await expect(listRoots()).rejects.toMatchObject({
+      kind: 'internal',
+      message: 'The library service is unavailable.',
+    });
+  });
+
   it('delegates folder selection and registration to one command', async () => {
     const root = await pickAndRegisterRoot();
     expect(root?.id).toBe('root-1');
@@ -82,6 +122,17 @@ describe('ipc/library', () => {
   it('parses durable scan jobs', async () => {
     const result = await listScanJobs('root-1');
     expect(result[0]?.status).toBe('queued');
+  });
+
+  it('parses a renderer-safe media metadata page', async () => {
+    const page = await listMedia({ limit: 25 });
+
+    expect(page.items[0]?.duration_ms).toBe(90500);
+    expect(page.items[0]).not.toHaveProperty('path');
+    expect(invoke).toHaveBeenCalledWith(
+      'plugin:lectorbit|library_list_media',
+      { args: { root_id: null, cursor: null, limit: 25 } },
+    );
   });
 
   it('delivers typed channel progress while enqueueing', async () => {

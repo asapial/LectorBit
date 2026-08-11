@@ -24,7 +24,7 @@ pub struct AppVersion {
 pub fn app_get_version() -> AppVersion {
     AppVersion {
         version: env!("CARGO_PKG_VERSION"),
-        build: env!("LECTORBIT_BUILD", "dev"),
+        build: option_env!("LECTORBIT_BUILD").unwrap_or("dev"),
     }
 }
 
@@ -59,6 +59,33 @@ pub struct ScanJobDto {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MediaListItemDto {
+    pub id: String,
+    pub root_id: String,
+    pub display_name: String,
+    pub path_redacted: String,
+    pub media_kind: String,
+    pub size_bytes: u64,
+    pub duration_ms: Option<u64>,
+    pub container: Option<String>,
+    pub video_codec: Option<String>,
+    pub audio_codec: Option<String>,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub audio_streams: u32,
+    pub subtitle_streams: u32,
+    pub probe_status: String,
+    pub probe_error: Option<String>,
+    pub discovered_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MediaPageDto {
+    pub items: Vec<MediaListItemDto>,
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", tag = "event", content = "data")]
 pub enum ScanProgressDto {
     Started {
@@ -74,6 +101,12 @@ pub enum ScanProgressDto {
         job_id: String,
         current: u64,
         total: u64,
+    },
+    Metadata {
+        job_id: String,
+        completed: u64,
+        total: u64,
+        failed: u64,
     },
     Completed {
         job_id: String,
@@ -104,6 +137,12 @@ pub trait LibraryOps: Send + Sync + 'static {
         &self,
         root_id: Option<String>,
     ) -> BoxFuture<'_, Result<Vec<ScanJobDto>, LibraryErrorCode>>;
+    fn list_media(
+        &self,
+        root_id: Option<String>,
+        cursor: Option<String>,
+        limit: u32,
+    ) -> BoxFuture<'_, Result<MediaPageDto, LibraryErrorCode>>;
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -146,6 +185,20 @@ pub struct EnqueueScanArgs {
 pub struct ListScanJobsArgs {
     #[serde(default)]
     pub root_id: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct ListMediaArgs {
+    #[serde(default)]
+    pub root_id: Option<String>,
+    #[serde(default)]
+    pub cursor: Option<String>,
+    #[serde(default = "default_media_limit")]
+    pub limit: u32,
+}
+
+fn default_media_limit() -> u32 {
+    50
 }
 
 #[tauri::command]
@@ -210,6 +263,15 @@ pub async fn library_list_scan_jobs(
         .await
 }
 
+#[tauri::command]
+pub async fn library_list_media(
+    ops: State<'_, Arc<dyn LibraryOps>>,
+    args: Option<ListMediaArgs>,
+) -> Result<MediaPageDto, LibraryErrorCode> {
+    let args = args.unwrap_or_default();
+    ops.list_media(args.root_id, args.cursor, args.limit).await
+}
+
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::new("lectorbit")
         .invoke_handler(tauri::generate_handler![
@@ -220,6 +282,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             library_revoke_root,
             library_enqueue_scan,
             library_list_scan_jobs,
+            library_list_media,
         ])
         .build()
 }
@@ -238,5 +301,15 @@ mod tests {
         .expect("serialize");
         assert_eq!(value["event"], "indexing");
         assert_eq!(value["data"]["current"], 4);
+
+        let metadata = serde_json::to_value(ScanProgressDto::Metadata {
+            job_id: "probe".into(),
+            completed: 2,
+            total: 3,
+            failed: 1,
+        })
+        .expect("serialize metadata");
+        assert_eq!(metadata["event"], "metadata");
+        assert_eq!(metadata["data"]["jobId"], "probe");
     }
 }

@@ -11,4 +11,5 @@ permissions = [
   "allow-library-revoke-root",
   "allow-library-enqueue-scan",
   "allow-library-list-scan-jobs",
+  "allow-library-list-media",
 ]

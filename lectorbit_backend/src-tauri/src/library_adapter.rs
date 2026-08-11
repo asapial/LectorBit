@@ -1,21 +1,36 @@
 use std::sync::Arc;
 
-use lectorbit_services::{Job, JobStatus, LibraryService, ScanJobPayload};
+use lectorbit_db::DiscoveredMedia;
+use lectorbit_services::{Job, JobStatus, LibraryService, MediaService, ScanJobPayload};
 use sqlx::SqlitePool;
 use tauri_plugin_lectorbit::{
-    BoxFuture, LibraryErrorCode, LibraryErrorKind, LibraryOps, LibraryRootDto, ScanEventSink,
-    ScanJobDto, ScanProgressDto,
+    BoxFuture, LibraryErrorCode, LibraryErrorKind, LibraryOps, LibraryRootDto, MediaListItemDto,
+    MediaPageDto, ScanEventSink, ScanJobDto, ScanProgressDto,
 };
+
+use crate::media_adapter::ProbeScheduler;
 
 #[derive(Clone)]
 pub struct LibraryAdapter {
     service: LibraryService,
+    media: MediaService,
+    probes: ProbeScheduler,
     pool: SqlitePool,
 }
 
 impl LibraryAdapter {
-    pub fn new(service: LibraryService, pool: SqlitePool) -> Self {
-        Self { service, pool }
+    pub fn new(
+        service: LibraryService,
+        media: MediaService,
+        probes: ProbeScheduler,
+        pool: SqlitePool,
+    ) -> Self {
+        Self {
+            service,
+            media,
+            probes,
+            pool,
+        }
     }
 
     pub async fn recover_and_resume(&self) -> Result<(), String> {
@@ -83,30 +98,29 @@ impl LibraryAdapter {
         .map_err(|error| error.to_string())?;
 
         let total = crawl.candidates.len() as u64;
-        let mut transaction = self.pool.begin().await.map_err(safe_database_error)?;
-        for (index, candidate) in crawl.candidates.iter().enumerate() {
-            let id = uuid::Uuid::new_v4().to_string();
+        let issue_count = crawl.issues.len() as u64;
+        let mut discovered = Vec::with_capacity(crawl.candidates.len());
+        for (index, candidate) in crawl.candidates.into_iter().enumerate() {
             let modified =
                 chrono::DateTime::<chrono::Utc>::from_timestamp_millis(candidate.modified_unix_ms)
                     .unwrap_or_else(chrono::Utc::now)
                     .to_rfc3339();
-            sqlx::query(
-                "INSERT INTO media_files \
-                 (id, root_id, folder_id, path, size_bytes, mtime, discovered_at) \
-                 VALUES (?, ?, NULL, ?, ?, ?, ?) \
-                 ON CONFLICT(root_id, path) DO UPDATE SET \
-                   size_bytes = excluded.size_bytes, mtime = excluded.mtime, \
-                   discovered_at = excluded.discovered_at",
-            )
-            .bind(id)
-            .bind(&payload.root_id)
-            .bind(candidate.absolute_path.to_string_lossy().into_owned())
-            .bind(i64::try_from(candidate.size_bytes).unwrap_or(i64::MAX))
-            .bind(modified)
-            .bind(chrono::Utc::now().to_rfc3339())
-            .execute(&mut *transaction)
-            .await
-            .map_err(safe_database_error)?;
+            let display_name = candidate
+                .absolute_path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("Untitled media")
+                .to_string();
+            discovered.push(DiscoveredMedia {
+                path: candidate.absolute_path.to_string_lossy().into_owned(),
+                display_name,
+                media_kind: match candidate.kind {
+                    lectorbit_media::MediaKind::Video => "video".into(),
+                    lectorbit_media::MediaKind::Audio => "audio".into(),
+                },
+                size_bytes: i64::try_from(candidate.size_bytes).unwrap_or(i64::MAX),
+                mtime: modified,
+            });
 
             let current = (index + 1) as u64;
             if current == total || current % 25 == 0 {
@@ -117,14 +131,21 @@ impl LibraryAdapter {
                 });
             }
         }
-        transaction.commit().await.map_err(safe_database_error)?;
+        let probe_candidates = self
+            .media
+            .reconcile_discovery(&payload.root_id, &discovered, issue_count == 0)
+            .await
+            .map_err(|error| error.to_string())?;
+        self.probes
+            .enqueue_candidates(probe_candidates, sink.clone())
+            .await?;
         lectorbit_services::mark_completed(&self.pool, &job.id)
             .await
             .map_err(|error| error.to_string())?;
         sink(ScanProgressDto::Completed {
             job_id: job.id,
             indexed: total,
-            issues: crawl.issues.len() as u64,
+            issues: issue_count,
         });
         Ok(())
     }
@@ -206,6 +227,27 @@ impl LibraryOps for LibraryAdapter {
                 .map_err(|message| LibraryErrorCode::new(LibraryErrorKind::Internal, message))
         })
     }
+
+    fn list_media(
+        &self,
+        root_id: Option<String>,
+        cursor: Option<String>,
+        limit: u32,
+    ) -> BoxFuture<'_, Result<MediaPageDto, LibraryErrorCode>> {
+        Box::pin(async move {
+            self.media
+                .list_page(root_id.as_deref(), cursor.as_deref(), limit)
+                .await
+                .map(to_media_page_dto)
+                .map_err(|error| {
+                    tracing::error!(%error, "list media failed");
+                    LibraryErrorCode::new(
+                        LibraryErrorKind::Database,
+                        "Could not load the media library.",
+                    )
+                })
+        })
+    }
 }
 
 fn to_root_dto(root: lectorbit_services::LibraryRootView) -> LibraryRootDto {
@@ -237,6 +279,35 @@ fn to_scan_job_dto_with_root(job: Job, root_id: String) -> Result<ScanJobDto, St
     })
 }
 
+fn to_media_page_dto(page: lectorbit_db::MediaPage) -> MediaPageDto {
+    MediaPageDto {
+        items: page
+            .items
+            .into_iter()
+            .map(|item| MediaListItemDto {
+                id: item.id,
+                root_id: item.root_id,
+                display_name: item.display_name,
+                path_redacted: item.path_redacted,
+                media_kind: item.media_kind,
+                size_bytes: item.size_bytes,
+                duration_ms: item.duration_ms,
+                container: item.container,
+                video_codec: item.video_codec,
+                audio_codec: item.audio_codec,
+                width: item.width,
+                height: item.height,
+                audio_streams: item.audio_streams,
+                subtitle_streams: item.subtitle_streams,
+                probe_status: item.probe_status,
+                probe_error: item.probe_error,
+                discovered_at: item.discovered_at,
+            })
+            .collect(),
+        next_cursor: page.next_cursor,
+    }
+}
+
 fn map_library_error(error: lectorbit_services::LibraryError) -> LibraryErrorCode {
     use lectorbit_services::LibraryError;
     tracing::warn!(%error, "library operation failed");
@@ -261,9 +332,4 @@ fn map_library_error(error: lectorbit_services::LibraryError) -> LibraryErrorCod
             "The library database operation failed.",
         ),
     }
-}
-
-fn safe_database_error(error: sqlx::Error) -> String {
-    tracing::error!(%error, "scan database operation failed");
-    "Could not update the media index.".to_string()
 }

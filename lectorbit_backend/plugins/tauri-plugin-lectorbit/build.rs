@@ -6,6 +6,7 @@ const COMMANDS: &[&str] = &[
     "library_revoke_root",
     "library_enqueue_scan",
     "library_list_scan_jobs",
+    "library_list_media",
 ];
 
 fn main() {

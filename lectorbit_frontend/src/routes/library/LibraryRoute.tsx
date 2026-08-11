@@ -2,10 +2,19 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import Ban from 'lucide-react/dist/esm/icons/ban';
 import CircleCheck from 'lucide-react/dist/esm/icons/circle-check';
 import FolderSearch from 'lucide-react/dist/esm/icons/folder-search';
+import FileAudio from 'lucide-react/dist/esm/icons/file-audio';
+import FileVideo from 'lucide-react/dist/esm/icons/file-video';
 import ScanLine from 'lucide-react/dist/esm/icons/scan-line';
 import X from 'lucide-react/dist/esm/icons/x';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query';
+import { useVirtualizer } from '@tanstack/react-virtual';
+import {
+  listMedia,
   listRoots,
   listScanJobs,
   pickAndRegisterRoot,
@@ -14,6 +23,7 @@ import {
   LibraryRpcError,
   type LibraryErrorKind,
   type LibraryRoot,
+  type MediaListItem,
   type ScanEvent,
   type ScanJob,
 } from '../../ipc/library';
@@ -60,6 +70,21 @@ export function LibraryRoute() {
       query.state.data?.some((job) => isActiveJob(job)) ? 1_500 : false,
   });
 
+  const media = useInfiniteQuery({
+    queryKey: ['library', 'media'] as const,
+    queryFn: ({ pageParam }) => listMedia({ cursor: pageParam, limit: 50 }),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
+    refetchInterval: (query) =>
+      query.state.data?.pages.some((page) =>
+        page.items.some(
+          (item) => item.probe_status === 'queued' || item.probe_status === 'probing',
+        ),
+      )
+        ? 1_500
+        : false,
+  });
+
   const scan = useMutation({
     mutationFn: ({ rootId }: { rootId: string }) =>
       startScan(rootId, (event) => {
@@ -72,6 +97,10 @@ export function LibraryRoute() {
             queryKey: ['library', 'scan-jobs'],
           });
           void queryClient.invalidateQueries({ queryKey: ['diagnostics'] });
+          void queryClient.invalidateQueries({ queryKey: ['library', 'media'] });
+        }
+        if (event.event === 'metadata' && event.data.completed === event.data.total) {
+          void queryClient.invalidateQueries({ queryKey: ['library', 'media'] });
         }
       }),
     onMutate: ({ rootId }) => {
@@ -210,15 +239,26 @@ export function LibraryRoute() {
       ) : null}
 
       {roots.data && roots.data.length > 0 ? (
-        <RootsTable
-          roots={roots.data}
-          jobs={jobs.data ?? []}
-          liveScans={liveScans}
-          pendingScanRootId={scan.variables?.rootId ?? null}
-          pendingRevokeId={revoke.variables ?? null}
-          onScan={(rootId) => scan.mutate({ rootId })}
-          onRequestRevoke={setRevokeTarget}
-        />
+        <>
+          <RootsTable
+            roots={roots.data}
+            jobs={jobs.data ?? []}
+            liveScans={liveScans}
+            pendingScanRootId={scan.variables?.rootId ?? null}
+            pendingRevokeId={revoke.variables ?? null}
+            onScan={(rootId) => scan.mutate({ rootId })}
+            onRequestRevoke={setRevokeTarget}
+          />
+          <MediaLibraryCard
+            items={media.data?.pages.flatMap((page) => page.items) ?? []}
+            pending={media.isPending}
+            error={media.error}
+            hasNextPage={media.hasNextPage}
+            loadingMore={media.isFetchingNextPage}
+            onRetry={() => void media.refetch()}
+            onLoadMore={() => void media.fetchNextPage()}
+          />
+        </>
       ) : null}
 
       {revokeTarget ? (
@@ -231,6 +271,239 @@ export function LibraryRoute() {
       ) : null}
     </div>
   );
+}
+
+function MediaLibraryCard({
+  items,
+  pending,
+  error,
+  hasNextPage,
+  loadingMore,
+  onRetry,
+  onLoadMore,
+}: {
+  items: MediaListItem[];
+  pending: boolean;
+  error: Error | null;
+  hasNextPage: boolean;
+  loadingMore: boolean;
+  onRetry: () => void;
+  onLoadMore: () => void;
+}) {
+  const mediaScrollRef = useRef<HTMLDivElement>(null);
+  const virtualized = items.length > 200;
+  const rows = useVirtualizer({
+    count: items.length,
+    getScrollElement: () => (virtualized ? mediaScrollRef.current : null),
+    estimateSize: () => 76,
+    overscan: 8,
+    enabled: virtualized,
+  });
+  const visibleRows = virtualized
+    ? rows.getVirtualItems().map((row) => ({ index: row.index, start: row.start }))
+    : items.map((_, index) => ({ index, start: undefined }));
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Media index</CardTitle>
+        <CardDescription>
+          Duration and stream details are read locally with ffprobe. Files stay in place.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        {pending ? (
+          <div className="flex items-center gap-3 text-sm text-muted-foreground">
+            <Spinner label="Loading indexed media" />
+          </div>
+        ) : null}
+        {error ? (
+          <ErrorPanel title="Could not load indexed media" error={error} onRetry={onRetry} />
+        ) : null}
+        {!pending && !error && items.length === 0 ? (
+          <div className="rounded-lg border border-dashed border-border bg-muted/35 px-6 py-8 text-center">
+            <FileVideo aria-hidden="true" className="mx-auto size-6 text-muted-foreground" />
+            <p className="mt-3 text-sm font-medium">No media indexed yet</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Scan an approved folder to discover supported video and audio files.
+            </p>
+          </div>
+        ) : null}
+        {items.length > 0 ? (
+          <div
+            ref={mediaScrollRef}
+            className={cn('overflow-x-auto', virtualized && 'max-h-[640px] overflow-y-auto')}
+          >
+            <table className="w-full min-w-[900px] table-fixed text-sm">
+              <thead>
+                <tr className="border-b border-border text-left text-xs font-medium uppercase tracking-[0.08em] text-muted-foreground">
+                  <th className="w-[32%] py-2.5 pr-4">Media</th>
+                  <th className="w-[12%] py-2.5 pr-4">Duration</th>
+                  <th className="w-[18%] py-2.5 pr-4">Video</th>
+                  <th className="w-[20%] py-2.5 pr-4">Audio &amp; captions</th>
+                  <th className="w-[18%] py-2.5">Metadata</th>
+                </tr>
+              </thead>
+              <tbody
+                className="divide-y divide-border"
+                style={
+                  virtualized
+                    ? {
+                        display: 'block',
+                        height: `${rows.getTotalSize()}px`,
+                        position: 'relative',
+                      }
+                    : undefined
+                }
+              >
+                {visibleRows.map((row) => (
+                  <MediaRow
+                    key={items[row.index].id}
+                    item={items[row.index]}
+                    virtualStart={row.start}
+                  />
+                ))}
+              </tbody>
+            </table>
+            {hasNextPage ? (
+              <div className="flex justify-center border-t border-border pt-4">
+                <Button variant="secondary" size="sm" disabled={loadingMore} onClick={onLoadMore}>
+                  {loadingMore ? 'Loading…' : 'Load more'}
+                </Button>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </CardContent>
+    </Card>
+  );
+}
+
+function MediaRow({
+  item,
+  virtualStart,
+}: {
+  item: MediaListItem;
+  virtualStart?: number;
+}) {
+  return (
+    <tr
+      style={
+        virtualStart === undefined
+          ? undefined
+          : {
+              display: 'table',
+              position: 'absolute',
+              tableLayout: 'fixed',
+              transform: `translateY(${virtualStart}px)`,
+              width: '100%',
+            }
+      }
+    >
+      <td className="w-[32%] py-4 pr-4 align-top">
+        <div className="flex min-w-64 items-start gap-3">
+          <span className="grid size-8 shrink-0 place-items-center rounded-md bg-muted text-muted-foreground">
+            {item.media_kind === 'audio' ? (
+              <FileAudio aria-hidden="true" className="size-4" />
+            ) : (
+              <FileVideo aria-hidden="true" className="size-4" />
+            )}
+          </span>
+          <div className="min-w-0">
+            <p className="truncate font-medium">{item.display_name}</p>
+            <p className="truncate font-mono text-xs text-muted-foreground">
+              {item.path_redacted} · {formatBytes(item.size_bytes)}
+            </p>
+          </div>
+        </div>
+      </td>
+      <td className="w-[12%] py-4 pr-4 align-top font-mono text-xs">
+        {formatDuration(item.duration_ms)}
+      </td>
+      <td className="w-[18%] py-4 pr-4 align-top text-xs text-muted-foreground">
+        {formatVideoDetails(item)}
+      </td>
+      <td className="w-[20%] py-4 pr-4 align-top text-xs text-muted-foreground">
+        {formatAudioDetails(item)}
+      </td>
+      <td className="w-[18%] py-4 align-top">
+        <ProbeState item={item} />
+      </td>
+    </tr>
+  );
+}
+
+function ProbeState({ item }: { item: MediaListItem }) {
+  let status: StatusKind;
+  let label: string;
+  switch (item.probe_status) {
+    case 'queued':
+      status = 'queued';
+      label = 'Waiting for metadata';
+      break;
+    case 'probing':
+      status = 'processing';
+      label = 'Inspecting locally';
+      break;
+    case 'ready':
+      status = 'completed';
+      label = 'Ready';
+      break;
+    case 'failed':
+      status = 'failed';
+      label = item.probe_error ?? 'Unreadable media';
+      break;
+    case 'unavailable':
+      status = 'attention';
+      label = 'ffprobe unavailable';
+      break;
+    case 'missing':
+      status = 'attention';
+      label = 'File unavailable';
+      break;
+  }
+  return (
+    <div className="flex flex-col items-start gap-1.5">
+      <StatusBadge status={status} />
+      <span className="text-xs text-muted-foreground">{label}</span>
+    </div>
+  );
+}
+
+function formatDuration(durationMs: number | null): string {
+  if (durationMs === null) return '—';
+  const totalSeconds = Math.round(durationMs / 1_000);
+  const hours = Math.floor(totalSeconds / 3_600);
+  const minutes = Math.floor((totalSeconds % 3_600) / 60);
+  const seconds = totalSeconds % 60;
+  return hours > 0
+    ? `${hours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`
+    : `${minutes}:${seconds.toString().padStart(2, '0')}`;
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1_024) return `${bytes} B`;
+  if (bytes < 1_048_576) return `${(bytes / 1_024).toFixed(1)} KB`;
+  if (bytes < 1_073_741_824) return `${(bytes / 1_048_576).toFixed(1)} MB`;
+  return `${(bytes / 1_073_741_824).toFixed(1)} GB`;
+}
+
+function formatVideoDetails(item: MediaListItem): string {
+  const resolution = item.width && item.height ? `${item.width}×${item.height}` : null;
+  return [item.video_codec?.toUpperCase(), resolution, item.container?.toUpperCase()]
+    .filter(Boolean)
+    .join(' · ') || '—';
+}
+
+function formatAudioDetails(item: MediaListItem): string {
+  const details = [];
+  if (item.audio_codec) details.push(item.audio_codec.toUpperCase());
+  if (item.audio_streams > 0) {
+    details.push(`${item.audio_streams} audio ${item.audio_streams === 1 ? 'track' : 'tracks'}`);
+  }
+  if (item.subtitle_streams > 0) {
+    details.push(`${item.subtitle_streams} caption ${item.subtitle_streams === 1 ? 'track' : 'tracks'}`);
+  }
+  return details.join(' · ') || '—';
 }
 
 function RootsTable({
@@ -444,6 +717,21 @@ function RevokeDialog({
 
 function liveScanFromEvent(event: ScanEvent): LiveScan {
   switch (event.event) {
+    case 'metadata':
+      return event.data.completed === event.data.total
+        ? {
+            status: 'completed',
+            label:
+              event.data.failed > 0
+                ? `Metadata finished · ${event.data.failed.toLocaleString()} unavailable`
+                : 'Metadata ready',
+          }
+        : {
+            status: 'processing',
+            label: `Inspecting media ${event.data.completed.toLocaleString()} of ${event.data.total.toLocaleString()}`,
+            current: event.data.completed,
+            total: event.data.total,
+          };
     case 'started':
       return { status: 'processing', label: 'Reading approved folder' };
     case 'discovering':

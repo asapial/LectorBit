@@ -10,3 +10,4 @@
 //! Tauri command layer wires up.
 
 pub mod library_roots;
+pub mod media;

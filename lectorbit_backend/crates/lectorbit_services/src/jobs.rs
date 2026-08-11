@@ -271,11 +271,32 @@ pub async fn list_by_kind(pool: &SqlitePool, kind: &str, limit: u32) -> Result<V
          FROM analysis_jobs WHERE kind = ? ORDER BY updated_at DESC, id DESC LIMIT ?",
     )
     .bind(kind)
-    .bind(i64::from(limit.min(500)))
+    .bind(i64::from(limit.min(50_000)))
     .fetch_all(pool)
     .await
     .map_err(|error| JobError::Database(error.to_string()))?;
     rows.into_iter().map(row_to_job).collect()
+}
+
+pub async fn find_active_by_payload(
+    pool: &SqlitePool,
+    kind: &str,
+    payload: &impl Serialize,
+) -> Result<Option<Job>, JobError> {
+    let payload =
+        serde_json::to_string(payload).map_err(|error| JobError::Database(error.to_string()))?;
+    let row = sqlx::query(
+        "SELECT id, kind, payload, status, attempt, last_error, created_at, updated_at \
+         FROM analysis_jobs WHERE kind = ? AND payload = ? \
+         AND status IN ('queued', 'running', 'retry_wait') \
+         ORDER BY updated_at DESC, id DESC LIMIT 1",
+    )
+    .bind(kind)
+    .bind(payload)
+    .fetch_optional(pool)
+    .await
+    .map_err(|error| JobError::Database(error.to_string()))?;
+    row.map(row_to_job).transpose()
 }
 
 fn row_to_job(row: sqlx::sqlite::SqliteRow) -> Result<Job, JobError> {
@@ -440,5 +461,19 @@ mod tests {
         assert_eq!(recover_interrupted(db.pool()).await.expect("recover"), 1);
         let jobs = list_by_kind(db.pool(), "scan", 10).await.expect("list");
         assert_eq!(jobs[0].status, JobStatus::Queued);
+    }
+
+    #[tokio::test]
+    async fn active_payload_lookup_is_not_limited_by_queue_size() {
+        let db = lectorbit_db::Db::open_in_memory().await.expect("db");
+        let payload = serde_json::json!({ "media_id": "m", "root_id": "r" });
+        let job = enqueue(db.pool(), "probe", &payload)
+            .await
+            .expect("enqueue");
+        let found = find_active_by_payload(db.pool(), "probe", &payload)
+            .await
+            .expect("lookup")
+            .expect("active job");
+        assert_eq!(found.id, job.id);
     }
 }

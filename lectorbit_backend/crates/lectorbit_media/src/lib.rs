@@ -12,6 +12,12 @@ use std::time::UNIX_EPOCH;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+pub mod ffprobe;
+pub use ffprobe::{
+    parse_probe_json, probe_arguments, Ffprobe, ProbeError, ProbeMetadata, ProbeStream,
+    EXPECTED_FFPROBE_VERSION,
+};
+
 const MAX_SCAN_ENTRIES: u64 = 1_000_000;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

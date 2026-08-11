@@ -30,6 +30,15 @@ const ScanJobSchema = z.object({
 
 const ScanEventSchema = z.discriminatedUnion('event', [
   z.object({
+    event: z.literal('metadata'),
+    data: z.object({
+      jobId: z.string(),
+      completed: z.number().nonnegative(),
+      total: z.number().nonnegative(),
+      failed: z.number().nonnegative(),
+    }),
+  }),
+  z.object({
     event: z.literal('started'),
     data: z.object({ jobId: z.string(), rootId: z.string() }),
   }),
@@ -63,6 +72,38 @@ const ScanEventSchema = z.discriminatedUnion('event', [
   }),
 ]);
 
+const MediaListItemSchema = z.object({
+  id: z.string().min(1),
+  root_id: z.string().min(1),
+  display_name: z.string().min(1),
+  path_redacted: z.string().min(1),
+  media_kind: z.enum(['video', 'audio']),
+  size_bytes: z.number().int().nonnegative(),
+  duration_ms: z.number().int().nonnegative().nullable(),
+  container: z.string().nullable(),
+  video_codec: z.string().nullable(),
+  audio_codec: z.string().nullable(),
+  width: z.number().int().nonnegative().nullable(),
+  height: z.number().int().nonnegative().nullable(),
+  audio_streams: z.number().int().nonnegative(),
+  subtitle_streams: z.number().int().nonnegative(),
+  probe_status: z.enum([
+    'queued',
+    'probing',
+    'ready',
+    'failed',
+    'unavailable',
+    'missing',
+  ]),
+  probe_error: z.string().nullable(),
+  discovered_at: z.string().min(1),
+});
+
+const MediaPageSchema = z.object({
+  items: z.array(MediaListItemSchema),
+  next_cursor: z.string().nullable(),
+});
+
 const LibraryErrorSchema = z.object({
   kind: z.enum([
     'empty_path',
@@ -78,6 +119,8 @@ const LibraryErrorSchema = z.object({
 export type LibraryRoot = z.infer<typeof LibraryRootSchema>;
 export type ScanJob = z.infer<typeof ScanJobSchema>;
 export type ScanEvent = z.infer<typeof ScanEventSchema>;
+export type MediaListItem = z.infer<typeof MediaListItemSchema>;
+export type MediaPage = z.infer<typeof MediaPageSchema>;
 export type LibraryErrorKind = z.infer<typeof LibraryErrorSchema>['kind'];
 
 export class LibraryRpcError extends Error {
@@ -91,8 +134,12 @@ export class LibraryRpcError extends Error {
 }
 
 export async function listRoots(): Promise<LibraryRoot[]> {
-  const raw = await invoke<unknown>('plugin:lectorbit|library_list_roots');
-  return z.array(LibraryRootSchema).parse(raw);
+  try {
+    const raw = await invoke<unknown>('plugin:lectorbit|library_list_roots');
+    return z.array(LibraryRootSchema).parse(raw);
+  } catch (error) {
+    throw wrapLibraryError(error);
+  }
 }
 
 export async function pickAndRegisterRoot(): Promise<LibraryRoot | null> {
@@ -150,13 +197,32 @@ export async function listScanJobs(rootId?: string): Promise<ScanJob[]> {
   }
 }
 
+export async function listMedia(options?: {
+  rootId?: string;
+  cursor?: string;
+  limit?: number;
+}): Promise<MediaPage> {
+  try {
+    const raw = await invoke<unknown>('plugin:lectorbit|library_list_media', {
+      args: {
+        root_id: options?.rootId ?? null,
+        cursor: options?.cursor ?? null,
+        limit: options?.limit ?? 50,
+      },
+    });
+    return MediaPageSchema.parse(raw);
+  } catch (error) {
+    throw wrapLibraryError(error);
+  }
+}
+
 function wrapLibraryError(error: unknown): LibraryRpcError {
   const parsed = LibraryErrorSchema.safeParse(error);
   if (parsed.success) {
     return new LibraryRpcError(parsed.data.kind, parsed.data.message);
   }
   if (error instanceof Error) {
-    return new LibraryRpcError('internal', error.message);
+    return new LibraryRpcError('internal', 'The library service is unavailable.');
   }
-  return new LibraryRpcError('internal', String(error));
+  return new LibraryRpcError('internal', 'The library service is unavailable.');
 }

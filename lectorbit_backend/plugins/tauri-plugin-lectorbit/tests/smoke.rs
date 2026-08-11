@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use tauri_plugin_lectorbit::{
     app_get_version, BoxFuture, DiagnosticsProvider, LibraryErrorCode, LibraryErrorKind,
-    LibraryOps, LibraryRootDto, ScanEventSink, ScanJobDto,
+    LibraryOps, LibraryRootDto, MediaPageDto, ScanEventSink, ScanJobDto,
 };
 
 #[test]
@@ -84,6 +84,20 @@ impl LibraryOps for FakeLibrary {
         _root_id: Option<String>,
     ) -> BoxFuture<'_, Result<Vec<ScanJobDto>, LibraryErrorCode>> {
         Box::pin(async { Ok(Vec::new()) })
+    }
+
+    fn list_media(
+        &self,
+        _root_id: Option<String>,
+        _cursor: Option<String>,
+        _limit: u32,
+    ) -> BoxFuture<'_, Result<MediaPageDto, LibraryErrorCode>> {
+        Box::pin(async {
+            Ok(MediaPageDto {
+                items: Vec::new(),
+                next_cursor: None,
+            })
+        })
     }
 }
 

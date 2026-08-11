@@ -26,7 +26,6 @@ lectorbit_db = { workspace = true }
 lectorbit_services = { workspace = true }
 lectorbit_media = { workspace = true }
 sqlx = { workspace = true }
-uuid = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
