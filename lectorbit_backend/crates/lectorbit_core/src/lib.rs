@@ -5,8 +5,14 @@
 
 pub mod error;
 pub mod ids;
+pub mod planning;
 pub mod units;
 
 pub use error::{LectorError, LectorResult};
 pub use ids::{JobId, MediaId, PlanId, PlanItemId, RootId, StudyActionId, UserId};
+pub use planning::{
+    build_plan, derive_coarse_chunks, CoarseChunk, DayLoad, InfeasibilityCode, MediaWork,
+    PlanDraft, PlanningChunk, PlanningConstraints, PlanningError, ScheduledItem, UnscheduledWork,
+    COARSE_CHUNK_VERSION,
+};
 pub use units::{Bytes, Milliseconds, Minutes, Seconds};

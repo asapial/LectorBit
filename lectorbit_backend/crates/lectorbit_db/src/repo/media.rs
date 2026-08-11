@@ -1,6 +1,7 @@
 //! Media discovery and ffprobe metadata persistence.
 
 use chrono::Utc;
+use lectorbit_core::planning::derive_coarse_chunks;
 use sqlx::{Row, SqlitePool};
 use uuid::Uuid;
 
@@ -145,6 +146,10 @@ impl Repo {
                         .execute(&mut *transaction)
                         .await?;
                         sqlx::query("DELETE FROM media_streams WHERE media_id = ?")
+                            .bind(&media_id)
+                            .execute(&mut *transaction)
+                            .await?;
+                        sqlx::query("DELETE FROM chunks WHERE media_id = ?")
                             .bind(&media_id)
                             .execute(&mut *transaction)
                             .await?;
@@ -299,6 +304,28 @@ impl Repo {
             .execute(&mut *transaction)
             .await?;
         }
+        sqlx::query("DELETE FROM chunks WHERE media_id = ? AND source = 'coarse'")
+            .bind(media_id)
+            .execute(&mut *transaction)
+            .await?;
+        let created_at = Utc::now().to_rfc3339();
+        for chunk in derive_coarse_chunks(media_id, probe.duration_ms) {
+            sqlx::query(
+                "INSERT INTO chunks \
+                 (id, media_id, ordinal, start_ms, end_ms, source, analyzer_version, created_at) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(&chunk.id)
+            .bind(&chunk.media_id)
+            .bind(i64::from(chunk.ordinal))
+            .bind(to_i64(chunk.start_ms))
+            .bind(to_i64(chunk.end_ms))
+            .bind(&chunk.source)
+            .bind(&chunk.analyzer_version)
+            .bind(&created_at)
+            .execute(&mut *transaction)
+            .await?;
+        }
         transaction.commit().await?;
         Ok(())
     }
@@ -310,6 +337,7 @@ impl Repo {
         safe_message: &str,
         version: &str,
     ) -> DbResult<()> {
+        let mut transaction = self.pool.begin().await?;
         sqlx::query(
             "UPDATE media_files SET probe_status = ?, probe_error = ?, probe_version = ?, \
              probed_at = ? WHERE id = ?",
@@ -319,8 +347,13 @@ impl Repo {
         .bind(version)
         .bind(Utc::now().to_rfc3339())
         .bind(media_id)
-        .execute(&self.pool)
+        .execute(&mut *transaction)
         .await?;
+        sqlx::query("DELETE FROM chunks WHERE media_id = ?")
+            .bind(media_id)
+            .execute(&mut *transaction)
+            .await?;
+        transaction.commit().await?;
         Ok(())
     }
 
@@ -407,7 +440,7 @@ fn nonnegative_u32(value: i64) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Db, LibraryRootsRepo};
+    use crate::{ChunksRepo, Db, LibraryRootsRepo};
 
     async fn fixture() -> (Db, Repo, String) {
         let db = Db::open_in_memory().await.expect("db");
@@ -514,6 +547,59 @@ mod tests {
         assert_eq!(page.items[0].probe_status, "ready");
         assert_eq!(page.items[0].path_redacted, "[REDACTED]/lesson.mp4");
         assert!(!format!("{:?}", page.items[0]).contains("/safe/library/"));
+        let chunks = ChunksRepo::new(repo.pool().clone())
+            .list_for_media(&candidate.media_id)
+            .await
+            .expect("chunks");
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0].start_ms, 0);
+        assert_eq!(chunks[0].end_ms, 90_500);
+        db.close().await;
+    }
+
+    #[tokio::test]
+    async fn failed_reprobe_removes_stale_derived_chunks() {
+        let (db, repo, root_id) = fixture().await;
+        let candidate = repo
+            .reconcile_discovery(&root_id, &[discovered("lesson.mp4")], true)
+            .await
+            .expect("discover")
+            .remove(0);
+        repo.save_probe_success(
+            &candidate.media_id,
+            "8.1.2",
+            &StoredProbe {
+                duration_ms: 61 * 60_000,
+                container: None,
+                video_codec: None,
+                audio_codec: None,
+                width: None,
+                height: None,
+                audio_streams: 0,
+                subtitle_streams: 0,
+                streams: Vec::new(),
+            },
+        )
+        .await
+        .expect("metadata");
+        let chunks = ChunksRepo::new(repo.pool().clone());
+        assert_eq!(
+            chunks
+                .list_for_media(&candidate.media_id)
+                .await
+                .unwrap()
+                .len(),
+            3
+        );
+
+        repo.save_probe_failure(&candidate.media_id, "failed", "Unreadable media.", "8.1.2")
+            .await
+            .expect("failure");
+        assert!(chunks
+            .list_for_media(&candidate.media_id)
+            .await
+            .unwrap()
+            .is_empty());
         db.close().await;
     }
 

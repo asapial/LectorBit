@@ -1,3 +1,7 @@
-//! Deterministic study planner. Coarse fixed 20-30 min chunks first; AI can
-//! later improve boundaries/titles/rationales but must not violate hard
-//! constraints.
+//! Deterministic study planner service boundary.
+//!
+//! The algorithm lives in `lectorbit_core` so it remains pure and cheap to
+//! verify. This module is the stable service-layer import used by persistence
+//! and the internal Tauri plugin.
+
+pub use lectorbit_core::planning::*;
