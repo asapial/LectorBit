@@ -1883,6 +1883,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]
@@ -3803,6 +3804,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tauri",
+ "tauri-plugin",
  "tauri-plugin-dialog",
  "thiserror 1.0.69",
  "tokio",

@@ -22,11 +22,14 @@ pub mod repo;
 pub use error::{DbError, DbResult};
 pub use pool::Db;
 pub use redaction::{redact, redact_event_fields, RedactingMakeWriter};
-pub use repo::chunks::{Repo as ChunksRepo, SchedulableMedia, StoredChunk};
+pub use repo::chunks::{
+    PlannerCandidatePage, PlannerCandidateRow, Repo as ChunksRepo, SchedulableMedia, StoredChunk,
+};
 pub use repo::library_roots::{InsertOutcome, LibraryRoot, Repo as LibraryRootsRepo};
 pub use repo::media::{
     DiscoveredMedia, MediaListItem, MediaPage, ProbeCandidate, ProbeTarget, Repo as MediaRepo,
     StoredProbe, StoredStream,
 };
+pub use repo::plans::{CommittedPlan, Repo as PlansRepo, RoutineDay, RoutineItem, RoutinePlan};
 
 pub async fn placeholder() {}

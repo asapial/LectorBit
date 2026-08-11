@@ -206,6 +206,11 @@ mod tests {
             "settings",
             "consent_events",
             "audit_events",
+            "chunks",
+            "study_constraint_versions",
+            "plan_versions",
+            "plan_version_days",
+            "plan_version_items",
         ] {
             let exists: (i64,) = sqlx::query_as(
                 "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?",

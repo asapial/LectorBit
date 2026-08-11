@@ -5,6 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 description = "Internal Tauri plugin exposing narrow, capability-gated LectorBit commands."
+links = "tauri-plugin-lectorbit"
 
 [lib]
 name = "tauri_plugin_lectorbit"
@@ -19,3 +20,6 @@ thiserror = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }
+
+[build-dependencies]
+tauri-plugin = { version = "2.5", features = ["build"] }

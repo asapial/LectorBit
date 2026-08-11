@@ -19,3 +19,7 @@ pub use library::{
     AuthorizedRoot, LibraryError, LibraryRootView, LibraryService, ScanEnqueue, ScanJobPayload,
 };
 pub use media::{AuthorizedMedia, MediaError, MediaService, ProbeEnqueue, ProbeJobPayload};
+pub use planner::{
+    AlternativePatch, PlanAlternative, PlanPreview, PlanRequest, PlannerCandidate,
+    PlannerCandidatePage, PlannerService, PlannerServiceError, PlanningSelection,
+};

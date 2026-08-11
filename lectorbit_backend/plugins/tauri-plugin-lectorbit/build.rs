@@ -7,6 +7,10 @@ const COMMANDS: &[&str] = &[
     "library_enqueue_scan",
     "library_list_scan_jobs",
     "library_list_media",
+    "planner_list_candidates",
+    "planner_preview",
+    "plan_commit",
+    "plan_get_routine",
 ];
 
 fn main() {

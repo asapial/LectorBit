@@ -6,10 +6,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use tauri::ipc::Channel;
-use tauri::{
-    plugin::{Builder, TauriPlugin},
-    AppHandle, Runtime, State,
-};
+use tauri::{plugin::TauriPlugin, AppHandle, Runtime, State};
 use tauri_plugin_dialog::DialogExt;
 
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
@@ -20,8 +17,7 @@ pub struct AppVersion {
     pub build: &'static str,
 }
 
-#[tauri::command]
-pub fn app_get_version() -> AppVersion {
+pub fn current_app_version() -> AppVersion {
     AppVersion {
         version: env!("CARGO_PKG_VERSION"),
         build: option_env!("LECTORBIT_BUILD").unwrap_or("dev"),
@@ -32,9 +28,20 @@ pub trait DiagnosticsProvider: Send + Sync + 'static {
     fn snapshot(&self) -> serde_json::Value;
 }
 
-#[tauri::command]
-pub fn app_get_diagnostics(provider: State<'_, Arc<dyn DiagnosticsProvider>>) -> serde_json::Value {
-    provider.snapshot()
+mod app_commands {
+    use super::*;
+
+    #[tauri::command]
+    pub(crate) fn app_get_version() -> AppVersion {
+        current_app_version()
+    }
+
+    #[tauri::command]
+    pub(crate) fn app_get_diagnostics(
+        provider: State<'_, Arc<dyn DiagnosticsProvider>>,
+    ) -> serde_json::Value {
+        provider.snapshot()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -83,6 +90,146 @@ pub struct MediaListItemDto {
 pub struct MediaPageDto {
     pub items: Vec<MediaListItemDto>,
     pub next_cursor: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PlannerCandidateDto {
+    pub media_id: String,
+    pub display_name: String,
+    pub path_redacted: String,
+    pub duration_ms: u64,
+    pub chunk_count: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PlannerCandidatePageDto {
+    pub items: Vec<PlannerCandidateDto>,
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PlanningConstraintsDto {
+    pub daily_budget_minutes: u32,
+    pub allowed_weekdays: Vec<u8>,
+    pub preferred_session_minutes: u32,
+    pub max_continuous_minutes: u32,
+    pub minimum_break_minutes: u32,
+    pub playback_speed_milli: u16,
+    pub horizon_days: u16,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PlanningSelectionDto {
+    pub media_id: String,
+    pub priority: u8,
+    pub deadline: Option<String>,
+    #[serde(default)]
+    pub dependencies: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PlanRequestDto {
+    pub horizon_start: String,
+    pub constraints: PlanningConstraintsDto,
+    pub selections: Vec<PlanningSelectionDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PlanPreviewItemDto {
+    pub sequence: u32,
+    pub media_id: String,
+    pub display_name: String,
+    pub chunk_id: String,
+    pub scheduled_for: String,
+    pub raw_start_ms: u64,
+    pub raw_end_ms: u64,
+    pub effective_duration_ms: u64,
+    pub break_after_ms: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PlanDayDto {
+    pub date: String,
+    pub effective_content_ms: u64,
+    pub break_ms: u64,
+    pub item_count: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct UnscheduledWorkDto {
+    pub media_id: String,
+    pub display_name: String,
+    pub remaining_raw_ms: u64,
+    pub code: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum AlternativePatchDto {
+    AllowWeekdays { weekdays: Vec<u8> },
+    IncreaseDailyBudget { minutes: u32 },
+    ExtendHorizon { days: u16 },
+    IncreasePlaybackSpeed { speed_milli: u16 },
+    MoveDeadline { media_id: String, date: String },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PlanAlternativeDto {
+    pub id: String,
+    pub label: String,
+    pub patch: AlternativePatchDto,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PlanPreviewDto {
+    pub feasible: bool,
+    pub horizon_start: String,
+    pub horizon_end: String,
+    pub items: Vec<PlanPreviewItemDto>,
+    pub days: Vec<PlanDayDto>,
+    pub unscheduled: Vec<UnscheduledWorkDto>,
+    pub alternatives: Vec<PlanAlternativeDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PlanCommitResultDto {
+    pub plan_id: String,
+    pub plan_version_id: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RoutineItemDto {
+    pub id: String,
+    pub media_id: String,
+    pub display_name: String,
+    pub chunk_id: String,
+    pub sequence: u32,
+    pub raw_start_ms: u64,
+    pub raw_end_ms: u64,
+    pub effective_duration_ms: u64,
+    pub break_after_ms: u64,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RoutineDayDto {
+    pub id: String,
+    pub date: String,
+    pub effective_content_ms: u64,
+    pub break_ms: u64,
+    pub items: Vec<RoutineItemDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RoutinePlanDto {
+    pub plan_id: String,
+    pub plan_version_id: String,
+    pub title: String,
+    pub horizon_start: String,
+    pub horizon_end: String,
+    pub created_at: String,
+    pub days: Vec<RoutineDayDto>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -145,6 +292,27 @@ pub trait LibraryOps: Send + Sync + 'static {
     ) -> BoxFuture<'_, Result<MediaPageDto, LibraryErrorCode>>;
 }
 
+pub trait PlannerOps: Send + Sync + 'static {
+    fn list_candidates(
+        &self,
+        cursor: Option<String>,
+        limit: u32,
+    ) -> BoxFuture<'_, Result<PlannerCandidatePageDto, PlannerErrorCode>>;
+    fn preview(
+        &self,
+        request: PlanRequestDto,
+    ) -> BoxFuture<'_, Result<PlanPreviewDto, PlannerErrorCode>>;
+    fn commit(
+        &self,
+        title: String,
+        request: PlanRequestDto,
+    ) -> BoxFuture<'_, Result<PlanCommitResultDto, PlannerErrorCode>>;
+    fn routine(
+        &self,
+        day_limit: u32,
+    ) -> BoxFuture<'_, Result<Option<RoutinePlanDto>, PlannerErrorCode>>;
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LibraryErrorCode {
     pub kind: LibraryErrorKind,
@@ -164,6 +332,31 @@ pub enum LibraryErrorKind {
 
 impl LibraryErrorCode {
     pub fn new(kind: LibraryErrorKind, message: impl Into<String>) -> Self {
+        Self {
+            kind,
+            message: message.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlannerErrorCode {
+    pub kind: PlannerErrorKind,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PlannerErrorKind {
+    InvalidInput,
+    MediaUnavailable,
+    Infeasible,
+    Database,
+    Internal,
+}
+
+impl PlannerErrorCode {
+    pub fn new(kind: PlannerErrorKind, message: impl Into<String>) -> Self {
         Self {
             kind,
             message: message.into(),
@@ -197,94 +390,178 @@ pub struct ListMediaArgs {
     pub limit: u32,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct PlannerPreviewArgs {
+    pub request: PlanRequestDto,
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct PlannerCandidatesArgs {
+    #[serde(default)]
+    pub cursor: Option<String>,
+    #[serde(default = "default_media_limit")]
+    pub limit: u32,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PlanCommitArgs {
+    pub title: String,
+    pub request: PlanRequestDto,
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct RoutineArgs {
+    #[serde(default = "default_routine_days")]
+    pub day_limit: u32,
+}
+
 fn default_media_limit() -> u32 {
     50
 }
 
-#[tauri::command]
-pub async fn library_list_roots(
-    ops: State<'_, Arc<dyn LibraryOps>>,
-) -> Result<Vec<LibraryRootDto>, LibraryErrorCode> {
-    ops.list_roots().await
+fn default_routine_days() -> u32 {
+    14
 }
 
-/// The renderer cannot submit an absolute path. The native picker and the
-/// registration call are one capability-gated operation.
-#[tauri::command]
-pub async fn library_pick_and_register_root<R: Runtime>(
-    app: AppHandle<R>,
-    ops: State<'_, Arc<dyn LibraryOps>>,
-) -> Result<Option<LibraryRootDto>, LibraryErrorCode> {
-    let selected = app
-        .dialog()
-        .file()
-        .set_title("Select a folder of videos")
-        .blocking_pick_folder();
-    let Some(selected) = selected else {
-        return Ok(None);
-    };
-    let path = selected.into_path().map_err(|_| {
-        LibraryErrorCode::new(
-            LibraryErrorKind::Io,
-            "The selected folder could not be resolved.",
-        )
-    })?;
-    ops.register_selected_root(path.to_string_lossy().into_owned())
-        .await
-        .map(Some)
-}
+mod commands {
+    use super::*;
 
-#[tauri::command]
-pub async fn library_revoke_root(
-    ops: State<'_, Arc<dyn LibraryOps>>,
-    args: RevokeRootArgs,
-) -> Result<LibraryRootDto, LibraryErrorCode> {
-    ops.revoke_root(args.id).await
-}
+    #[tauri::command]
+    pub(crate) async fn library_list_roots(
+        ops: State<'_, Arc<dyn LibraryOps>>,
+    ) -> Result<Vec<LibraryRootDto>, LibraryErrorCode> {
+        ops.list_roots().await
+    }
 
-#[tauri::command]
-pub async fn library_enqueue_scan(
-    ops: State<'_, Arc<dyn LibraryOps>>,
-    args: EnqueueScanArgs,
-    on_event: Channel<ScanProgressDto>,
-) -> Result<ScanJobDto, LibraryErrorCode> {
-    let sink: ScanEventSink = Arc::new(move |event| {
-        let _ = on_event.send(event);
-    });
-    ops.enqueue_scan(args.root_id, sink).await
-}
+    /// The renderer cannot submit an absolute path. The native picker and the
+    /// registration call are one capability-gated operation.
+    #[tauri::command]
+    pub(crate) async fn library_pick_and_register_root<R: Runtime>(
+        app: AppHandle<R>,
+        ops: State<'_, Arc<dyn LibraryOps>>,
+    ) -> Result<Option<LibraryRootDto>, LibraryErrorCode> {
+        let selected = app
+            .dialog()
+            .file()
+            .set_title("Select a folder of videos")
+            .blocking_pick_folder();
+        let Some(selected) = selected else {
+            return Ok(None);
+        };
+        let path = selected.into_path().map_err(|_| {
+            LibraryErrorCode::new(
+                LibraryErrorKind::Io,
+                "The selected folder could not be resolved.",
+            )
+        })?;
+        ops.register_selected_root(path.to_string_lossy().into_owned())
+            .await
+            .map(Some)
+    }
 
-#[tauri::command]
-pub async fn library_list_scan_jobs(
-    ops: State<'_, Arc<dyn LibraryOps>>,
-    args: Option<ListScanJobsArgs>,
-) -> Result<Vec<ScanJobDto>, LibraryErrorCode> {
-    ops.list_scan_jobs(args.and_then(|value| value.root_id))
-        .await
-}
+    #[tauri::command]
+    pub(crate) async fn library_revoke_root(
+        ops: State<'_, Arc<dyn LibraryOps>>,
+        args: RevokeRootArgs,
+    ) -> Result<LibraryRootDto, LibraryErrorCode> {
+        ops.revoke_root(args.id).await
+    }
 
-#[tauri::command]
-pub async fn library_list_media(
-    ops: State<'_, Arc<dyn LibraryOps>>,
-    args: Option<ListMediaArgs>,
-) -> Result<MediaPageDto, LibraryErrorCode> {
-    let args = args.unwrap_or_default();
-    ops.list_media(args.root_id, args.cursor, args.limit).await
+    #[tauri::command]
+    pub(crate) async fn library_enqueue_scan(
+        ops: State<'_, Arc<dyn LibraryOps>>,
+        args: EnqueueScanArgs,
+        on_event: Channel<ScanProgressDto>,
+    ) -> Result<ScanJobDto, LibraryErrorCode> {
+        let sink: ScanEventSink = Arc::new(move |event| {
+            let _ = on_event.send(event);
+        });
+        ops.enqueue_scan(args.root_id, sink).await
+    }
+
+    #[tauri::command]
+    pub(crate) async fn library_list_scan_jobs(
+        ops: State<'_, Arc<dyn LibraryOps>>,
+        args: Option<ListScanJobsArgs>,
+    ) -> Result<Vec<ScanJobDto>, LibraryErrorCode> {
+        ops.list_scan_jobs(args.and_then(|value| value.root_id))
+            .await
+    }
+
+    #[tauri::command]
+    pub(crate) async fn library_list_media(
+        ops: State<'_, Arc<dyn LibraryOps>>,
+        args: Option<ListMediaArgs>,
+    ) -> Result<MediaPageDto, LibraryErrorCode> {
+        let args = args.unwrap_or_default();
+        ops.list_media(args.root_id, args.cursor, args.limit).await
+    }
+
+    #[tauri::command]
+    pub(crate) async fn planner_list_candidates(
+        ops: State<'_, Arc<dyn PlannerOps>>,
+        args: Option<PlannerCandidatesArgs>,
+    ) -> Result<PlannerCandidatePageDto, PlannerErrorCode> {
+        let args = args.unwrap_or_default();
+        ops.list_candidates(args.cursor, args.limit).await
+    }
+
+    #[tauri::command]
+    pub(crate) async fn planner_preview(
+        ops: State<'_, Arc<dyn PlannerOps>>,
+        args: PlannerPreviewArgs,
+    ) -> Result<PlanPreviewDto, PlannerErrorCode> {
+        ops.preview(args.request).await
+    }
+
+    #[tauri::command]
+    pub(crate) async fn plan_commit(
+        ops: State<'_, Arc<dyn PlannerOps>>,
+        args: PlanCommitArgs,
+    ) -> Result<PlanCommitResultDto, PlannerErrorCode> {
+        ops.commit(args.title, args.request).await
+    }
+
+    #[tauri::command]
+    pub(crate) async fn plan_get_routine(
+        ops: State<'_, Arc<dyn PlannerOps>>,
+        args: Option<RoutineArgs>,
+    ) -> Result<Option<RoutinePlanDto>, PlannerErrorCode> {
+        ops.routine(args.unwrap_or_default().day_limit).await
+    }
 }
 
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
-    Builder::new("lectorbit")
-        .invoke_handler(tauri::generate_handler![
-            app_get_version,
-            app_get_diagnostics,
-            library_list_roots,
-            library_pick_and_register_root,
-            library_revoke_root,
-            library_enqueue_scan,
-            library_list_scan_jobs,
-            library_list_media,
-        ])
-        .build()
+    plugin_builder::build()
+}
+
+// `generate_handler!` imports command helper macros. Keeping that expansion in
+// a child module prevents macro-namespace collisions with commands defined in
+// this public boundary module.
+mod plugin_builder {
+    use tauri::{
+        plugin::{Builder, TauriPlugin},
+        Runtime,
+    };
+
+    pub(super) fn build<R: Runtime>() -> TauriPlugin<R> {
+        Builder::new("lectorbit")
+            .invoke_handler(tauri::generate_handler![
+                super::app_commands::app_get_version,
+                super::app_commands::app_get_diagnostics,
+                super::commands::library_list_roots,
+                super::commands::library_pick_and_register_root,
+                super::commands::library_revoke_root,
+                super::commands::library_enqueue_scan,
+                super::commands::library_list_scan_jobs,
+                super::commands::library_list_media,
+                super::commands::planner_list_candidates,
+                super::commands::planner_preview,
+                super::commands::plan_commit,
+                super::commands::plan_get_routine,
+            ])
+            .build()
+    }
 }
 
 #[cfg(test)]
@@ -311,5 +588,17 @@ mod tests {
         .expect("serialize metadata");
         assert_eq!(metadata["event"], "metadata");
         assert_eq!(metadata["data"]["jobId"], "probe");
+    }
+
+    #[test]
+    fn planner_alternative_uses_a_tagged_safe_shape() {
+        let value = serde_json::to_value(PlanAlternativeDto {
+            id: "budget".into(),
+            label: "Add time".into(),
+            patch: AlternativePatchDto::IncreaseDailyBudget { minutes: 60 },
+        })
+        .expect("serialize");
+        assert_eq!(value["patch"]["kind"], "increase_daily_budget");
+        assert_eq!(value["patch"]["minutes"], 60);
     }
 }

@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-planner-preview"
+description = "Enables the planner_preview command without any pre-configured scope."
+commands.allow = ["planner_preview"]
+
+[[permission]]
+identifier = "deny-planner-preview"
+description = "Denies the planner_preview command without any pre-configured scope."
+commands.deny = ["planner_preview"]

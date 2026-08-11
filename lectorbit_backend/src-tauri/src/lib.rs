@@ -3,18 +3,20 @@
 use std::io::stderr;
 use std::sync::Arc;
 
-use lectorbit_db::{LibraryRootsRepo, MediaRepo, RedactingMakeWriter};
-use lectorbit_services::{DiagnosticsService, LibraryService, MediaService};
+use lectorbit_db::{ChunksRepo, LibraryRootsRepo, MediaRepo, PlansRepo, RedactingMakeWriter};
+use lectorbit_services::{DiagnosticsService, LibraryService, MediaService, PlannerService};
 use tauri::Manager;
-use tauri_plugin_lectorbit::{DiagnosticsProvider, LibraryOps};
+use tauri_plugin_lectorbit::{DiagnosticsProvider, LibraryOps, PlannerOps};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::EnvFilter;
 
 mod library_adapter;
 mod media_adapter;
+mod planner_adapter;
 use library_adapter::LibraryAdapter;
 use media_adapter::ProbeScheduler;
+use planner_adapter::PlannerAdapter;
 
 struct DiagnosticsAdapter(DiagnosticsService);
 
@@ -64,6 +66,10 @@ pub fn run() {
             let library_service =
                 LibraryService::new(LibraryRootsRepo::new(database.pool().clone()));
             let media_service = MediaService::new(MediaRepo::new(database.pool().clone()));
+            let planner_service = PlannerService::new(
+                ChunksRepo::new(database.pool().clone()),
+                PlansRepo::new(database.pool().clone()),
+            );
             let ffprobe_path = resolve_ffprobe_path(
                 app.path().resource_dir().ok().as_deref(),
                 std::env::var_os("LECTORBIT_FFPROBE_PATH"),
@@ -85,6 +91,7 @@ pub fn run() {
 
             app.manage(Arc::new(DiagnosticsAdapter(diagnostics)) as Arc<dyn DiagnosticsProvider>);
             app.manage(library_adapter as Arc<dyn LibraryOps>);
+            app.manage(Arc::new(PlannerAdapter::new(planner_service)) as Arc<dyn PlannerOps>);
 
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.show();

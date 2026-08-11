@@ -204,7 +204,7 @@ pub struct DayLoad {
     pub item_count: u32,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "snake_case")]
 pub enum InfeasibilityCode {
     NoAllowedDays,

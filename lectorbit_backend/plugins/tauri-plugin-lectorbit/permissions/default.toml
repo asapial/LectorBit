@@ -12,4 +12,8 @@ permissions = [
   "allow-library-enqueue-scan",
   "allow-library-list-scan-jobs",
   "allow-library-list-media",
+  "allow-planner-list-candidates",
+  "allow-planner-preview",
+  "allow-plan-commit",
+  "allow-plan-get-routine",
 ]

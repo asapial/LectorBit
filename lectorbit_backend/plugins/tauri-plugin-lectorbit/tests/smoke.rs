@@ -1,13 +1,72 @@
 use std::sync::Arc;
 
 use tauri_plugin_lectorbit::{
-    app_get_version, BoxFuture, DiagnosticsProvider, LibraryErrorCode, LibraryErrorKind,
-    LibraryOps, LibraryRootDto, MediaPageDto, ScanEventSink, ScanJobDto,
+    current_app_version, BoxFuture, DiagnosticsProvider, LibraryErrorCode, LibraryErrorKind,
+    LibraryOps, LibraryRootDto, MediaPageDto, PlanCommitResultDto, PlanPreviewDto, PlanRequestDto,
+    PlannerCandidateDto, PlannerCandidatePageDto, PlannerErrorCode, PlannerOps, RoutinePlanDto,
+    ScanEventSink, ScanJobDto,
 };
 
 #[test]
 fn app_version_is_available_without_a_runtime() {
-    assert!(!app_get_version().version.is_empty());
+    assert!(!current_app_version().version.is_empty());
+}
+
+struct FakePlanner;
+
+impl PlannerOps for FakePlanner {
+    fn list_candidates(
+        &self,
+        _cursor: Option<String>,
+        _limit: u32,
+    ) -> BoxFuture<'_, Result<PlannerCandidatePageDto, PlannerErrorCode>> {
+        Box::pin(async {
+            Ok(PlannerCandidatePageDto {
+                items: vec![PlannerCandidateDto {
+                    media_id: "media".into(),
+                    display_name: "Lesson".into(),
+                    path_redacted: "[REDACTED]/Lesson.mp4".into(),
+                    duration_ms: 60_000,
+                    chunk_count: 1,
+                }],
+                next_cursor: None,
+            })
+        })
+    }
+
+    fn preview(
+        &self,
+        _request: PlanRequestDto,
+    ) -> BoxFuture<'_, Result<PlanPreviewDto, PlannerErrorCode>> {
+        unreachable!("not used by this boundary smoke test")
+    }
+
+    fn commit(
+        &self,
+        _title: String,
+        _request: PlanRequestDto,
+    ) -> BoxFuture<'_, Result<PlanCommitResultDto, PlannerErrorCode>> {
+        unreachable!("not used by this boundary smoke test")
+    }
+
+    fn routine(
+        &self,
+        _day_limit: u32,
+    ) -> BoxFuture<'_, Result<Option<RoutinePlanDto>, PlannerErrorCode>> {
+        Box::pin(async { Ok(None) })
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn planner_boundary_paginates_safe_candidate_metadata() {
+    let planner: Arc<dyn PlannerOps> = Arc::new(FakePlanner);
+    let page = planner
+        .list_candidates(None, 100)
+        .await
+        .expect("candidates");
+    let serialized = serde_json::to_string(&page).expect("serialize");
+    assert!(serialized.contains("[REDACTED]"));
+    assert!(!serialized.contains("canonical_path"));
 }
 
 struct FakeDiagnostics;

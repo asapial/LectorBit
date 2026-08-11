@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-library-list-media"
+description = "Enables the library_list_media command without any pre-configured scope."
+commands.allow = ["library_list_media"]
+
+[[permission]]
+identifier = "deny-library-list-media"
+description = "Denies the library_list_media command without any pre-configured scope."
+commands.deny = ["library_list_media"]

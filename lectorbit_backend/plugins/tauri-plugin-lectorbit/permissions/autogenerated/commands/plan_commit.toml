@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-plan-commit"
+description = "Enables the plan_commit command without any pre-configured scope."
+commands.allow = ["plan_commit"]
+
+[[permission]]
+identifier = "deny-plan-commit"
+description = "Denies the plan_commit command without any pre-configured scope."
+commands.deny = ["plan_commit"]

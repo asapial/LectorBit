@@ -21,6 +21,21 @@ pub struct SchedulableMedia {
     pub chunks: Vec<StoredChunk>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlannerCandidateRow {
+    pub media_id: String,
+    pub display_name: String,
+    pub path_redacted: String,
+    pub duration_ms: u64,
+    pub chunk_count: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlannerCandidatePage {
+    pub items: Vec<PlannerCandidateRow>,
+    pub next_cursor: Option<String>,
+}
+
 #[derive(Clone)]
 pub struct Repo {
     pool: SqlitePool,
@@ -108,6 +123,60 @@ impl Repo {
             });
         }
         Ok(result)
+    }
+
+    pub async fn list_candidate_page(
+        &self,
+        cursor: Option<&str>,
+        limit: u32,
+    ) -> DbResult<PlannerCandidatePage> {
+        let page_size = limit.clamp(1, 200);
+        let rows = sqlx::query(
+            "SELECT m.id, m.display_name, m.duration_ms, \
+                    (SELECT COUNT(*) FROM chunks c WHERE c.media_id = m.id AND c.source = ( \
+                        SELECT source FROM chunks preferred WHERE preferred.media_id = m.id \
+                        ORDER BY CASE source \
+                            WHEN 'scene' THEN 0 WHEN 'transcript' THEN 1 ELSE 2 END LIMIT 1 \
+                    )) AS chunk_count \
+             FROM media_files m WHERE m.probe_status = 'ready' \
+               AND EXISTS (SELECT 1 FROM chunks existing WHERE existing.media_id = m.id) \
+               AND (? IS NULL OR lower(m.display_name) > lower(( \
+                        SELECT display_name FROM media_files WHERE id = ? \
+                    )) OR (lower(m.display_name) = lower(( \
+                        SELECT display_name FROM media_files WHERE id = ? \
+                    )) AND m.id > ?)) \
+             ORDER BY m.display_name COLLATE NOCASE, m.id LIMIT ?",
+        )
+        .bind(cursor)
+        .bind(cursor)
+        .bind(cursor)
+        .bind(cursor)
+        .bind(i64::from(page_size + 1))
+        .fetch_all(&self.pool)
+        .await?;
+        let mut items = rows
+            .into_iter()
+            .map(|row| {
+                let display_name: String = row.try_get("display_name")?;
+                Ok(PlannerCandidateRow {
+                    media_id: row.try_get("id")?,
+                    path_redacted: format!("[REDACTED]/{display_name}"),
+                    display_name,
+                    duration_ms: row
+                        .try_get::<Option<i64>, _>("duration_ms")?
+                        .map(nonnegative_u64)
+                        .unwrap_or_default(),
+                    chunk_count: nonnegative_u32(row.try_get("chunk_count")?),
+                })
+            })
+            .collect::<DbResult<Vec<_>>>()?;
+        let next_cursor = if items.len() > page_size as usize {
+            items.truncate(page_size as usize);
+            items.last().map(|item| item.media_id.clone())
+        } else {
+            None
+        };
+        Ok(PlannerCandidatePage { items, next_cursor })
     }
 }
 
