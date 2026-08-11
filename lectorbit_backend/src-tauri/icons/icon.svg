@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="LectorBit">
+  <rect width="512" height="512" rx="112" fill="#C93815"/>
+  <path d="M142 126c0-14 11-25 25-25h29c14 0 25 11 25 25v212h137c14 0 25 11 25 25v24c0 14-11 25-25 25H167c-14 0-25-11-25-25V126Z" fill="#FFFFFF"/>
+  <rect x="281" y="101" width="49" height="49" rx="14" fill="#FFC5A6"/>
+  <rect x="349" y="101" width="49" height="49" rx="14" fill="#FFF3EC"/>
+</svg>
