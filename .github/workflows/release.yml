@@ -91,7 +91,7 @@ jobs:
           format: spdx-json
           output-file: release-supply-chain/lectorbit.spdx.json
           upload-artifact: false
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: supply-chain
           path: release-supply-chain
@@ -227,7 +227,7 @@ jobs:
           --base-url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}"
           --notes "LectorBit ${GITHUB_REF_NAME}"
           --pub-date "${{ needs.preflight.outputs.pub_date }}"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: release-${{ matrix.platform }}
           path: release-${{ matrix.platform }}
