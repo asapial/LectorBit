@@ -108,6 +108,29 @@ pub struct PlannerCandidatePageDto {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CloudPlanningStatusDto {
+    pub configured: bool,
+    pub provider: String,
+    pub model: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AiPlanSuggestionItemDto {
+    pub media_id: String,
+    pub priority: u8,
+    pub dependencies: Vec<String>,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AiPlanSuggestionDto {
+    pub title: String,
+    pub description: String,
+    pub model: String,
+    pub items: Vec<AiPlanSuggestionItemDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PlanningConstraintsDto {
     pub daily_budget_minutes: u32,
     pub allowed_weekdays: Vec<u8>,
@@ -255,6 +278,7 @@ pub struct PlaybackViewDto {
     pub item_covered_ms: u64,
     pub item_duration_ms: u64,
     pub completed: bool,
+    pub stream_url: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -357,6 +381,21 @@ pub trait PlannerOps: Send + Sync + 'static {
     ) -> BoxFuture<'_, Result<PlanCommitResultDto, PlannerErrorCode>>;
 }
 
+pub trait CloudPlanningOps: Send + Sync + 'static {
+    fn status(&self) -> BoxFuture<'_, Result<CloudPlanningStatusDto, CloudPlanningErrorCode>>;
+    fn save_key(
+        &self,
+        api_key: String,
+    ) -> BoxFuture<'_, Result<CloudPlanningStatusDto, CloudPlanningErrorCode>>;
+    fn remove_key(&self) -> BoxFuture<'_, Result<(), CloudPlanningErrorCode>>;
+    fn suggest(
+        &self,
+        candidate_ids: Vec<String>,
+        constraints: PlanningConstraintsDto,
+        consent: bool,
+    ) -> BoxFuture<'_, Result<AiPlanSuggestionDto, CloudPlanningErrorCode>>;
+}
+
 pub trait PlaybackOps: Send + Sync + 'static {
     fn capability(&self) -> BoxFuture<'_, Result<PlaybackCapabilityDto, PlaybackErrorCode>>;
     fn open(
@@ -369,6 +408,12 @@ pub trait PlaybackOps: Send + Sync + 'static {
     fn seek(&self, position_ms: u64) -> BoxFuture<'_, Result<PlaybackViewDto, PlaybackErrorCode>>;
     fn set_speed(&self, speed: f64) -> BoxFuture<'_, Result<PlaybackViewDto, PlaybackErrorCode>>;
     fn state(&self) -> BoxFuture<'_, Result<PlaybackViewDto, PlaybackErrorCode>>;
+    fn sync(
+        &self,
+        position_ms: u64,
+        paused: bool,
+        speed: f64,
+    ) -> BoxFuture<'_, Result<PlaybackViewDto, PlaybackErrorCode>>;
     fn close(&self) -> BoxFuture<'_, Result<(), PlaybackErrorCode>>;
     fn record_action(
         &self,
@@ -574,6 +619,34 @@ pub enum PlannerErrorKind {
     Internal,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, thiserror::Error)]
+#[error("{message}")]
+pub struct CloudPlanningErrorCode {
+    pub kind: CloudPlanningErrorKind,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CloudPlanningErrorKind {
+    InvalidInput,
+    ConsentRequired,
+    NotConfigured,
+    CredentialStore,
+    Provider,
+    InvalidResponse,
+    Internal,
+}
+
+impl CloudPlanningErrorCode {
+    pub fn new(kind: CloudPlanningErrorKind, message: impl Into<String>) -> Self {
+        Self {
+            kind,
+            message: message.into(),
+        }
+    }
+}
+
 impl PlannerErrorCode {
     pub fn new(kind: PlannerErrorKind, message: impl Into<String>) -> Self {
         Self {
@@ -743,6 +816,18 @@ pub struct ReplanArgs {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct CloudPlanningKeyArgs {
+    pub api_key: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AiPlanSuggestionArgs {
+    pub candidate_ids: Vec<String>,
+    pub constraints: PlanningConstraintsDto,
+    pub consent: bool,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct PlaybackOpenArgs {
     pub plan_item_id: String,
 }
@@ -754,6 +839,13 @@ pub struct PlaybackSeekArgs {
 
 #[derive(Debug, Deserialize)]
 pub struct PlaybackSpeedArgs {
+    pub speed: f64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PlaybackSyncArgs {
+    pub position_ms: u64,
+    pub paused: bool,
     pub speed: f64,
 }
 
@@ -926,6 +1018,37 @@ mod commands {
     }
 
     #[tauri::command]
+    pub(crate) async fn cloud_planning_get_status(
+        ops: State<'_, Arc<dyn CloudPlanningOps>>,
+    ) -> Result<CloudPlanningStatusDto, CloudPlanningErrorCode> {
+        ops.status().await
+    }
+
+    #[tauri::command]
+    pub(crate) async fn cloud_planning_save_key(
+        ops: State<'_, Arc<dyn CloudPlanningOps>>,
+        args: CloudPlanningKeyArgs,
+    ) -> Result<CloudPlanningStatusDto, CloudPlanningErrorCode> {
+        ops.save_key(args.api_key).await
+    }
+
+    #[tauri::command]
+    pub(crate) async fn cloud_planning_remove_key(
+        ops: State<'_, Arc<dyn CloudPlanningOps>>,
+    ) -> Result<(), CloudPlanningErrorCode> {
+        ops.remove_key().await
+    }
+
+    #[tauri::command]
+    pub(crate) async fn cloud_planning_suggest(
+        ops: State<'_, Arc<dyn CloudPlanningOps>>,
+        args: AiPlanSuggestionArgs,
+    ) -> Result<AiPlanSuggestionDto, CloudPlanningErrorCode> {
+        ops.suggest(args.candidate_ids, args.constraints, args.consent)
+            .await
+    }
+
+    #[tauri::command]
     pub(crate) async fn playback_get_capability(
         ops: State<'_, Arc<dyn PlaybackOps>>,
     ) -> Result<PlaybackCapabilityDto, PlaybackErrorCode> {
@@ -979,6 +1102,14 @@ mod commands {
         ops: State<'_, Arc<dyn PlaybackOps>>,
     ) -> Result<PlaybackViewDto, PlaybackErrorCode> {
         ops.state().await
+    }
+
+    #[tauri::command]
+    pub(crate) async fn playback_sync(
+        ops: State<'_, Arc<dyn PlaybackOps>>,
+        args: PlaybackSyncArgs,
+    ) -> Result<PlaybackViewDto, PlaybackErrorCode> {
+        ops.sync(args.position_ms, args.paused, args.speed).await
     }
 
     #[tauri::command]
@@ -1110,6 +1241,10 @@ mod plugin_builder {
                 super::commands::plan_commit,
                 super::commands::plan_get_routine,
                 super::commands::plan_replan,
+                super::commands::cloud_planning_get_status,
+                super::commands::cloud_planning_save_key,
+                super::commands::cloud_planning_remove_key,
+                super::commands::cloud_planning_suggest,
                 super::commands::playback_get_capability,
                 super::commands::playback_open,
                 super::commands::playback_play,
@@ -1117,6 +1252,7 @@ mod plugin_builder {
                 super::commands::playback_seek,
                 super::commands::playback_set_speed,
                 super::commands::playback_get_state,
+                super::commands::playback_sync,
                 super::commands::playback_close,
                 super::commands::study_record_action,
                 super::commands::models_list,

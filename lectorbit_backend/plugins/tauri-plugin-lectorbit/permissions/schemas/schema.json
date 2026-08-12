@@ -355,6 +355,54 @@
           "markdownDescription": "Denies the app_get_version command without any pre-configured scope."
         },
         {
+          "description": "Enables the cloud_planning_get_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-cloud-planning-get-status",
+          "markdownDescription": "Enables the cloud_planning_get_status command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the cloud_planning_get_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-cloud-planning-get-status",
+          "markdownDescription": "Denies the cloud_planning_get_status command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the cloud_planning_remove_key command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-cloud-planning-remove-key",
+          "markdownDescription": "Enables the cloud_planning_remove_key command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the cloud_planning_remove_key command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-cloud-planning-remove-key",
+          "markdownDescription": "Denies the cloud_planning_remove_key command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the cloud_planning_save_key command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-cloud-planning-save-key",
+          "markdownDescription": "Enables the cloud_planning_save_key command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the cloud_planning_save_key command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-cloud-planning-save-key",
+          "markdownDescription": "Denies the cloud_planning_save_key command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the cloud_planning_suggest command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-cloud-planning-suggest",
+          "markdownDescription": "Enables the cloud_planning_suggest command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the cloud_planning_suggest command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-cloud-planning-suggest",
+          "markdownDescription": "Denies the cloud_planning_suggest command without any pre-configured scope."
+        },
+        {
           "description": "Enables the library_enqueue_scan command without any pre-configured scope.",
           "type": "string",
           "const": "allow-library-enqueue-scan",
@@ -619,6 +667,18 @@
           "markdownDescription": "Denies the playback_set_speed command without any pre-configured scope."
         },
         {
+          "description": "Enables the playback_sync command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-playback-sync",
+          "markdownDescription": "Enables the playback_sync command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the playback_sync command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-playback-sync",
+          "markdownDescription": "Denies the playback_sync command without any pre-configured scope."
+        },
+        {
           "description": "Enables the search_query command without any pre-configured scope.",
           "type": "string",
           "const": "allow-search-query",
@@ -667,10 +727,10 @@
           "markdownDescription": "Denies the updates_install command without any pre-configured scope."
         },
         {
-          "description": "Default LectorBit permissions for the main window\n#### This default permission set includes:\n\n- `allow-app-get-version`\n- `allow-app-get-diagnostics`\n- `allow-library-list-roots`\n- `allow-library-pick-and-register-root`\n- `allow-library-revoke-root`\n- `allow-library-enqueue-scan`\n- `allow-library-list-scan-jobs`\n- `allow-library-list-media`\n- `allow-planner-list-candidates`\n- `allow-planner-preview`\n- `allow-plan-commit`\n- `allow-plan-get-routine`\n- `allow-plan-replan`\n- `allow-playback-get-capability`\n- `allow-playback-open`\n- `allow-playback-play`\n- `allow-playback-pause`\n- `allow-playback-seek`\n- `allow-playback-set-speed`\n- `allow-playback-get-state`\n- `allow-playback-close`\n- `allow-study-record-action`\n- `allow-models-list`\n- `allow-models-install`\n- `allow-models-remove`\n- `allow-analysis-start-transcription`\n- `allow-analysis-get-transcript-state`\n- `allow-analysis-list-jobs`\n- `allow-search-query`\n- `allow-updates-check`\n- `allow-updates-install`",
+          "description": "Default LectorBit permissions for the main window\n#### This default permission set includes:\n\n- `allow-app-get-version`\n- `allow-app-get-diagnostics`\n- `allow-library-list-roots`\n- `allow-library-pick-and-register-root`\n- `allow-library-revoke-root`\n- `allow-library-enqueue-scan`\n- `allow-library-list-scan-jobs`\n- `allow-library-list-media`\n- `allow-planner-list-candidates`\n- `allow-planner-preview`\n- `allow-plan-commit`\n- `allow-plan-get-routine`\n- `allow-plan-replan`\n- `allow-cloud-planning-get-status`\n- `allow-cloud-planning-save-key`\n- `allow-cloud-planning-remove-key`\n- `allow-cloud-planning-suggest`\n- `allow-playback-get-capability`\n- `allow-playback-open`\n- `allow-playback-play`\n- `allow-playback-pause`\n- `allow-playback-seek`\n- `allow-playback-set-speed`\n- `allow-playback-get-state`\n- `allow-playback-sync`\n- `allow-playback-close`\n- `allow-study-record-action`\n- `allow-models-list`\n- `allow-models-install`\n- `allow-models-remove`\n- `allow-analysis-start-transcription`\n- `allow-analysis-get-transcript-state`\n- `allow-analysis-list-jobs`\n- `allow-search-query`\n- `allow-updates-check`\n- `allow-updates-install`",
           "type": "string",
           "const": "default",
-          "markdownDescription": "Default LectorBit permissions for the main window\n#### This default permission set includes:\n\n- `allow-app-get-version`\n- `allow-app-get-diagnostics`\n- `allow-library-list-roots`\n- `allow-library-pick-and-register-root`\n- `allow-library-revoke-root`\n- `allow-library-enqueue-scan`\n- `allow-library-list-scan-jobs`\n- `allow-library-list-media`\n- `allow-planner-list-candidates`\n- `allow-planner-preview`\n- `allow-plan-commit`\n- `allow-plan-get-routine`\n- `allow-plan-replan`\n- `allow-playback-get-capability`\n- `allow-playback-open`\n- `allow-playback-play`\n- `allow-playback-pause`\n- `allow-playback-seek`\n- `allow-playback-set-speed`\n- `allow-playback-get-state`\n- `allow-playback-close`\n- `allow-study-record-action`\n- `allow-models-list`\n- `allow-models-install`\n- `allow-models-remove`\n- `allow-analysis-start-transcription`\n- `allow-analysis-get-transcript-state`\n- `allow-analysis-list-jobs`\n- `allow-search-query`\n- `allow-updates-check`\n- `allow-updates-install`"
+          "markdownDescription": "Default LectorBit permissions for the main window\n#### This default permission set includes:\n\n- `allow-app-get-version`\n- `allow-app-get-diagnostics`\n- `allow-library-list-roots`\n- `allow-library-pick-and-register-root`\n- `allow-library-revoke-root`\n- `allow-library-enqueue-scan`\n- `allow-library-list-scan-jobs`\n- `allow-library-list-media`\n- `allow-planner-list-candidates`\n- `allow-planner-preview`\n- `allow-plan-commit`\n- `allow-plan-get-routine`\n- `allow-plan-replan`\n- `allow-cloud-planning-get-status`\n- `allow-cloud-planning-save-key`\n- `allow-cloud-planning-remove-key`\n- `allow-cloud-planning-suggest`\n- `allow-playback-get-capability`\n- `allow-playback-open`\n- `allow-playback-play`\n- `allow-playback-pause`\n- `allow-playback-seek`\n- `allow-playback-set-speed`\n- `allow-playback-get-state`\n- `allow-playback-sync`\n- `allow-playback-close`\n- `allow-study-record-action`\n- `allow-models-list`\n- `allow-models-install`\n- `allow-models-remove`\n- `allow-analysis-start-transcription`\n- `allow-analysis-get-transcript-state`\n- `allow-analysis-list-jobs`\n- `allow-search-query`\n- `allow-updates-check`\n- `allow-updates-install`"
         }
       ]
     }

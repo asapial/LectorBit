@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-cloud-planning-remove-key"
+description = "Enables the cloud_planning_remove_key command without any pre-configured scope."
+commands.allow = ["cloud_planning_remove_key"]
+
+[[permission]]
+identifier = "deny-cloud-planning-remove-key"
+description = "Denies the cloud_planning_remove_key command without any pre-configured scope."
+commands.deny = ["cloud_planning_remove_key"]

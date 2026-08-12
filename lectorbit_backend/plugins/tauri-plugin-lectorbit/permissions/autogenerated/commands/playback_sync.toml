@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-playback-sync"
+description = "Enables the playback_sync command without any pre-configured scope."
+commands.allow = ["playback_sync"]
+
+[[permission]]
+identifier = "deny-playback-sync"
+description = "Denies the playback_sync command without any pre-configured scope."
+commands.deny = ["playback_sync"]

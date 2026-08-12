@@ -57,3 +57,11 @@ strip = true
 
 [profile.dev]
 opt-level = 1
+
+# The Windows Tauri shell is a large cdylib. Rust's incremental codegen can
+# occasionally leave its many generated object files out of sync after a dev
+# watcher is interrupted or build features change, which surfaces as LNK2001/
+# LNK1120 errors for anonymous LLVM symbols. Keep incremental compilation for
+# the workspace crates, but always link the shell from a coherent codegen set.
+[profile.dev.package.lectorbit]
+incremental = false

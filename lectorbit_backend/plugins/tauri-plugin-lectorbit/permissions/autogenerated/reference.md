@@ -17,6 +17,10 @@ Default LectorBit permissions for the main window
 - `allow-plan-commit`
 - `allow-plan-get-routine`
 - `allow-plan-replan`
+- `allow-cloud-planning-get-status`
+- `allow-cloud-planning-save-key`
+- `allow-cloud-planning-remove-key`
+- `allow-cloud-planning-suggest`
 - `allow-playback-get-capability`
 - `allow-playback-open`
 - `allow-playback-play`
@@ -24,6 +28,7 @@ Default LectorBit permissions for the main window
 - `allow-playback-seek`
 - `allow-playback-set-speed`
 - `allow-playback-get-state`
+- `allow-playback-sync`
 - `allow-playback-close`
 - `allow-study-record-action`
 - `allow-models-list`
@@ -171,6 +176,110 @@ Enables the app_get_version command without any pre-configured scope.
 <td>
 
 Denies the app_get_version command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:allow-cloud-planning-get-status`
+
+</td>
+<td>
+
+Enables the cloud_planning_get_status command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:deny-cloud-planning-get-status`
+
+</td>
+<td>
+
+Denies the cloud_planning_get_status command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:allow-cloud-planning-remove-key`
+
+</td>
+<td>
+
+Enables the cloud_planning_remove_key command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:deny-cloud-planning-remove-key`
+
+</td>
+<td>
+
+Denies the cloud_planning_remove_key command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:allow-cloud-planning-save-key`
+
+</td>
+<td>
+
+Enables the cloud_planning_save_key command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:deny-cloud-planning-save-key`
+
+</td>
+<td>
+
+Denies the cloud_planning_save_key command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:allow-cloud-planning-suggest`
+
+</td>
+<td>
+
+Enables the cloud_planning_suggest command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:deny-cloud-planning-suggest`
+
+</td>
+<td>
+
+Denies the cloud_planning_suggest command without any pre-configured scope.
 
 </td>
 </tr>
@@ -743,6 +852,32 @@ Enables the playback_set_speed command without any pre-configured scope.
 <td>
 
 Denies the playback_set_speed command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:allow-playback-sync`
+
+</td>
+<td>
+
+Enables the playback_sync command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:deny-playback-sync`
+
+</td>
+<td>
+
+Denies the playback_sync command without any pre-configured scope.
 
 </td>
 </tr>
