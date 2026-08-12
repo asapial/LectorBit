@@ -78,7 +78,10 @@ impl Db {
             .foreign_keys(true);
 
         let pool = SqlitePoolOptions::new()
-            .max_connections(5)
+            // Each `:memory:` SQLite connection owns a separate database.
+            // Keep the test/tooling pool on one connection so migrations and
+            // repository queries always see the same schema.
+            .max_connections(1)
             .min_connections(1)
             .acquire_timeout(Duration::from_secs(5))
             .connect_with(opts)

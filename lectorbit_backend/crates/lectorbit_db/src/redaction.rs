@@ -42,8 +42,7 @@ fn patterns() -> &'static Patterns {
     PATTERNS.get_or_init(|| Patterns {
         windows_abs: Regex::new(r#"(?i)([A-Za-z]:\\(?:[^\\\s'"<>|*?]+\\?)*)"#)
             .expect("windows path regex"),
-        posix_abs: Regex::new(r#"(/[^\s'"<>|*?]+(?:/[^\s'"<>|*?]+)*)"#)
-            .expect("posix path regex"),
+        posix_abs: Regex::new(r#"(/[^\s'"<>|*?]+(?:/[^\s'"<>|*?]+)*)"#).expect("posix path regex"),
         bearer: Regex::new(r#"(?i)\b(?:Bearer|Token|Api[_-]?Key)\s+[A-Za-z0-9._\-]{8,}"#)
             .expect("bearer token regex"),
         email: Regex::new(r#"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}"#)
@@ -96,9 +95,7 @@ impl<W: Write + Send> RedactingMakeWriter<W> {
     }
 }
 
-impl<'a, W: Write + Send + 'a> tracing_subscriber::fmt::MakeWriter<'a>
-    for RedactingMakeWriter<W>
-{
+impl<'a, W: Write + Send + 'a> tracing_subscriber::fmt::MakeWriter<'a> for RedactingMakeWriter<W> {
     type Writer = RedactingWriter<W>;
 
     fn make_writer(&'a self) -> Self::Writer {
@@ -114,8 +111,8 @@ pub struct RedactingWriter<W> {
 
 impl<W: Write> Write for RedactingWriter<W> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        let s = std::str::from_utf8(buf)
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        let s =
+            std::str::from_utf8(buf).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
         let redacted = redact_str(s);
         let bytes = redacted.as_bytes();
         // Write may write fewer bytes than requested. We loop until done.
@@ -162,7 +159,8 @@ impl Visit for RedactingVisitor {
 
     fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
         let formatted = format!("{value:?}");
-        self.0.push((field.name().to_string(), redact_str(&formatted)));
+        self.0
+            .push((field.name().to_string(), redact_str(&formatted)));
     }
 
     fn record_bool(&mut self, field: &Field, value: bool) {
@@ -282,12 +280,18 @@ mod tests {
         });
 
         let rendered = String::from_utf8(buf.lock().unwrap().clone()).unwrap();
-        assert!(!rendered.contains("Alice"), "path leaked into log: {rendered}");
+        assert!(
+            !rendered.contains("Alice"),
+            "path leaked into log: {rendered}"
+        );
         assert!(
             rendered.contains("[REDACTED]"),
             "redaction marker missing: {rendered}"
         );
-        assert!(rendered.contains("count=3"), "non-string field lost: {rendered}");
+        assert!(
+            rendered.contains("count=3"),
+            "non-string field lost: {rendered}"
+        );
     }
 
     /// Test sink: collects bytes into a shared `Vec<u8>` for assertion.

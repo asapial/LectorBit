@@ -166,7 +166,12 @@ impl Repo {
                         .await?;
                     }
 
-                    if changed || matches!(status.as_str(), "queued" | "unavailable" | "missing") {
+                    if changed
+                        || matches!(
+                            status.as_str(),
+                            "queued" | "failed" | "unavailable" | "missing"
+                        )
+                    {
                         candidates.push(ProbeCandidate {
                             media_id,
                             root_id: root_id.to_string(),
@@ -233,6 +238,30 @@ impl Repo {
             })
         })
         .transpose()
+    }
+
+    pub async fn list_unavailable_probe_candidates(
+        &self,
+        limit: u32,
+    ) -> DbResult<Vec<ProbeCandidate>> {
+        let rows = sqlx::query(
+            "SELECT m.id AS media_id, m.root_id \
+             FROM media_files m \
+             JOIN library_roots r ON r.id = m.root_id \
+             WHERE r.revoked_at IS NULL AND m.probe_status = 'unavailable' \
+             ORDER BY m.discovered_at ASC, m.id ASC LIMIT ?",
+        )
+        .bind(i64::from(limit.clamp(1, 50_000)))
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter()
+            .map(|row| {
+                Ok(ProbeCandidate {
+                    media_id: row.try_get("media_id")?,
+                    root_id: row.try_get("root_id")?,
+                })
+            })
+            .collect()
     }
 
     pub async fn mark_probing(&self, media_id: &str) -> DbResult<()> {
@@ -365,14 +394,16 @@ impl Repo {
     ) -> DbResult<MediaPage> {
         let page_size = limit.clamp(1, 200);
         let rows = sqlx::query(
-            "SELECT id, root_id, display_name, media_kind, size_bytes, duration_ms, \
-                    container, video_codec, audio_codec, width, height, audio_streams, \
-                    subtitle_streams, probe_status, probe_error, discovered_at \
-             FROM media_files \
-             WHERE (? IS NULL OR root_id = ?) \
-               AND (? IS NULL OR discovered_at < (SELECT discovered_at FROM media_files WHERE id = ?) \
-                    OR (discovered_at = (SELECT discovered_at FROM media_files WHERE id = ?) AND id < ?)) \
-             ORDER BY discovered_at DESC, id DESC LIMIT ?",
+            "SELECT m.id, m.root_id, m.display_name, m.media_kind, m.size_bytes, m.duration_ms, \
+                    m.container, m.video_codec, m.audio_codec, m.width, m.height, m.audio_streams, \
+                    m.subtitle_streams, m.probe_status, m.probe_error, m.discovered_at \
+             FROM media_files m \
+             JOIN library_roots r ON r.id = m.root_id \
+             WHERE r.revoked_at IS NULL \
+               AND (? IS NULL OR m.root_id = ?) \
+               AND (? IS NULL OR m.discovered_at < (SELECT discovered_at FROM media_files WHERE id = ?) \
+                    OR (m.discovered_at = (SELECT discovered_at FROM media_files WHERE id = ?) AND m.id < ?)) \
+             ORDER BY m.discovered_at DESC, m.id DESC LIMIT ?",
         )
         .bind(root_id)
         .bind(root_id)
@@ -487,9 +518,10 @@ mod tests {
             .reconcile_discovery(&root_id, &[discovered("lesson.mp4")], true)
             .await
             .expect("unchanged");
-        assert!(
-            unchanged.is_empty(),
-            "unchanged failures are not retried forever"
+        assert_eq!(
+            unchanged.len(),
+            1,
+            "an explicit rescan retries metadata failures"
         );
 
         let mut changed = discovered("lesson.mp4");
@@ -616,6 +648,60 @@ mod tests {
         let page = repo.list_page(None, None, 20).await.expect("page");
         assert_eq!(page.items.len(), 1);
         assert_eq!(page.items[0].probe_status, "missing");
+        db.close().await;
+    }
+
+    #[tokio::test]
+    async fn revoked_roots_are_removed_from_the_active_media_library() {
+        let (db, repo, root_id) = fixture().await;
+        repo.reconcile_discovery(&root_id, &[discovered("lesson.mp4")], true)
+            .await
+            .expect("discover");
+
+        LibraryRootsRepo::new(db.pool().clone())
+            .revoke_root(&root_id)
+            .await
+            .expect("revoke root");
+
+        let page = repo.list_page(None, None, 20).await.expect("page");
+        assert!(page.items.is_empty());
+        db.close().await;
+    }
+
+    #[tokio::test]
+    async fn unavailable_metadata_is_recoverable_only_for_active_roots() {
+        let (db, repo, root_id) = fixture().await;
+        let candidate = repo
+            .reconcile_discovery(&root_id, &[discovered("lesson.mp4")], true)
+            .await
+            .expect("discover")
+            .remove(0);
+        repo.save_probe_failure(
+            &candidate.media_id,
+            "unavailable",
+            "Media inspection is unavailable.",
+            "8.1.2",
+        )
+        .await
+        .expect("mark unavailable");
+
+        assert_eq!(
+            repo.list_unavailable_probe_candidates(20)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+
+        LibraryRootsRepo::new(db.pool().clone())
+            .revoke_root(&root_id)
+            .await
+            .expect("revoke root");
+        assert!(repo
+            .list_unavailable_probe_candidates(20)
+            .await
+            .unwrap()
+            .is_empty());
         db.close().await;
     }
 }

@@ -28,9 +28,9 @@ impl From<sqlx::Error> for DbError {
     fn from(err: sqlx::Error) -> Self {
         match err {
             sqlx::Error::Io(io) => DbError::Io(io.to_string()),
-            sqlx::Error::PoolTimedOut
-            | sqlx::Error::PoolClosed
-            | sqlx::Error::WorkerCrashed => DbError::Pool(err.to_string()),
+            sqlx::Error::PoolTimedOut | sqlx::Error::PoolClosed | sqlx::Error::WorkerCrashed => {
+                DbError::Pool(err.to_string())
+            }
             other => DbError::Pool(other.to_string()),
         }
     }

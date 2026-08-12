@@ -1,5 +1,6 @@
 //! Read access to rebuildable timestamp chunks.
 
+use lectorbit_core::natural_cmp;
 use sqlx::{Row, SqlitePool};
 
 use crate::{DbResult, MediaListItem};
@@ -122,6 +123,10 @@ impl Repo {
                 media,
             });
         }
+        result.sort_by(|left, right| {
+            natural_cmp(&left.media.display_name, &right.media.display_name)
+                .then_with(|| left.media.id.cmp(&right.media.id))
+        });
         Ok(result)
     }
 
@@ -132,23 +137,30 @@ impl Repo {
     ) -> DbResult<PlannerCandidatePage> {
         let page_size = limit.clamp(1, 200);
         let rows = sqlx::query(
-            "SELECT m.id, m.display_name, m.duration_ms, \
+            "WITH ordered_media AS ( \
+                SELECT m.id, m.display_name, m.duration_ms, \
+                    CASE WHEN m.display_name GLOB '[0-9]*' \
+                        THEN CAST(m.display_name AS INTEGER) ELSE 9223372036854775807 END \
+                        AS numeric_prefix, \
+                    lower(m.display_name) AS name_key, \
                     (SELECT COUNT(*) FROM chunks c WHERE c.media_id = m.id AND c.source = ( \
                         SELECT source FROM chunks preferred WHERE preferred.media_id = m.id \
                         ORDER BY CASE source \
                             WHEN 'scene' THEN 0 WHEN 'transcript' THEN 1 ELSE 2 END LIMIT 1 \
                     )) AS chunk_count \
-             FROM media_files m WHERE m.probe_status = 'ready' \
-               AND EXISTS (SELECT 1 FROM chunks existing WHERE existing.media_id = m.id) \
-               AND (? IS NULL OR lower(m.display_name) > lower(( \
-                        SELECT display_name FROM media_files WHERE id = ? \
-                    )) OR (lower(m.display_name) = lower(( \
-                        SELECT display_name FROM media_files WHERE id = ? \
-                    )) AND m.id > ?)) \
-             ORDER BY m.display_name COLLATE NOCASE, m.id LIMIT ?",
+                FROM media_files m WHERE m.probe_status = 'ready' \
+                    AND EXISTS (SELECT 1 FROM chunks existing WHERE existing.media_id = m.id) \
+             ), cursor_row AS ( \
+                SELECT numeric_prefix, name_key, id FROM ordered_media WHERE id = ? \
+             ) \
+             SELECT o.id, o.display_name, o.duration_ms, o.chunk_count \
+             FROM ordered_media o WHERE \
+               (? IS NULL OR EXISTS (SELECT 1 FROM cursor_row c WHERE \
+                  o.numeric_prefix > c.numeric_prefix OR \
+                  (o.numeric_prefix = c.numeric_prefix AND o.name_key > c.name_key) OR \
+                  (o.numeric_prefix = c.numeric_prefix AND o.name_key = c.name_key AND o.id > c.id))) \
+             ORDER BY o.numeric_prefix, o.name_key, o.id LIMIT ?",
         )
-        .bind(cursor)
-        .bind(cursor)
         .bind(cursor)
         .bind(cursor)
         .bind(i64::from(page_size + 1))
@@ -198,4 +210,58 @@ fn nonnegative_u64(value: i64) -> u64 {
 
 fn nonnegative_u32(value: i64) -> u32 {
     u32::try_from(value.max(0)).unwrap_or(u32::MAX)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Db;
+
+    #[tokio::test]
+    async fn candidate_pages_use_natural_numeric_order() {
+        let db = Db::open_in_memory().await.unwrap();
+        sqlx::query(
+            "INSERT INTO library_roots (id, display_name, canonical_path, registered_at) \
+             VALUES ('root', 'Course', 'C:/Course', 'now')",
+        )
+        .execute(db.pool())
+        .await
+        .unwrap();
+        for (id, name) in [
+            ("ten", "10 - Feature Scaling.mp4"),
+            ("two", "2 - Machine Learning Demo Get Excited.mp4"),
+        ] {
+            sqlx::query(
+                "INSERT INTO media_files \
+                 (id, root_id, path, size_bytes, mtime, discovered_at, display_name, \
+                  media_kind, duration_ms, probe_status) \
+                 VALUES (?, 'root', ?, 1, 'now', 'now', ?, 'video', 60000, 'ready')",
+            )
+            .bind(id)
+            .bind(format!("C:/Course/{name}"))
+            .bind(name)
+            .execute(db.pool())
+            .await
+            .unwrap();
+            sqlx::query(
+                "INSERT INTO chunks \
+                 (id, media_id, ordinal, start_ms, end_ms, source, analyzer_version, created_at) \
+                 VALUES (?, ?, 0, 0, 60000, 'coarse', 'test', 'now')",
+            )
+            .bind(format!("chunk-{id}"))
+            .bind(id)
+            .execute(db.pool())
+            .await
+            .unwrap();
+        }
+
+        let repo = Repo::new(db.pool().clone());
+        let first = repo.list_candidate_page(None, 1).await.unwrap();
+        assert_eq!(first.items[0].media_id, "two");
+        let second = repo
+            .list_candidate_page(first.next_cursor.as_deref(), 1)
+            .await
+            .unwrap();
+        assert_eq!(second.items[0].media_id, "ten");
+    }
 }
