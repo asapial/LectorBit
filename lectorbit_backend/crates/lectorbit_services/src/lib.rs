@@ -30,6 +30,7 @@ pub use planner::{
     PlannerCandidatePage, PlannerService, PlannerServiceError, PlanningSelection,
 };
 pub use progress::{
-    PlaybackCapability, PlaybackService, PlaybackUpdate, PlaybackView, ProgressError,
+    EmbeddedPlaybackOpen, PlaybackCapability, PlaybackService, PlaybackUpdate, PlaybackView,
+    ProgressError,
 };
 pub use search::{SearchError, SearchHit, SearchService, SearchSource};

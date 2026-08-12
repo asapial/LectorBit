@@ -157,9 +157,7 @@ impl PlannerService {
         if preview.draft.items.is_empty() {
             return Err(PlannerServiceError::EmptyPlan);
         }
-        let mut selections = request.selections.clone();
-        selections.sort_by(|left, right| left.media_id.cmp(&right.media_id));
-        let selections_json = serde_json::to_string(&selections)
+        let selections_json = serde_json::to_string(&request.selections)
             .map_err(|_| PlannerServiceError::InvalidInput("selections".into()))?;
         Ok(self
             .plans
@@ -259,7 +257,7 @@ fn build_preview_with_states(
         .collect::<BTreeMap<_, _>>();
     let mut labels = BTreeMap::new();
     let mut media_work = Vec::with_capacity(request.selections.len());
-    for selection in &request.selections {
+    for (sequence, selection) in request.selections.iter().enumerate() {
         let entry = by_id
             .remove(&selection.media_id)
             .ok_or_else(|| PlannerServiceError::MediaUnavailable(selection.media_id.clone()))?;
@@ -267,6 +265,7 @@ fn build_preview_with_states(
         let chunks = adjusted_chunks(entry.chunks, states.get(&selection.media_id));
         media_work.push(MediaWork {
             media_id: selection.media_id.clone(),
+            sequence: u32::try_from(sequence).unwrap_or(u32::MAX),
             priority: selection.priority,
             deadline: selection.deadline,
             dependencies: selection.dependencies.clone(),

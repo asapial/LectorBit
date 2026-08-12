@@ -1,5 +1,6 @@
 //! Playback orchestration, durable checkpoints, and study actions.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -41,6 +42,11 @@ pub struct PlaybackView {
     pub item_covered_ms: u64,
     pub item_duration_ms: u64,
     pub completed: bool,
+}
+
+pub struct EmbeddedPlaybackOpen {
+    pub view: PlaybackView,
+    pub canonical_path: PathBuf,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -103,6 +109,12 @@ struct ActiveSession {
     last_position_ms: u64,
     last_paused: bool,
     last_checkpoint: Instant,
+    backend: ActiveBackend,
+}
+
+enum ActiveBackend {
+    External,
+    Embedded(EngineState),
 }
 
 impl PlaybackService {
@@ -178,6 +190,7 @@ impl PlaybackService {
             last_position_ms: state.position_ms,
             last_paused: state.paused,
             last_checkpoint: Instant::now(),
+            backend: ActiveBackend::External,
         });
         let view = to_view(&item, &state, &progress);
         let _ = self.updates.send(PlaybackUpdate::State(view.clone()));
@@ -186,17 +199,79 @@ impl PlaybackService {
         Ok(view)
     }
 
+    pub async fn open_embedded(
+        &self,
+        plan_item_id: &str,
+    ) -> Result<EmbeddedPlaybackOpen, ProgressError> {
+        if self.session.lock().await.is_some() {
+            self.close().await?;
+        }
+        let item = self
+            .study
+            .resolve_active_item(plan_item_id)
+            .await?
+            .ok_or(ProgressError::ItemUnavailable)?;
+        let media = self.media.resolve_authorized_media(&item.media_id).await?;
+        let progress = self.study.snapshot_for_item(&item).await?;
+        let resume_position =
+            if (item.raw_start_ms..item.raw_end_ms).contains(&progress.position_ms) {
+                progress.position_ms
+            } else {
+                item.raw_start_ms
+            };
+        let state = EngineState {
+            position_ms: resume_position,
+            duration_ms: item.media_duration_ms,
+            paused: true,
+            speed: 1.0,
+        };
+        if !progress.completed {
+            self.study
+                .record_action(&item, StudyActionKind::Started, None)
+                .await?;
+        }
+        *self.session.lock().await = Some(ActiveSession {
+            generation: Uuid::now_v7().to_string(),
+            item: item.clone(),
+            progress_version: progress.version,
+            last_position_ms: state.position_ms,
+            last_paused: true,
+            last_checkpoint: Instant::now(),
+            backend: ActiveBackend::Embedded(state.clone()),
+        });
+        let view = to_view(&item, &state, &progress);
+        Ok(EmbeddedPlaybackOpen {
+            view,
+            canonical_path: media.canonical_path,
+        })
+    }
+
     pub async fn play(&self) -> Result<PlaybackView, ProgressError> {
         self.require_open().await?;
+        if self
+            .update_embedded_state(|state| state.paused = false)
+            .await
+        {
+            return self.state().await;
+        }
         self.engine.play().await?;
         self.state().await
     }
 
     pub async fn pause(&self) -> Result<PlaybackView, ProgressError> {
         self.require_open().await?;
-        let before = self.engine.state().await?;
-        self.engine.pause().await?;
+        let before = if let Some(state) = self.embedded_state().await {
+            state
+        } else {
+            self.engine.state().await?
+        };
         self.checkpoint(&before, true).await?;
+        if !self
+            .update_embedded_state(|state| state.paused = true)
+            .await
+        {
+            self.engine.pause().await?;
+        }
         let item = self.require_open().await?;
         self.study
             .record_action(&item, StudyActionKind::Paused, None)
@@ -209,9 +284,18 @@ impl PlaybackService {
         if position_ms < item.raw_start_ms || position_ms > item.raw_end_ms {
             return Err(ProgressError::InvalidInput);
         }
-        let before = self.engine.state().await?;
+        let before = if let Some(state) = self.embedded_state().await {
+            state
+        } else {
+            self.engine.state().await?
+        };
         self.checkpoint(&before, true).await?;
-        self.engine.seek(position_ms).await?;
+        if !self
+            .update_embedded_state(|state| state.position_ms = position_ms)
+            .await
+        {
+            self.engine.seek(position_ms).await?;
+        }
         if let Some(session) = self.session.lock().await.as_mut() {
             session.last_position_ms = position_ms;
         }
@@ -223,13 +307,62 @@ impl PlaybackService {
             return Err(ProgressError::InvalidInput);
         }
         self.require_open().await?;
-        self.engine.set_speed(speed).await?;
+        if !self
+            .update_embedded_state(|state| state.speed = speed)
+            .await
+        {
+            self.engine.set_speed(speed).await?;
+        }
         self.state().await
+    }
+
+    pub async fn sync_embedded(
+        &self,
+        position_ms: u64,
+        paused: bool,
+        speed: f64,
+    ) -> Result<PlaybackView, ProgressError> {
+        let item = self.require_open().await?;
+        if position_ms < item.raw_start_ms
+            || position_ms > item.raw_end_ms
+            || !(0.5..=2.0).contains(&speed)
+        {
+            return Err(ProgressError::InvalidInput);
+        }
+        let state = EngineState {
+            position_ms,
+            duration_ms: item.media_duration_ms,
+            paused,
+            speed,
+        };
+        let due = {
+            let mut session = self.session.lock().await;
+            let Some(session) = session.as_mut() else {
+                return Err(ProgressError::NotOpen);
+            };
+            let ActiveBackend::Embedded(embedded) = &mut session.backend else {
+                return Err(ProgressError::InvalidInput);
+            };
+            *embedded = state.clone();
+            (!paused && session.last_checkpoint.elapsed() >= CHECKPOINT_INTERVAL)
+                || paused != session.last_paused
+                || (position_ms >= item.raw_end_ms && session.last_position_ms < item.raw_end_ms)
+        };
+        if due {
+            self.checkpoint(&state, true).await?;
+        }
+        let view = self.state().await?;
+        let _ = self.updates.send(PlaybackUpdate::State(view.clone()));
+        Ok(view)
     }
 
     pub async fn state(&self) -> Result<PlaybackView, ProgressError> {
         let item = self.require_open().await?;
-        let state = self.engine.state().await?;
+        let state = if let Some(state) = self.embedded_state().await {
+            state
+        } else {
+            self.engine.state().await?
+        };
         let progress = self.study.snapshot_for_item(&item).await?;
         Ok(to_view(&item, &state, &progress))
     }
@@ -240,10 +373,17 @@ impl PlaybackService {
             Err(ProgressError::NotOpen) => return Ok(()),
             Err(error) => return Err(error),
         };
-        if let Ok(state) = self.engine.state().await {
+        let embedded = self.embedded_state().await;
+        let state = match embedded.as_ref() {
+            Some(state) => Ok(state.clone()),
+            None => self.engine.state().await,
+        };
+        if let Ok(state) = state {
             self.checkpoint(&state, true).await?;
         }
-        self.engine.close().await?;
+        if embedded.is_none() {
+            self.engine.close().await?;
+        }
         self.session.lock().await.take();
         let _ = self.updates.send(PlaybackUpdate::Closed {
             plan_item_id: item.id,
@@ -273,6 +413,30 @@ impl PlaybackService {
             .as_ref()
             .map(|session| session.item.clone())
             .ok_or(ProgressError::NotOpen)
+    }
+
+    async fn embedded_state(&self) -> Option<EngineState> {
+        self.session
+            .lock()
+            .await
+            .as_ref()
+            .and_then(|session| match &session.backend {
+                ActiveBackend::Embedded(state) => Some(state.clone()),
+                ActiveBackend::External => None,
+            })
+    }
+
+    async fn update_embedded_state(&self, update: impl FnOnce(&mut EngineState)) -> bool {
+        let mut session = self.session.lock().await;
+        let Some(ActiveSession {
+            backend: ActiveBackend::Embedded(state),
+            ..
+        }) = session.as_mut()
+        else {
+            return false;
+        };
+        update(state);
+        true
     }
 
     async fn monitor(&self, generation: String) {

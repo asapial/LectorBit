@@ -102,6 +102,13 @@ impl MediaService {
         Ok(jobs::list_by_kind(self.repo.pool(), "probe", limit).await?)
     }
 
+    pub async fn list_unavailable_probe_candidates(
+        &self,
+        limit: u32,
+    ) -> Result<Vec<ProbeCandidate>, MediaError> {
+        Ok(self.repo.list_unavailable_probe_candidates(limit).await?)
+    }
+
     pub async fn mark_probe_job_running(&self, id: &str) -> Result<(), MediaError> {
         Ok(jobs::mark_running(self.repo.pool(), id).await?)
     }
