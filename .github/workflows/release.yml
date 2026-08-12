@@ -252,7 +252,7 @@ jobs:
       - uses: actions/attest-build-provenance@v2
         with:
           subject-path: artifacts/release-*/*
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           prerelease: ${{ needs.preflight.outputs.channel == 'beta' }}
           generate_release_notes: true
