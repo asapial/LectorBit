@@ -1,32 +1,136 @@
 //! Safe plugin mapping for playback, progress, and study actions.
 
+use std::io::Read;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+
 use lectorbit_db::StudyActionKind;
 use lectorbit_services::{PlaybackService, PlaybackUpdate, PlaybackView, ProgressError};
 use tauri_plugin_lectorbit::{
     BoxFuture, PlaybackCapabilityDto, PlaybackErrorCode, PlaybackErrorKind, PlaybackEventDto,
     PlaybackEventSink, PlaybackOps, PlaybackViewDto,
 };
+use tokio::process::Command;
+use tokio::sync::Mutex;
+use tokio::time::timeout;
+use uuid::Uuid;
+
+use crate::embedded_media::EmbeddedMediaRegistry;
+
+const REMUX_TIMEOUT: Duration = Duration::from_secs(120);
 
 #[derive(Clone)]
 pub struct PlaybackAdapter {
     service: PlaybackService,
+    media: EmbeddedMediaRegistry,
+    grant: std::sync::Arc<Mutex<Option<ActiveGrant>>>,
+    ffmpeg_path: Option<PathBuf>,
+    work_dir: PathBuf,
+}
+
+struct ActiveGrant {
+    token: String,
+    url: String,
+    cleanup_path: Option<PathBuf>,
+}
+
+struct PreparedMedia {
+    path: PathBuf,
+    cleanup_path: Option<PathBuf>,
 }
 
 impl PlaybackAdapter {
-    pub fn new(service: PlaybackService) -> Self {
-        Self { service }
+    pub fn new(
+        service: PlaybackService,
+        media: EmbeddedMediaRegistry,
+        ffmpeg_path: Option<PathBuf>,
+        work_dir: PathBuf,
+    ) -> Self {
+        Self {
+            service,
+            media,
+            grant: std::sync::Arc::new(Mutex::new(None)),
+            ffmpeg_path,
+            work_dir,
+        }
+    }
+
+    async fn active_url(&self) -> Result<String, PlaybackErrorCode> {
+        self.grant
+            .lock()
+            .await
+            .as_ref()
+            .map(|grant| grant.url.clone())
+            .ok_or_else(|| map_error(ProgressError::NotOpen))
+    }
+
+    async fn view(&self, view: PlaybackView) -> Result<PlaybackViewDto, PlaybackErrorCode> {
+        Ok(to_view(view, &self.active_url().await?))
+    }
+
+    async fn prepare_media(&self, source: PathBuf) -> Result<PreparedMedia, PlaybackErrorCode> {
+        if !requires_mp4_remux(&source) {
+            return Ok(PreparedMedia {
+                path: source,
+                cleanup_path: None,
+            });
+        }
+        let ffmpeg = self.ffmpeg_path.as_ref().ok_or_else(|| {
+            playback_unavailable(
+                "This video needs the local FFmpeg helper before it can play in this window.",
+            )
+        })?;
+        let identifier = Uuid::now_v7().simple().to_string();
+        let partial = self
+            .work_dir
+            .join(format!("stream-{identifier}.partial.mp4"));
+        let output = self.work_dir.join(format!("stream-{identifier}.mp4"));
+        let mut command = Command::new(ffmpeg);
+        command
+            .kill_on_drop(true)
+            .arg("-hide_banner")
+            .arg("-loglevel")
+            .arg("error")
+            .arg("-nostdin")
+            .arg("-y")
+            .arg("-i")
+            .arg(&source)
+            .arg("-map")
+            .arg("0:v:0?")
+            .arg("-map")
+            .arg("0:a:0?")
+            .arg("-c")
+            .arg("copy")
+            .arg("-movflags")
+            .arg("+faststart")
+            .arg(&partial);
+        let status = timeout(REMUX_TIMEOUT, command.status()).await;
+        let succeeded = matches!(status, Ok(Ok(status)) if status.success())
+            && partial.metadata().is_ok_and(|metadata| metadata.len() > 0)
+            && std::fs::rename(&partial, &output).is_ok();
+        if !succeeded {
+            let _ = std::fs::remove_file(&partial);
+            let _ = std::fs::remove_file(&output);
+            tracing::warn!("browser-compatible media remux failed");
+            return Err(playback_unavailable(
+                "This video's container could not be prepared for the in-app player.",
+            ));
+        }
+        Ok(PreparedMedia {
+            path: output.clone(),
+            cleanup_path: Some(output),
+        })
     }
 }
 
 impl PlaybackOps for PlaybackAdapter {
     fn capability(&self) -> BoxFuture<'_, Result<PlaybackCapabilityDto, PlaybackErrorCode>> {
         Box::pin(async move {
-            let capability = self.service.capability().await;
             Ok(PlaybackCapabilityDto {
-                available: capability.available,
-                backend: capability.backend,
-                expected_version: capability.expected_version,
-                detected_version: capability.detected_version,
+                available: true,
+                backend: "lectorbit-media".into(),
+                expected_version: "built-in".into(),
+                detected_version: Some("WebView media".into()),
             })
         })
     }
@@ -38,12 +142,34 @@ impl PlaybackOps for PlaybackAdapter {
     ) -> BoxFuture<'_, Result<PlaybackViewDto, PlaybackErrorCode>> {
         Box::pin(async move {
             let opened_item_id = plan_item_id.clone();
-            let view = self
+            let opened = self
                 .service
-                .open(&plan_item_id)
+                .open_embedded(&plan_item_id)
                 .await
-                .map(to_view)
                 .map_err(map_error)?;
+            let prepared = match self.prepare_media(opened.canonical_path).await {
+                Ok(prepared) => prepared,
+                Err(error) => {
+                    let _ = self.service.close().await;
+                    return Err(error);
+                }
+            };
+            let Some((token, url)) = self.media.grant(prepared.path) else {
+                if let Some(path) = prepared.cleanup_path {
+                    let _ = std::fs::remove_file(path);
+                }
+                let _ = self.service.close().await;
+                return Err(map_error(ProgressError::PlaybackUnavailable));
+            };
+            if let Some(previous) = self.grant.lock().await.replace(ActiveGrant {
+                token: token.clone(),
+                url: url.clone(),
+                cleanup_path: prepared.cleanup_path,
+            }) {
+                self.media.revoke(&previous.token);
+                cleanup_grant(previous);
+            }
+            let view = to_view(opened.view, &url);
             let mut updates = self.service.subscribe();
             tauri::async_runtime::spawn(async move {
                 while let Ok(update) = updates.recv().await {
@@ -52,7 +178,7 @@ impl PlaybackOps for PlaybackAdapter {
                         PlaybackUpdate::Closed { plan_item_id }
                             if plan_item_id == &opened_item_id
                     ) || matches!(&update, PlaybackUpdate::Failed { .. });
-                    sink(to_event(update));
+                    sink(to_event(update, &url));
                     if finished {
                         break;
                     }
@@ -63,39 +189,65 @@ impl PlaybackOps for PlaybackAdapter {
     }
 
     fn play(&self) -> BoxFuture<'_, Result<PlaybackViewDto, PlaybackErrorCode>> {
-        Box::pin(async move { self.service.play().await.map(to_view).map_err(map_error) })
+        Box::pin(async move {
+            let view = self.service.play().await.map_err(map_error)?;
+            self.view(view).await
+        })
     }
 
     fn pause(&self) -> BoxFuture<'_, Result<PlaybackViewDto, PlaybackErrorCode>> {
-        Box::pin(async move { self.service.pause().await.map(to_view).map_err(map_error) })
+        Box::pin(async move {
+            let view = self.service.pause().await.map_err(map_error)?;
+            self.view(view).await
+        })
     }
 
     fn seek(&self, position_ms: u64) -> BoxFuture<'_, Result<PlaybackViewDto, PlaybackErrorCode>> {
         Box::pin(async move {
-            self.service
-                .seek(position_ms)
-                .await
-                .map(to_view)
-                .map_err(map_error)
+            let view = self.service.seek(position_ms).await.map_err(map_error)?;
+            self.view(view).await
         })
     }
 
     fn set_speed(&self, speed: f64) -> BoxFuture<'_, Result<PlaybackViewDto, PlaybackErrorCode>> {
         Box::pin(async move {
-            self.service
-                .set_speed(speed)
-                .await
-                .map(to_view)
-                .map_err(map_error)
+            let view = self.service.set_speed(speed).await.map_err(map_error)?;
+            self.view(view).await
         })
     }
 
     fn state(&self) -> BoxFuture<'_, Result<PlaybackViewDto, PlaybackErrorCode>> {
-        Box::pin(async move { self.service.state().await.map(to_view).map_err(map_error) })
+        Box::pin(async move {
+            let view = self.service.state().await.map_err(map_error)?;
+            self.view(view).await
+        })
+    }
+
+    fn sync(
+        &self,
+        position_ms: u64,
+        paused: bool,
+        speed: f64,
+    ) -> BoxFuture<'_, Result<PlaybackViewDto, PlaybackErrorCode>> {
+        Box::pin(async move {
+            let view = self
+                .service
+                .sync_embedded(position_ms, paused, speed)
+                .await
+                .map_err(map_error)?;
+            self.view(view).await
+        })
     }
 
     fn close(&self) -> BoxFuture<'_, Result<(), PlaybackErrorCode>> {
-        Box::pin(async move { self.service.close().await.map_err(map_error) })
+        Box::pin(async move {
+            let result = self.service.close().await.map_err(map_error);
+            if let Some(grant) = self.grant.lock().await.take() {
+                self.media.revoke(&grant.token);
+                cleanup_grant(grant);
+            }
+            result
+        })
     }
 
     fn record_action(
@@ -114,6 +266,37 @@ impl PlaybackOps for PlaybackAdapter {
     }
 }
 
+fn requires_mp4_remux(path: &Path) -> bool {
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    match extension.as_str() {
+        "mp4" | "m4v" | "mov" => !has_iso_bmff_signature(path),
+        "mkv" | "avi" | "wmv" | "mpg" | "mpeg" | "ts" | "m2ts" => true,
+        _ => false,
+    }
+}
+
+fn has_iso_bmff_signature(path: &Path) -> bool {
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return false;
+    };
+    let mut header = [0_u8; 12];
+    file.read_exact(&mut header).is_ok() && &header[4..8] == b"ftyp"
+}
+
+fn cleanup_grant(grant: ActiveGrant) {
+    if let Some(path) = grant.cleanup_path {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+fn playback_unavailable(message: &str) -> PlaybackErrorCode {
+    PlaybackErrorCode::new(PlaybackErrorKind::PlaybackUnavailable, message)
+}
+
 fn parse_action(kind: &str) -> Result<StudyActionKind, PlaybackErrorCode> {
     match kind {
         "complete" => Ok(StudyActionKind::Complete),
@@ -129,7 +312,7 @@ fn parse_action(kind: &str) -> Result<StudyActionKind, PlaybackErrorCode> {
     }
 }
 
-fn to_view(view: PlaybackView) -> PlaybackViewDto {
+fn to_view(view: PlaybackView, stream_url: &str) -> PlaybackViewDto {
     PlaybackViewDto {
         plan_item_id: view.plan_item_id,
         media_id: view.media_id,
@@ -144,12 +327,13 @@ fn to_view(view: PlaybackView) -> PlaybackViewDto {
         item_covered_ms: view.item_covered_ms,
         item_duration_ms: view.item_duration_ms,
         completed: view.completed,
+        stream_url: stream_url.into(),
     }
 }
 
-fn to_event(update: PlaybackUpdate) -> PlaybackEventDto {
+fn to_event(update: PlaybackUpdate, stream_url: &str) -> PlaybackEventDto {
     match update {
-        PlaybackUpdate::State(view) => PlaybackEventDto::State(to_view(view)),
+        PlaybackUpdate::State(view) => PlaybackEventDto::State(to_view(view, stream_url)),
         PlaybackUpdate::Closed { plan_item_id } => PlaybackEventDto::Closed { plan_item_id },
         PlaybackUpdate::Failed { message } => PlaybackEventDto::Failed { message },
     }
@@ -171,7 +355,7 @@ fn map_error(error: ProgressError) -> PlaybackErrorCode {
         ),
         ProgressError::PlaybackUnavailable => (
             PlaybackErrorKind::PlaybackUnavailable,
-            "mpv playback is unavailable. Check the pinned sidecar in Diagnostics.",
+            "The in-app media player could not open this video.",
         ),
         ProgressError::Database => (
             PlaybackErrorKind::Database,
@@ -184,6 +368,7 @@ fn map_error(error: ProgressError) -> PlaybackErrorCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
 
     #[test]
     fn action_parser_is_closed_to_unknown_values() {
@@ -195,5 +380,27 @@ mod tests {
             parse_action("delete").unwrap_err().kind,
             PlaybackErrorKind::InvalidInput
         );
+    }
+
+    #[test]
+    fn mismatched_mp4_container_requires_remux() {
+        let mut file = tempfile::Builder::new()
+            .suffix(".mp4")
+            .tempfile()
+            .expect("temporary media");
+        file.write_all(&[0x1a, 0x45, 0xdf, 0xa3, 0, 0, 0, 0, 0, 0, 0, 0])
+            .expect("write Matroska signature");
+        assert!(requires_mp4_remux(file.path()));
+    }
+
+    #[test]
+    fn real_mp4_container_streams_without_remux() {
+        let mut file = tempfile::Builder::new()
+            .suffix(".mp4")
+            .tempfile()
+            .expect("temporary media");
+        file.write_all(&[0, 0, 0, 24, b'f', b't', b'y', b'p', 0, 0, 0, 0])
+            .expect("write MP4 signature");
+        assert!(!requires_mp4_remux(file.path()));
     }
 }

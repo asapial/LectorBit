@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use lectorbit_db::{ProbeCandidate, StoredProbe, StoredStream};
-use lectorbit_media::{Ffprobe, ProbeMetadata, EXPECTED_FFPROBE_VERSION};
+use lectorbit_media::{Ffprobe, ProbeError, ProbeMetadata, EXPECTED_FFPROBE_VERSION};
 use lectorbit_services::{Job, JobStatus, MediaService, ProbeJobPayload};
 use tauri_plugin_lectorbit::{ScanEventSink, ScanProgressDto};
 use tokio::sync::Semaphore;
@@ -44,7 +44,7 @@ impl ProbeScheduler {
     }
 
     pub async fn recover_and_resume(&self) -> Result<(), String> {
-        let jobs = self
+        let mut jobs = self
             .service
             .list_probe_jobs(50_000)
             .await
@@ -52,6 +52,31 @@ impl ProbeScheduler {
             .into_iter()
             .filter(|job| job.status == JobStatus::Queued)
             .collect::<Vec<_>>();
+        if self.adapter.is_some() {
+            let candidates = self
+                .service
+                .list_unavailable_probe_candidates(50_000)
+                .await
+                .map_err(|error| error.to_string())?;
+            let mut recovered = 0_u64;
+            for candidate in candidates {
+                let enqueued = self
+                    .service
+                    .enqueue_probe(&candidate)
+                    .await
+                    .map_err(|error| error.to_string())?;
+                if enqueued.is_new {
+                    jobs.push(enqueued.job);
+                    recovered = recovered.saturating_add(1);
+                }
+            }
+            if recovered > 0 {
+                tracing::info!(
+                    recovered,
+                    "requeued metadata after ffprobe became available"
+                );
+            }
+        }
         let total = jobs.len() as u64;
         let completed = Arc::new(AtomicU64::new(0));
         let failed = Arc::new(AtomicU64::new(0));
@@ -189,7 +214,9 @@ impl ProbeScheduler {
                 Ok(true)
             }
             Err(error) => {
-                tracing::warn!(media_id = payload.media_id, %error, "ffprobe rejected media");
+                if !matches!(error, ProbeError::Unavailable) {
+                    tracing::warn!(media_id = payload.media_id, %error, "ffprobe rejected media");
+                }
                 self.service
                     .save_probe_failure(
                         &payload.media_id,

@@ -23,14 +23,19 @@
         "title": "LectorBit",
         "width": 1280,
         "height": 800,
-        "minWidth": 1024,
-        "minHeight": 700,
+        "minWidth": 360,
+        "minHeight": 560,
         "resizable": true,
         "fullscreen": false
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: asset:; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost; frame-ancestors 'none'; base-uri 'self'; form-action 'none'"
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: asset:; media-src 'self' http://127.0.0.1:*; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost; frame-ancestors 'none'; base-uri 'self'; form-action 'none'"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": ""
     }
   },
   "bundle": {

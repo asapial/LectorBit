@@ -14,21 +14,26 @@ use lectorbit_services::{
 };
 use tauri::Manager;
 use tauri_plugin_lectorbit::{
-    AnalysisOps, DiagnosticsProvider, LibraryOps, PlannerOps, PlaybackOps, SearchOps, UpdateOps,
+    AnalysisOps, CloudPlanningOps, DiagnosticsProvider, LibraryOps, PlannerOps, PlaybackOps,
+    SearchOps, UpdateOps,
 };
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::EnvFilter;
 
 mod analysis_adapter;
+mod embedded_media;
 mod library_adapter;
 mod media_adapter;
+mod openrouter_adapter;
 mod planner_adapter;
 mod playback_adapter;
 mod update_adapter;
 use analysis_adapter::AnalysisAdapter;
+use embedded_media::EmbeddedMediaRegistry;
 use library_adapter::LibraryAdapter;
 use media_adapter::ProbeScheduler;
+use openrouter_adapter::OpenRouterPlanningAdapter;
 use planner_adapter::PlannerAdapter;
 use playback_adapter::PlaybackAdapter;
 use update_adapter::UpdateAdapter;
@@ -58,6 +63,8 @@ pub fn run() {
         )
         .init();
 
+    let embedded_media =
+        EmbeddedMediaRegistry::start().expect("start the private loopback media server");
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_lectorbit::init())
@@ -67,7 +74,7 @@ pub fn run() {
         .plugin(tauri_plugin_wdio::init())
         .plugin(tauri_plugin_wdio_webdriver::init());
     builder
-        .setup(|app| {
+        .setup(move |app| {
             let app_data = app
                 .path()
                 .app_data_dir()
@@ -95,11 +102,13 @@ pub fn run() {
                 AnalysisService::new(analysis_repo.clone(), media_service.clone(), models_dir);
             tauri::async_runtime::block_on(analysis_service.initialize_catalog())
                 .map_err(|error| format!("initialize model catalog: {error}"))?;
+            let chunks_repo = ChunksRepo::new(database.pool().clone());
             let planner_service = PlannerService::new(
-                ChunksRepo::new(database.pool().clone()),
+                chunks_repo.clone(),
                 PlansRepo::new(database.pool().clone()),
                 StudyRepo::new(database.pool().clone()),
             );
+            let cloud_planning_adapter = Arc::new(OpenRouterPlanningAdapter::new(chunks_repo)?);
             let mpv_path = resolve_mpv_path(
                 app.path().resource_dir().ok().as_deref(),
                 std::env::var_os("LECTORBIT_MPV_PATH"),
@@ -123,20 +132,15 @@ pub fn run() {
                     "whisper-cli"
                 },
             );
-            let ffmpeg_path = resolve_named_sidecar(
+            let ffmpeg_path = resolve_ffmpeg_path(
                 resource_dir.as_deref(),
                 std::env::var_os("LECTORBIT_FFMPEG_PATH"),
-                if cfg!(windows) {
-                    "ffmpeg.exe"
-                } else {
-                    "ffmpeg"
-                },
             );
             let analysis_adapter = Arc::new(tauri::async_runtime::block_on(AnalysisAdapter::new(
                 analysis_service,
                 SearchService::new(analysis_repo),
                 whisper_path,
-                ffmpeg_path,
+                ffmpeg_path.clone(),
                 app_data.join("analysis-work"),
             )));
             std::fs::create_dir_all(app_data.join("analysis-work"))
@@ -161,7 +165,16 @@ pub fn run() {
             app.manage(Arc::new(DiagnosticsAdapter(diagnostics)) as Arc<dyn DiagnosticsProvider>);
             app.manage(library_adapter as Arc<dyn LibraryOps>);
             app.manage(Arc::new(PlannerAdapter::new(planner_service)) as Arc<dyn PlannerOps>);
-            app.manage(Arc::new(PlaybackAdapter::new(playback_service)) as Arc<dyn PlaybackOps>);
+            app.manage(cloud_planning_adapter as Arc<dyn CloudPlanningOps>);
+            let playback_work = app_data.join("playback-work");
+            std::fs::create_dir_all(&playback_work)
+                .map_err(|error| format!("create playback work directory: {error}"))?;
+            app.manage(Arc::new(PlaybackAdapter::new(
+                playback_service,
+                embedded_media,
+                ffmpeg_path,
+                playback_work,
+            )) as Arc<dyn PlaybackOps>);
             app.manage(analysis_adapter.clone() as Arc<dyn AnalysisOps>);
             app.manage(analysis_adapter as Arc<dyn SearchOps>);
             app.manage(Arc::new(UpdateAdapter::new(app.handle().clone())) as Arc<dyn UpdateOps>);
@@ -179,24 +192,89 @@ fn resolve_mpv_path(
     resource_dir: Option<&std::path::Path>,
     configured: Option<std::ffi::OsString>,
 ) -> std::ffi::OsString {
+    let search_path = if cfg!(debug_assertions) {
+        std::env::var_os("PATH")
+    } else {
+        None
+    };
+    resolve_mpv_path_with_search_path(resource_dir, configured, search_path)
+        .or_else(|| {
+            if cfg!(all(debug_assertions, windows)) {
+                resolve_pinned_windows_mpv(std::env::var_os("LOCALAPPDATA"))
+            } else {
+                None
+            }
+        })
+        .map(std::path::PathBuf::into_os_string)
+        .unwrap_or_else(|| if cfg!(windows) { "mpv.exe" } else { "mpv" }.into())
+}
+
+fn resolve_mpv_path_with_search_path(
+    resource_dir: Option<&std::path::Path>,
+    configured: Option<std::ffi::OsString>,
+    search_path: Option<std::ffi::OsString>,
+) -> Option<std::path::PathBuf> {
     let configured = configured.map(std::path::PathBuf::from);
     if configured
         .as_ref()
         .is_some_and(|path| path.is_absolute() && path.is_file())
     {
-        return configured.unwrap().into_os_string();
+        return configured;
     }
     let filename = if cfg!(windows) { "mpv.exe" } else { "mpv" };
     resource_dir
         .map(|directory| directory.join("sidecars").join(filename))
         .filter(|path| path.is_absolute() && path.is_file())
-        .map(std::path::PathBuf::into_os_string)
-        .unwrap_or_else(|| filename.into())
+        .or_else(|| resolve_executable_on_path(filename, search_path))
 }
 
 fn resolve_ffprobe_path(
     resource_dir: Option<&std::path::Path>,
     configured: Option<std::ffi::OsString>,
+) -> Option<std::path::PathBuf> {
+    let search_path = if cfg!(debug_assertions) {
+        std::env::var_os("PATH")
+    } else {
+        None
+    };
+    resolve_ffprobe_path_with_search_path(resource_dir, configured, search_path).or_else(|| {
+        if cfg!(all(debug_assertions, windows)) {
+            resolve_pinned_windows_ffprobe(std::env::var_os("LOCALAPPDATA"))
+        } else {
+            None
+        }
+    })
+}
+
+fn resolve_ffmpeg_path(
+    resource_dir: Option<&std::path::Path>,
+    configured: Option<std::ffi::OsString>,
+) -> Option<std::path::PathBuf> {
+    let filename = if cfg!(windows) {
+        "ffmpeg.exe"
+    } else {
+        "ffmpeg"
+    };
+    let search_path = if cfg!(debug_assertions) {
+        std::env::var_os("PATH")
+    } else {
+        None
+    };
+    resolve_named_sidecar(resource_dir, configured, filename)
+        .or_else(|| resolve_executable_on_path(filename, search_path))
+        .or_else(|| {
+            if cfg!(all(debug_assertions, windows)) {
+                resolve_pinned_windows_ffmpeg(std::env::var_os("LOCALAPPDATA"))
+            } else {
+                None
+            }
+        })
+}
+
+fn resolve_ffprobe_path_with_search_path(
+    resource_dir: Option<&std::path::Path>,
+    configured: Option<std::ffi::OsString>,
+    search_path: Option<std::ffi::OsString>,
 ) -> Option<std::path::PathBuf> {
     let configured = configured.map(std::path::PathBuf::from);
     if configured
@@ -213,6 +291,76 @@ fn resolve_ffprobe_path(
     resource_dir
         .map(|directory| directory.join("sidecars").join(filename))
         .filter(|path| path.is_absolute() && path.is_file())
+        .or_else(|| resolve_executable_on_path(filename, search_path))
+}
+
+fn resolve_executable_on_path(
+    filename: &str,
+    search_path: Option<std::ffi::OsString>,
+) -> Option<std::path::PathBuf> {
+    std::env::split_paths(&search_path?)
+        .filter(|directory| directory.is_absolute())
+        .map(|directory| directory.join(filename))
+        .find(|path| path.is_file())
+        .and_then(|path| path.canonicalize().ok())
+}
+
+fn resolve_pinned_windows_ffprobe(
+    local_app_data: Option<std::ffi::OsString>,
+) -> Option<std::path::PathBuf> {
+    let local_app_data = std::path::PathBuf::from(local_app_data?);
+    if !local_app_data.is_absolute() {
+        return None;
+    }
+    local_app_data
+        .join("Microsoft")
+        .join("WinGet")
+        .join("Packages")
+        .join("Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe")
+        .join("ffmpeg-8.1.2-full_build")
+        .join("bin")
+        .join("ffprobe.exe")
+        .canonicalize()
+        .ok()
+        .filter(|path| path.is_file())
+}
+
+fn resolve_pinned_windows_ffmpeg(
+    local_app_data: Option<std::ffi::OsString>,
+) -> Option<std::path::PathBuf> {
+    let local_app_data = std::path::PathBuf::from(local_app_data?);
+    if !local_app_data.is_absolute() {
+        return None;
+    }
+    local_app_data
+        .join("Microsoft")
+        .join("WinGet")
+        .join("Packages")
+        .join("Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe")
+        .join("ffmpeg-8.1.2-full_build")
+        .join("bin")
+        .join("ffmpeg.exe")
+        .canonicalize()
+        .ok()
+        .filter(|path| path.is_file())
+}
+
+fn resolve_pinned_windows_mpv(
+    local_app_data: Option<std::ffi::OsString>,
+) -> Option<std::path::PathBuf> {
+    let local_app_data = std::path::PathBuf::from(local_app_data?);
+    if !local_app_data.is_absolute() {
+        return None;
+    }
+    local_app_data
+        .join("Microsoft")
+        .join("WinGet")
+        .join("Packages")
+        .join("mpv-player.mpv-CI.MSVC_Microsoft.Winget.Source_8wekyb3d8bbwe")
+        .join("mpv.exe")
+        .canonicalize()
+        .ok()
+        .filter(|path| path.is_file())
 }
 
 fn resolve_named_sidecar(
@@ -238,14 +386,75 @@ mod tests {
 
     #[test]
     fn relative_sidecar_configuration_is_rejected() {
-        assert_eq!(resolve_ffprobe_path(None, Some("ffprobe".into())), None);
+        assert_eq!(
+            resolve_ffprobe_path_with_search_path(None, Some("ffprobe".into()), None),
+            None
+        );
     }
 
     #[test]
-    fn relative_mpv_configuration_falls_back_to_the_known_binary_name() {
+    fn debug_sidecar_can_be_resolved_to_an_absolute_path() {
+        let executable = std::env::current_exe().expect("test executable");
+        let filename = executable
+            .file_name()
+            .and_then(|value| value.to_str())
+            .expect("executable filename");
+        let search_path = std::env::join_paths([executable.parent().expect("executable parent")])
+            .expect("search path");
+
         assert_eq!(
-            resolve_mpv_path(None, Some("other-player".into())),
-            std::ffi::OsString::from(if cfg!(windows) { "mpv.exe" } else { "mpv" })
+            resolve_executable_on_path(filename, Some(search_path)),
+            executable.canonicalize().ok()
+        );
+    }
+
+    #[test]
+    fn pinned_windows_development_install_is_discovered_without_a_shell_restart() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let local_app_data = directory.path().join("Local");
+        let executable = local_app_data
+            .join("Microsoft")
+            .join("WinGet")
+            .join("Packages")
+            .join("Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe")
+            .join("ffmpeg-8.1.2-full_build")
+            .join("bin")
+            .join("ffprobe.exe");
+        std::fs::create_dir_all(executable.parent().expect("executable parent"))
+            .expect("create package directory");
+        std::fs::write(&executable, b"fixture").expect("create executable fixture");
+
+        assert_eq!(
+            resolve_pinned_windows_ffprobe(Some(local_app_data.into_os_string())),
+            executable.canonicalize().ok()
+        );
+    }
+
+    #[test]
+    fn relative_mpv_configuration_is_rejected() {
+        assert_eq!(
+            resolve_mpv_path_with_search_path(None, Some("other-player".into()), None),
+            None
+        );
+    }
+
+    #[test]
+    fn pinned_windows_mpv_install_is_discovered_without_a_shell_restart() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let local_app_data = directory.path().join("Local");
+        let executable = local_app_data
+            .join("Microsoft")
+            .join("WinGet")
+            .join("Packages")
+            .join("mpv-player.mpv-CI.MSVC_Microsoft.Winget.Source_8wekyb3d8bbwe")
+            .join("mpv.exe");
+        std::fs::create_dir_all(executable.parent().expect("executable parent"))
+            .expect("create package directory");
+        std::fs::write(&executable, b"fixture").expect("create executable fixture");
+
+        assert_eq!(
+            resolve_pinned_windows_mpv(Some(local_app_data.into_os_string())),
+            executable.canonicalize().ok()
         );
     }
 }
