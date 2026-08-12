@@ -117,10 +117,13 @@ impl PlaybackEngine for MpvEngine {
             .unwrap_or_default()
             .trim()
             .to_string();
-        if first_line.is_empty() {
+        let Some(version) = parse_mpv_version(&first_line) else {
+            return Err(PlaybackError::Unavailable);
+        };
+        if version != EXPECTED_MPV_VERSION {
             return Err(PlaybackError::Unavailable);
         }
-        Ok(first_line)
+        Ok(version.to_string())
     }
 
     async fn open(&self, source: PlaybackSource) -> Result<EngineState, PlaybackError> {
@@ -366,6 +369,10 @@ fn seconds_to_millis(value: f64) -> u64 {
     }
 }
 
+fn parse_mpv_version(banner: &str) -> Option<&str> {
+    banner.strip_prefix("mpv v")?.split('-').next()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -380,5 +387,42 @@ mod tests {
     fn time_conversion_is_stable() {
         assert_eq!(seconds_to_millis(millis_to_seconds(90_123)), 90_123);
         assert_eq!(seconds_to_millis(f64::NAN), 0);
+    }
+
+    #[test]
+    fn pinned_version_is_read_from_release_and_ci_banners() {
+        assert_eq!(parse_mpv_version("mpv v0.41.0"), Some("0.41.0"));
+        assert_eq!(
+            parse_mpv_version("mpv v0.41.0-dev-g41f6a6450"),
+            Some("0.41.0")
+        );
+        assert_eq!(parse_mpv_version("not-mpv 0.41.0"), None);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires an installed mpv binary and local media fixture"]
+    async fn installed_engine_opens_media_over_json_ipc() {
+        let executable = std::env::var_os("LECTORBIT_MPV_SMOKE_EXECUTABLE")
+            .expect("LECTORBIT_MPV_SMOKE_EXECUTABLE");
+        let canonical_path = std::env::var_os("LECTORBIT_MPV_SMOKE_MEDIA")
+            .map(PathBuf::from)
+            .expect("LECTORBIT_MPV_SMOKE_MEDIA");
+        let engine = MpvEngine::new(executable);
+
+        assert_eq!(
+            engine.probe().await.expect("probe pinned mpv"),
+            EXPECTED_MPV_VERSION
+        );
+        let state = engine
+            .open(PlaybackSource {
+                media_id: "smoke-test".into(),
+                canonical_path,
+                start_ms: 0,
+                end_ms: u64::MAX,
+            })
+            .await
+            .expect("open indexed media");
+        assert!(state.duration_ms > 0);
+        engine.close().await.expect("close mpv session");
     }
 }
