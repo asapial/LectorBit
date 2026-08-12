@@ -201,13 +201,13 @@ describe('LibraryRoute', () => {
   it('queues an explicit rescan from the row action', async () => {
     listRootsMock.mockResolvedValueOnce([activeRoot]);
     renderRoute();
-    const scanButton = await screen.findByRole('button', { name: /^scan$/i });
+    const scanButton = await screen.findByRole('button', { name: /^scan folder$/i });
     fireEvent.click(scanButton);
     await waitFor(() => expect(startScanMock).toHaveBeenCalledOnce());
     expect(startScanMock.mock.calls[0]?.[0]).toBe('root-1');
   });
 
-  it('confirms before revoking a folder', async () => {
+  it('confirms before removing a folder from the active library', async () => {
     listRootsMock.mockResolvedValueOnce([activeRoot]);
     revokeRootMock.mockResolvedValueOnce({
       ...activeRoot,
@@ -215,9 +215,55 @@ describe('LibraryRoute', () => {
       revoked_at: '2026-08-09T00:00:00Z',
     });
     renderRoute();
-    fireEvent.click(await screen.findByRole('button', { name: /^revoke$/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /^remove$/i }));
     expect(await screen.findByRole('dialog')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: /revoke root/i }));
+    expect(screen.getByText(/original files and folders remain untouched/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /remove folder/i }));
     await waitFor(() => expect(revokeRootMock).toHaveBeenCalledWith('root-1'));
+  });
+
+  it('retries unavailable metadata by rescanning the owning folder', async () => {
+    listRootsMock.mockResolvedValueOnce([activeRoot]);
+    listMediaMock.mockResolvedValue({
+      items: [
+        {
+          id: 'media-unavailable',
+          root_id: 'root-1',
+          display_name: 'needs-metadata.mp4',
+          path_redacted: '[REDACTED]/needs-metadata.mp4',
+          media_kind: 'video',
+          size_bytes: 1_024,
+          duration_ms: null,
+          container: null,
+          video_codec: null,
+          audio_codec: null,
+          width: null,
+          height: null,
+          audio_streams: 0,
+          subtitle_streams: 0,
+          probe_status: 'unavailable',
+          probe_error: 'Media inspection is not available in this installation.',
+          discovered_at: '2026-08-08T00:00:00Z',
+        },
+      ],
+      next_cursor: null,
+    });
+
+    renderRoute();
+    fireEvent.click(await screen.findByRole('button', { name: /retry metadata/i }));
+
+    await waitFor(() => expect(startScanMock).toHaveBeenCalledOnce());
+    expect(startScanMock.mock.calls[0]?.[0]).toBe('root-1');
+  });
+
+  it('does not show previously removed folders in the active folder list', async () => {
+    listRootsMock.mockResolvedValueOnce([
+      { ...activeRoot, is_active: false, revoked_at: '2026-08-09T00:00:00Z' },
+    ]);
+
+    renderRoute();
+
+    expect(await screen.findByText(/no folders yet/i)).toBeInTheDocument();
+    expect(screen.queryByText('[REDACTED]/Videos')).not.toBeInTheDocument();
   });
 });

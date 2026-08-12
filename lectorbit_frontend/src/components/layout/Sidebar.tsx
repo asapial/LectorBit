@@ -5,6 +5,7 @@ import LibraryBig from 'lucide-react/dist/esm/icons/library-big';
 import ListChecks from 'lucide-react/dist/esm/icons/list-checks';
 import Search from 'lucide-react/dist/esm/icons/search';
 import Settings2 from 'lucide-react/dist/esm/icons/settings-2';
+import ShieldCheck from 'lucide-react/dist/esm/icons/shield-check';
 import { NavLink } from 'react-router';
 import type { ComponentType, SVGProps } from 'react';
 import { cn } from '../../lib/cn';
@@ -61,19 +62,19 @@ export function Sidebar() {
   return (
     <aside
       aria-label="Primary navigation"
-      className="flex h-full w-(--sidebar-width) shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground"
+      className="hidden h-full w-(--sidebar-width) shrink-0 flex-col border-r border-sidebar-border bg-sidebar/95 text-sidebar-foreground shadow-[1px_0_0_rgba(0,0,0,0.02)] backdrop-blur-xl min-[1180px]:flex"
     >
-      <div className="flex h-(--topbar-height) items-center gap-2.5 border-b border-sidebar-border px-4">
+      <div className="flex h-(--topbar-height) items-center gap-3 border-b border-sidebar-border/80 px-5">
         <BrandMark />
         <div className="flex flex-col leading-tight">
-          <span className="font-display text-sm font-semibold tracking-tight">
+          <span className="font-display text-[15px] font-semibold tracking-[-0.02em]">
             LectorBit
           </span>
           <span className="text-[11px] text-muted-foreground">Study planner</span>
         </div>
       </div>
 
-      <nav className="scrollbar-thin flex flex-1 flex-col gap-1 overflow-y-auto p-3">
+      <nav className="scrollbar-thin flex flex-1 flex-col gap-1.5 overflow-y-auto px-3 py-5">
         {entries.map((entry) => {
           const Icon = entry.icon;
           return (
@@ -83,16 +84,16 @@ export function Sidebar() {
               end={entry.end}
               className={({ isActive }) =>
                 cn(
-                  'group flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition-colors duration-150',
+                  'group relative flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition-all duration-200',
                   'hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
                   isActive &&
-                    'bg-sidebar-accent text-sidebar-accent-foreground',
+                    'bg-sidebar-accent text-sidebar-accent-foreground shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--primary)_12%,transparent)]',
                 )
               }
             >
               <span
                 aria-hidden="true"
-                className="grid size-8 shrink-0 place-items-center rounded-md border border-sidebar-border bg-background/60 text-muted-foreground transition-colors duration-150 group-hover:text-sidebar-accent-foreground"
+                className="grid size-9 shrink-0 place-items-center rounded-lg border border-sidebar-border/80 bg-background/65 text-muted-foreground shadow-sm transition-all duration-200 group-hover:-translate-y-px group-hover:border-primary/20 group-hover:text-sidebar-accent-foreground"
               >
                 <Icon className="size-4" />
               </span>
@@ -107,8 +108,11 @@ export function Sidebar() {
         })}
       </nav>
 
-      <div className="border-t border-sidebar-border px-4 py-3 text-[11px] leading-relaxed text-muted-foreground">
-        Offline-first. Your media never leaves this device.
+      <div className="m-3 rounded-xl border border-sidebar-border bg-background/55 p-3.5 text-xs leading-relaxed text-muted-foreground shadow-sm">
+        <div className="mb-1.5 flex items-center gap-2 font-medium text-sidebar-foreground">
+          <ShieldCheck className="size-3.5 text-success" /> Private by design
+        </div>
+        Your media stays on this device.
       </div>
     </aside>
   );
@@ -118,9 +122,42 @@ function BrandMark() {
   return (
     <span
       aria-hidden="true"
-      className="grid size-8 place-items-center rounded-lg bg-vermillion-500 text-white shadow-sm dark:bg-primary dark:text-primary-foreground"
+      className="brand-orbit relative grid size-9 place-items-center rounded-xl bg-gradient-to-br from-vermillion-400 to-vermillion-700 text-white shadow-[0_6px_18px_rgba(201,56,21,0.28)] dark:from-primary dark:to-vermillion-600 dark:text-primary-foreground"
     >
       <Film className="size-4" strokeWidth={2} />
+      <span className="absolute -right-0.5 -top-0.5 size-2 rounded-full border-2 border-sidebar bg-amber-300 shadow-[0_0_10px_rgba(252,211,77,0.75)]" />
     </span>
+  );
+}
+
+const mobileEntries = entries.filter((entry) => entry.to !== '/diagnostics');
+
+export function MobileNavigation() {
+  return (
+    <nav
+      aria-label="Mobile navigation"
+      className="fixed bottom-3 left-1/2 z-40 grid w-[calc(100%-1.5rem)] max-w-2xl -translate-x-1/2 grid-cols-5 rounded-2xl border border-border/80 bg-card/90 p-1.5 shadow-[0_16px_50px_rgba(28,25,23,0.16)] backdrop-blur-xl supports-[padding:max(0px)]:bottom-[max(0.75rem,env(safe-area-inset-bottom))] min-[1180px]:hidden"
+    >
+      {mobileEntries.map((entry) => {
+        const Icon = entry.icon;
+        return (
+          <NavLink
+            key={entry.to}
+            to={entry.to}
+            end={entry.end}
+            className={({ isActive }) =>
+              cn(
+                'flex min-w-0 flex-col items-center justify-center gap-1 rounded-xl px-1 py-2 text-[10px] font-medium text-muted-foreground transition-colors',
+                'hover:bg-accent hover:text-accent-foreground',
+                isActive && 'bg-accent text-accent-foreground',
+              )
+            }
+          >
+            <Icon aria-hidden="true" className="size-[18px]" strokeWidth={1.9} />
+            <span className="truncate">{entry.label}</span>
+          </NavLink>
+        );
+      })}
+    </nav>
   );
 }

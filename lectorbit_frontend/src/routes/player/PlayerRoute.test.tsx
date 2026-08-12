@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   pause: vi.fn(),
   seek: vi.fn(),
   speed: vi.fn(),
+  sync: vi.fn(),
   state: vi.fn(),
   action: vi.fn(),
   replan: vi.fn(),
@@ -25,6 +26,7 @@ vi.mock('../../ipc/playback', () => ({
   pausePlayback: mocks.pause,
   seekPlayback: mocks.seek,
   setPlaybackSpeed: mocks.speed,
+  syncPlayback: mocks.sync,
   getPlaybackState: mocks.state,
   recordStudyAction: mocks.action,
 }));
@@ -44,6 +46,7 @@ const view = {
   item_covered_ms: 300_000,
   item_duration_ms: 1_500_000,
   completed: false,
+  stream_url: 'http://lector-media.localhost/0123456789abcdef0123456789abcdef',
 };
 
 function renderRoute() {
@@ -64,9 +67,9 @@ describe('PlayerRoute', () => {
     vi.clearAllMocks();
     mocks.capability.mockResolvedValue({
       available: true,
-      backend: 'mpv-json-ipc',
-      expected_version: '0.41.0',
-      detected_version: '0.41.0',
+      backend: 'lectorbit-media',
+      expected_version: 'built-in',
+      detected_version: 'WebView media',
     });
     mocks.open.mockResolvedValue(view);
     mocks.close.mockResolvedValue(undefined);
@@ -74,6 +77,7 @@ describe('PlayerRoute', () => {
     mocks.pause.mockResolvedValue(view);
     mocks.seek.mockResolvedValue(view);
     mocks.speed.mockResolvedValue(view);
+    mocks.sync.mockResolvedValue(view);
     mocks.state.mockResolvedValue(view);
     mocks.action.mockResolvedValue(undefined);
     mocks.replan.mockResolvedValue({
@@ -84,9 +88,11 @@ describe('PlayerRoute', () => {
   });
 
   it('opens the route item and renders coverage-based controls', async () => {
+    vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined);
     renderRoute();
     expect(await screen.findByRole('heading', { name: 'Graph theory' })).toBeInTheDocument();
     expect(mocks.open).toHaveBeenCalledWith('item-1', expect.any(Function));
+    expect(screen.getByLabelText('Playing Graph theory')).toHaveAttribute('src', view.stream_url);
     expect(screen.getByRole('progressbar', { name: 'Watched coverage' })).toHaveAttribute(
       'aria-valuenow',
       '20',
@@ -119,13 +125,28 @@ describe('PlayerRoute', () => {
   it('shows a stable unavailable message without opening media', async () => {
     mocks.capability.mockResolvedValue({
       available: false,
-      backend: 'mpv-json-ipc',
-      expected_version: '0.41.0',
+      backend: 'lectorbit-media',
+      expected_version: 'built-in',
       detected_version: null,
     });
     renderRoute();
     expect(await screen.findByText('Playback could not start')).toBeInTheDocument();
-    expect(screen.getByText(/Expected mpv 0.41.0/)).toBeInTheDocument();
+    expect(screen.getByText(/lectorbit-media/)).toBeInTheDocument();
     expect(mocks.open).not.toHaveBeenCalled();
+  });
+
+  it('reports stream failures precisely and can retry the media element', async () => {
+    renderRoute();
+    const video = await screen.findByLabelText('Playing Graph theory');
+    const load = vi.spyOn(HTMLMediaElement.prototype, 'load').mockImplementation(() => undefined);
+    Object.defineProperty(video, 'error', {
+      configurable: true,
+      value: { code: 2, message: 'network failure' },
+    });
+
+    fireEvent.error(video);
+    expect(screen.getByText(/private local video stream could not be read/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Retry stream/i }));
+    expect(load).toHaveBeenCalled();
   });
 });

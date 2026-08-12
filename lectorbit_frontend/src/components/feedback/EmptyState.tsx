@@ -16,19 +16,19 @@ export function EmptyState({ title, description, action, className }: EmptyState
     <div
       role="status"
       className={cn(
-        'flex flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-border bg-card/50 px-6 py-12 text-center',
+        'flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-border bg-card/55 px-5 py-12 text-center shadow-[inset_0_1px_0_rgba(255,255,255,0.4)] sm:px-8 sm:py-16',
         className,
       )}
     >
       <div
         aria-hidden="true"
-        className="grid h-10 w-10 place-items-center rounded-full bg-muted text-muted-foreground"
+        className="grid size-12 place-items-center rounded-2xl border border-primary/10 bg-accent text-accent-foreground shadow-sm"
       >
         <FolderPlus className="size-5" strokeWidth={1.75} />
       </div>
-      <h3 className="text-base font-semibold">{title}</h3>
+      <h3 className="font-display text-lg font-semibold tracking-tight">{title}</h3>
       {description ? (
-        <p className="max-w-sm text-sm text-muted-foreground">{description}</p>
+        <p className="max-w-md text-sm leading-6 text-muted-foreground">{description}</p>
       ) : null}
       {action ? <div className="pt-2">{action}</div> : null}
     </div>
@@ -48,7 +48,7 @@ export function ErrorPanel({
   return (
     <div
       role="alert"
-      className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive"
+      className="rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive"
     >
       <div className="flex items-center gap-2 font-semibold">
         <TriangleAlert aria-hidden="true" className="size-4" />

@@ -22,6 +22,7 @@ const PlaybackViewSchema = z.object({
   item_covered_ms: z.number().int().nonnegative(),
   item_duration_ms: z.number().int().positive(),
   completed: z.boolean(),
+  stream_url: z.string().url(),
 });
 
 const PlaybackEventSchema = z.discriminatedUnion('event', [
@@ -106,6 +107,24 @@ export async function setPlaybackSpeed(speed: number): Promise<PlaybackView> {
 
 export async function getPlaybackState(): Promise<PlaybackView> {
   return call('playback_get_state', undefined, PlaybackViewSchema);
+}
+
+export async function syncPlayback(
+  positionMs: number,
+  paused: boolean,
+  speed: number,
+): Promise<PlaybackView> {
+  return call(
+    'playback_sync',
+    {
+      args: {
+        position_ms: z.number().int().nonnegative().parse(positionMs),
+        paused,
+        speed: z.number().min(0.5).max(2).parse(speed),
+      },
+    },
+    PlaybackViewSchema,
+  );
 }
 
 export async function closePlayback(): Promise<void> {

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import ArrowLeft from 'lucide-react/dist/esm/icons/arrow-left';
 import CheckCircle2 from 'lucide-react/dist/esm/icons/circle-check-big';
@@ -33,6 +33,7 @@ import {
   recordStudyAction,
   seekPlayback,
   setPlaybackSpeed,
+  syncPlayback,
   type PlaybackCapability,
   type PlaybackEvent,
   type PlaybackView,
@@ -66,6 +67,8 @@ export function PlayerRoute() {
   const [confirmSkip, setConfirmSkip] = useState(false);
   const [seekDraft, setSeekDraft] = useState<number>();
   const [replanPending, setReplanPending] = useState(false);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const syncPendingRef = useRef(false);
 
   useEffect(() => {
     let disposed = false;
@@ -95,7 +98,7 @@ export function PlayerRoute() {
         if (disposed) return;
         setCapability(nextCapability);
         if (!nextCapability.available) {
-          setError('mpv is unavailable. Check the pinned sidecar in Diagnostics.');
+          setError('The built-in media player is unavailable. Check Diagnostics.');
           setPhase('error');
           return;
         }
@@ -130,6 +133,27 @@ export function PlayerRoute() {
     };
   }, [itemId, searchParams]);
 
+  useEffect(() => {
+    if (phase !== 'ready' || !view) return;
+    const interval = window.setInterval(() => {
+      const video = videoRef.current;
+      if (!video || syncPendingRef.current || !Number.isFinite(video.currentTime)) return;
+      const position = Math.max(
+        view.raw_start_ms,
+        Math.min(view.raw_end_ms, Math.round(video.currentTime * 1_000)),
+      );
+      if (position >= view.raw_end_ms && !video.paused) video.pause();
+      syncPendingRef.current = true;
+      void syncPlayback(position, video.paused, video.playbackRate)
+        .then(setView)
+        .catch((cause) => setError(messageFrom(cause)))
+        .finally(() => {
+          syncPendingRef.current = false;
+        });
+    }, 1_000);
+    return () => window.clearInterval(interval);
+  }, [phase, view?.raw_end_ms, view?.raw_start_ms, view?.stream_url]);
+
   const watchedPercent = useMemo(() => {
     if (!view || view.item_duration_ms === 0) return 0;
     return Math.min(100, Math.round((view.item_covered_ms / view.item_duration_ms) * 100));
@@ -151,7 +175,35 @@ export function PlayerRoute() {
   async function commitSeek(position = seekDraft) {
     if (position === undefined || !view) return;
     const clamped = Math.max(view.raw_start_ms, Math.min(view.raw_end_ms, position));
+    if (videoRef.current) videoRef.current.currentTime = clamped / 1_000;
     await runControl(() => seekPlayback(clamped));
+  }
+
+  async function togglePlayback() {
+    const video = videoRef.current;
+    if (!video || !view) return;
+    if (video.paused) {
+      try {
+        await video.play();
+      } catch {
+        setError(mediaErrorMessage(video.error));
+        return;
+      }
+      await runControl(playPlayback);
+    } else {
+      video.pause();
+      await runControl(pausePlayback);
+    }
+  }
+
+  function retryMedia() {
+    setError(undefined);
+    videoRef.current?.load();
+  }
+
+  async function changeSpeed(speed: number) {
+    if (videoRef.current) videoRef.current.playbackRate = speed;
+    await runControl(() => setPlaybackSpeed(speed));
   }
 
   async function performAction(kind: StudyAction) {
@@ -205,7 +257,7 @@ export function PlayerRoute() {
       <PageHeader
         eyebrow="Focused study"
         title={view?.display_name ?? 'Study player'}
-        description="Playback runs in a private mpv window while LectorBit saves durable watched coverage here."
+        description="Watch inside LectorBit with private, token-gated local streaming and durable watched coverage."
         actions={
           <Link to="/" className={backLinkClass}>
             <ArrowLeft className="size-4" /> Routine
@@ -224,7 +276,8 @@ export function PlayerRoute() {
               <p className="mt-1 text-sm text-muted-foreground">{error}</p>
               {capability ? (
                 <p className="mt-3 font-mono text-xs text-muted-foreground">
-                  Expected mpv {capability.expected_version} · {capability.backend}
+                  {capability.backend} ·{' '}
+                  {capability.detected_version ?? capability.expected_version}
                 </p>
               ) : null}
             </div>
@@ -236,25 +289,55 @@ export function PlayerRoute() {
         <div className="space-y-6">
           {error ? (
             <div
-              className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive"
+              className="flex flex-wrap items-start justify-between gap-3 rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive"
               role="alert"
             >
-              <TriangleAlert className="mt-0.5 size-4 shrink-0" /> {error}
+              <div className="flex min-w-0 items-start gap-2">
+                <TriangleAlert className="mt-0.5 size-4 shrink-0" />
+                <span>{error}</span>
+              </div>
+              <Button variant="outline" size="sm" onClick={retryMedia}>
+                <RefreshCcw className="size-3.5" /> Retry stream
+              </Button>
             </div>
           ) : null}
 
           <section
-            className="grid gap-4 lg:grid-cols-[minmax(0,1.5fr)_minmax(18rem,0.5fr)]"
+            className="grid gap-4 min-[1320px]:grid-cols-[minmax(0,1.5fr)_minmax(18rem,0.5fr)]"
             aria-label="Playback controls"
           >
             <Card className="overflow-hidden">
               <div className="h-1 bg-primary" />
+              <div className="aspect-video bg-stone-950">
+                <video
+                  ref={videoRef}
+                  src={view.stream_url}
+                  className="size-full object-contain"
+                  controls
+                  playsInline
+                  preload="metadata"
+                  aria-label={`Playing ${view.display_name}`}
+                  onLoadedMetadata={(event) => {
+                    event.currentTarget.currentTime = clampPosition(view) / 1_000;
+                    event.currentTarget.playbackRate = view.speed;
+                  }}
+                  onCanPlay={() => setError(undefined)}
+                  onTimeUpdate={(event) => {
+                    if (event.currentTarget.currentTime * 1_000 >= view.raw_end_ms) {
+                      event.currentTarget.pause();
+                      event.currentTarget.currentTime = view.raw_end_ms / 1_000;
+                    }
+                  }}
+                  onError={(event) => setError(mediaErrorMessage(event.currentTarget.error))}
+                />
+              </div>
               <CardHeader>
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
-                    <CardTitle>External playback window</CardTitle>
+                    <CardTitle>In-app video player</CardTitle>
                     <CardDescription className="mt-1">
-                      Seeking changes position only; it never counts as watched coverage.
+                      Native volume, fullscreen, captions, and picture-in-picture controls stay in
+                      this window.
                     </CardDescription>
                   </div>
                   <PlaybackBadge view={view} phase={phase} />
@@ -292,7 +375,7 @@ export function PlayerRoute() {
                   </div>
                 </div>
 
-                <div className="flex flex-wrap items-center gap-2">
+                <div className="grid grid-cols-[auto_minmax(7rem,1fr)_auto] items-center gap-2 sm:flex sm:flex-wrap">
                   <Button
                     aria-label="Rewind 10 seconds"
                     variant="outline"
@@ -303,9 +386,9 @@ export function PlayerRoute() {
                     <Rewind className="size-4" />
                   </Button>
                   <Button
-                    className="min-w-28"
+                    className="min-w-0 sm:min-w-28"
                     disabled={busy || phase === 'closed'}
-                    onClick={() => void runControl(view.paused ? playPlayback : pausePlayback)}
+                    onClick={() => void togglePlayback()}
                   >
                     {view.paused ? <Play className="size-4" /> : <Pause className="size-4" />}
                     {view.paused ? 'Play' : 'Pause'}
@@ -319,16 +402,14 @@ export function PlayerRoute() {
                   >
                     <FastForward className="size-4" />
                   </Button>
-                  <label className="ml-auto flex items-center gap-2 text-sm font-medium">
+                  <label className="col-span-2 flex items-center gap-2 text-sm font-medium sm:ml-auto">
                     Speed
                     <select
                       aria-label="Playback speed"
-                      className="h-9 rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      className="h-10 flex-1 rounded-lg border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:flex-none"
                       value={view.speed}
                       disabled={busy || phase === 'closed'}
-                      onChange={(event) =>
-                        void runControl(() => setPlaybackSpeed(Number(event.target.value)))
-                      }
+                      onChange={(event) => void changeSpeed(Number(event.target.value))}
                     >
                       {[0.5, 0.75, 1, 1.25, 1.5, 1.75, 2].map((speed) => (
                         <option key={speed} value={speed}>
@@ -337,7 +418,7 @@ export function PlayerRoute() {
                       ))}
                     </select>
                   </label>
-                  <Button variant="ghost" disabled={busy} onClick={() => void stopAndReturn()}>
+                  <Button className="col-span-1" variant="ghost" disabled={busy} onClick={() => void stopAndReturn()}>
                     <Square className="size-3.5" /> Close
                   </Button>
                 </div>
@@ -388,7 +469,7 @@ export function PlayerRoute() {
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="flex flex-wrap gap-2">
+              <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
                 <Button
                   disabled={Boolean(actionPending)}
                   onClick={() => void performAction('complete')}
@@ -446,7 +527,7 @@ export function PlayerRoute() {
                   </Button>
                 )}
                 <Button
-                  className="ml-auto"
+                  className="col-span-2 sm:ml-auto"
                   variant="secondary"
                   disabled={Boolean(actionPending) || replanPending}
                   onClick={() => void replanRemaining()}
@@ -495,7 +576,7 @@ function PlaybackBadge({ view, phase }: { view: PlaybackView; phase: Phase }) {
 function PlayerSkeleton() {
   return (
     <div
-      className="grid gap-4 lg:grid-cols-[minmax(0,1.5fr)_minmax(18rem,0.5fr)]"
+      className="grid gap-4 min-[1320px]:grid-cols-[minmax(0,1.5fr)_minmax(18rem,0.5fr)]"
       aria-label="Loading player"
     >
       <div className="h-72 animate-pulse rounded-lg border bg-card motion-reduce:animate-none" />
@@ -525,6 +606,21 @@ function messageFrom(cause: unknown): string {
   return cause instanceof Error ? cause.message : 'Playback could not continue.';
 }
 
+function mediaErrorMessage(error: MediaError | null): string {
+  switch (error?.code) {
+    case 1:
+      return 'Playback was interrupted. Retry the local stream.';
+    case 2:
+      return 'The private local video stream could not be read. Retry the stream.';
+    case 3:
+      return 'The system media engine could not decode this prepared video stream.';
+    case 4:
+      return 'The prepared video stream was rejected by the system media engine.';
+    default:
+      return 'This video could not start in the in-app player. Retry the local stream.';
+  }
+}
+
 function localIsoDate(): string {
   const now = new Date();
   now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
@@ -532,4 +628,4 @@ function localIsoDate(): string {
 }
 
 const backLinkClass =
-  'inline-flex h-9 items-center justify-center gap-2 rounded-md border bg-background px-4 text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2';
+  'inline-flex h-10 items-center justify-center gap-2 rounded-lg border bg-background px-4 text-sm font-semibold transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2';

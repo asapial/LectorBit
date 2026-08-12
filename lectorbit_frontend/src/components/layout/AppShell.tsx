@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { Sidebar } from './Sidebar';
+import { MobileNavigation, Sidebar } from './Sidebar';
 import { Topbar } from './Topbar';
 
 interface AppShellProps {
@@ -8,14 +8,18 @@ interface AppShellProps {
 
 export function AppShell({ children }: AppShellProps) {
   return (
-    <div className="flex h-screen min-h-[700px] w-screen min-w-[1024px] overflow-hidden bg-background text-foreground">
+    <div className="app-canvas flex h-dvh min-h-0 w-full overflow-hidden bg-background text-foreground">
       <Sidebar />
       <div className="flex min-w-0 flex-1 flex-col">
         <Topbar />
-        <main className="scrollbar-thin flex-1 overflow-y-auto">
-          <div className="mx-auto w-full max-w-7xl px-6 py-8">{children}</div>
+        <main className="scrollbar-thin relative flex-1 overflow-y-auto overscroll-contain">
+          <div className="pointer-events-none absolute inset-x-0 top-0 h-64 bg-[radial-gradient(circle_at_35%_0%,color-mix(in_srgb,var(--primary)_8%,transparent),transparent_68%)]" />
+          <div className="relative mx-auto w-full max-w-[90rem] px-4 pb-28 pt-6 sm:px-6 sm:pt-8 lg:px-8 xl:px-10 min-[1180px]:pb-10">
+            {children}
+          </div>
         </main>
       </div>
+      <MobileNavigation />
     </div>
   );
 }

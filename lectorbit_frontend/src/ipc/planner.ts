@@ -152,6 +152,39 @@ const PlannerErrorSchema = z.object({
   message: z.string(),
 });
 
+const CloudPlanningStatusSchema = z.object({
+  configured: z.boolean(),
+  provider: z.string().min(1),
+  model: z.string().min(1),
+});
+
+const AiPlanSuggestionSchema = z.object({
+  title: z.string().min(1).max(80),
+  description: z.string().min(1).max(600),
+  model: z.string().min(1),
+  items: z.array(
+    z.object({
+      media_id: z.string().min(1),
+      priority: z.number().int().min(1).max(5),
+      dependencies: z.array(z.string().min(1)),
+      reason: z.string().min(1).max(300),
+    }),
+  ),
+});
+
+const CloudPlanningErrorSchema = z.object({
+  kind: z.enum([
+    'invalid_input',
+    'consent_required',
+    'not_configured',
+    'credential_store',
+    'provider',
+    'invalid_response',
+    'internal',
+  ]),
+  message: z.string(),
+});
+
 export type PlannerCandidate = z.infer<typeof PlannerCandidateSchema>;
 export type PlannerCandidatePage = z.infer<typeof PlannerCandidatePageSchema>;
 export type PlanningConstraints = z.infer<typeof PlanningConstraintsSchema>;
@@ -162,6 +195,8 @@ export type PlanAlternative = z.infer<typeof PlanAlternativeSchema>;
 export type AlternativePatch = z.infer<typeof AlternativePatchSchema>;
 export type PlanCommitResult = z.infer<typeof PlanCommitResultSchema>;
 export type RoutinePlan = z.infer<typeof RoutinePlanSchema>;
+export type CloudPlanningStatus = z.infer<typeof CloudPlanningStatusSchema>;
+export type AiPlanSuggestion = z.infer<typeof AiPlanSuggestionSchema>;
 
 export class PlannerRpcError extends Error {
   readonly kind: z.infer<typeof PlannerErrorSchema>['kind'];
@@ -213,6 +248,45 @@ export async function replanActive(horizonStart: string): Promise<PlanCommitResu
   return call('plan_replan', { args: { horizon_start: validatedStart } }, PlanCommitResultSchema);
 }
 
+export async function getCloudPlanningStatus(): Promise<CloudPlanningStatus> {
+  return cloudCall('cloud_planning_get_status', undefined, CloudPlanningStatusSchema);
+}
+
+export async function saveOpenRouterKey(apiKey: string): Promise<CloudPlanningStatus> {
+  const key = z.string().trim().min(20).max(512).parse(apiKey);
+  return cloudCall(
+    'cloud_planning_save_key',
+    { args: { api_key: key } },
+    CloudPlanningStatusSchema,
+  );
+}
+
+export async function removeOpenRouterKey(): Promise<void> {
+  return cloudCall(
+    'cloud_planning_remove_key',
+    undefined,
+    z.null().transform(() => undefined),
+  );
+}
+
+export async function suggestPlanWithAi(
+  candidateIds: string[],
+  constraints: PlanningConstraints,
+  consent: boolean,
+): Promise<AiPlanSuggestion> {
+  return cloudCall(
+    'cloud_planning_suggest',
+    {
+      args: {
+        candidate_ids: z.array(z.string().min(1)).min(1).max(200).parse(candidateIds),
+        constraints: PlanningConstraintsSchema.parse(constraints),
+        consent,
+      },
+    },
+    AiPlanSuggestionSchema,
+  );
+}
+
 async function call<T>(
   command: string,
   args: Record<string, unknown> | undefined,
@@ -235,4 +309,22 @@ function wrapPlannerError(error: unknown): PlannerRpcError {
     }
   }
   return new PlannerRpcError('internal', 'The planner service is unavailable.');
+}
+
+async function cloudCall<T>(
+  command: string,
+  args: Record<string, unknown> | undefined,
+  schema: z.ZodType<T>,
+): Promise<T> {
+  const raw = await invoke<unknown>(`plugin:lectorbit|${command}`, args).then(
+    (value) => value,
+    (error: unknown) => {
+      if (!(error instanceof Error)) {
+        const parsed = CloudPlanningErrorSchema.safeParse(error);
+        if (parsed.success) throw new Error(parsed.data.message);
+      }
+      throw new Error('Cloud planning is unavailable.');
+    },
+  );
+  return schema.parse(raw);
 }

@@ -38,17 +38,23 @@ export function SearchRoute() {
         title="Find a moment"
         description="Search local media labels, transcript segments, and notes—with timestamp jumps into your active routine."
       />
-      <form onSubmit={submit} className="relative" role="search">
-        <Search className="pointer-events-none absolute left-4 top-1/2 size-5 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+      <form
+        onSubmit={submit}
+        className="grid gap-2 rounded-2xl border border-border/80 bg-card/95 p-2 shadow-[0_12px_36px_rgba(28,25,23,0.06)] sm:relative sm:block sm:border-0 sm:bg-transparent sm:p-0 sm:shadow-none"
+        role="search"
+      >
+        <div className="relative">
+          <Search className="pointer-events-none absolute left-4 top-1/2 size-5 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
         <input
           type="search"
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
           placeholder="Search concepts, phrases, or lesson names"
           aria-label="Search your library"
-          className="h-14 w-full rounded-lg border border-input bg-card pl-12 pr-28 text-base shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="h-12 w-full rounded-xl border-0 bg-background pl-12 pr-4 text-base shadow-none transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/10 sm:h-14 sm:border sm:border-input sm:bg-card sm:pr-32 sm:shadow-sm"
         />
-        <Button type="submit" className="absolute right-2 top-2 h-10" disabled={!draft.trim() || results.isFetching}>
+        </div>
+        <Button type="submit" className="w-full sm:absolute sm:right-2 sm:top-2 sm:w-auto" disabled={!draft.trim() || results.isFetching}>
           {results.isFetching ? 'Searching…' : 'Search'}
         </Button>
       </form>
@@ -86,7 +92,7 @@ function SearchResult({ hit }: { hit: SearchHit }) {
     : undefined;
   return (
     <Card className="transition-colors hover:border-primary/35">
-      <CardContent className="flex items-start gap-4 pt-6">
+      <CardContent className="flex flex-col items-start gap-4 pt-4 sm:flex-row sm:pt-6">
         <span className="grid size-10 shrink-0 place-items-center rounded-lg bg-accent text-accent-foreground">{source.icon}</span>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
@@ -98,7 +104,7 @@ function SearchResult({ hit }: { hit: SearchHit }) {
           {!target && hit.start_ms !== null ? <p className="mt-2 text-xs text-muted-foreground">Add this media to an active plan to jump directly to the moment.</p> : null}
         </div>
         {target ? (
-          <Link to={target} className="inline-flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 text-sm font-medium text-primary transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+          <Link to={target} className="inline-flex w-full shrink-0 items-center justify-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-sm font-semibold text-accent-foreground transition-colors hover:bg-primary hover:text-primary-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:w-auto">
             Open <ArrowRight className="size-3.5" />
           </Link>
         ) : null}

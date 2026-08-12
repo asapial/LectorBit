@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import Ban from 'lucide-react/dist/esm/icons/ban';
 import CircleCheck from 'lucide-react/dist/esm/icons/circle-check';
 import FolderSearch from 'lucide-react/dist/esm/icons/folder-search';
 import FileAudio from 'lucide-react/dist/esm/icons/file-audio';
 import FileVideo from 'lucide-react/dist/esm/icons/file-video';
 import ScanLine from 'lucide-react/dist/esm/icons/scan-line';
 import Captions from 'lucide-react/dist/esm/icons/captions';
+import RotateCcw from 'lucide-react/dist/esm/icons/rotate-ccw';
+import Trash2 from 'lucide-react/dist/esm/icons/trash-2';
+import TriangleAlert from 'lucide-react/dist/esm/icons/triangle-alert';
 import X from 'lucide-react/dist/esm/icons/x';
 import {
   useInfiniteQuery,
@@ -58,7 +60,7 @@ interface LiveScan {
 export function LibraryRoute() {
   const queryClient = useQueryClient();
   const [banner, setBanner] = useState<string | null>(null);
-  const [revokeTarget, setRevokeTarget] = useState<LibraryRoot | null>(null);
+  const [removeTarget, setRemoveTarget] = useState<LibraryRoot | null>(null);
   const [liveScans, setLiveScans] = useState<Record<string, LiveScan>>({});
   const [analysisProgress, setAnalysisProgress] = useState<Record<string, AnalysisProgress>>({});
 
@@ -98,6 +100,7 @@ export function LibraryRoute() {
     staleTime: 5_000,
   });
   const readyModelId = models.data?.find((model) => model.state === 'ready')?.id;
+  const activeRoots = (roots.data ?? []).filter((root) => root.is_active);
 
   const transcribe = useMutation({
     mutationFn: ({ mediaId, modelId }: { mediaId: string; modelId: string }) =>
@@ -157,6 +160,18 @@ export function LibraryRoute() {
     },
   });
 
+  const busyScanRootIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const job of jobs.data ?? []) {
+      if (isActiveJob(job)) ids.add(job.root_id);
+    }
+    for (const [rootId, live] of Object.entries(liveScans)) {
+      if (live.status === 'processing') ids.add(rootId);
+    }
+    if (scan.isPending && scan.variables?.rootId) ids.add(scan.variables.rootId);
+    return ids;
+  }, [jobs.data, liveScans, scan.isPending, scan.variables]);
+
   const register = useMutation({
     mutationFn: pickAndRegisterRoot,
     onSuccess: (root) => {
@@ -169,7 +184,7 @@ export function LibraryRoute() {
     onError: (error) => setBanner(humanizeError(error)),
   });
 
-  const revoke = useMutation({
+  const removeFolder = useMutation({
     mutationFn: (id: string) => revokeRoot(id),
     onMutate: async (id) => {
       await queryClient.cancelQueries({ queryKey: ['library', 'roots'] });
@@ -187,14 +202,15 @@ export function LibraryRoute() {
       return { previous };
     },
     onSuccess: (root) => {
-      setRevokeTarget(null);
-      setBanner(`Revoked “${root.display_name}”. Future scans will skip it.`);
+      setRemoveTarget(null);
+      setBanner(`Removed “${root.display_name}” from LectorBit. Files on disk were not changed.`);
+      void queryClient.invalidateQueries({ queryKey: ['library', 'media'] });
     },
     onError: (_error, _id, context) => {
       if (context?.previous) {
         queryClient.setQueryData(['library', 'roots'], context.previous);
       }
-      setBanner('Could not revoke that folder. Please try again.');
+      setBanner('Could not remove that folder. Please try again.');
     },
     onSettled: () => {
       void queryClient.invalidateQueries({ queryKey: ['library', 'roots'] });
@@ -207,7 +223,7 @@ export function LibraryRoute() {
       <PageHeader
         eyebrow="Library"
         title="Indexed media"
-        description="Add approved folders, scan them without copying files, and keep the local index current."
+        description="Add a course folder once. LectorBit scans every subfolder, reads each video locally, and prepares metadata for planning."
         actions={
           <Button
             onClick={() => register.mutate()}
@@ -250,7 +266,7 @@ export function LibraryRoute() {
         />
       ) : null}
 
-      {roots.data && roots.data.length === 0 && !roots.isPending ? (
+      {roots.data && activeRoots.length === 0 && !roots.isPending ? (
         <EmptyState
           title="No folders yet"
           description="Choose a folder of lectures or tutorials. LectorBit indexes it locally and never copies or uploads your media."
@@ -266,16 +282,16 @@ export function LibraryRoute() {
         />
       ) : null}
 
-      {roots.data && roots.data.length > 0 ? (
+      {activeRoots.length > 0 ? (
         <>
           <RootsTable
-            roots={roots.data}
+            roots={activeRoots}
             jobs={jobs.data ?? []}
             liveScans={liveScans}
-            pendingScanRootId={scan.variables?.rootId ?? null}
-            pendingRevokeId={revoke.variables ?? null}
+            busyScanRootIds={busyScanRootIds}
+            pendingRemoveId={removeFolder.isPending ? removeFolder.variables ?? null : null}
             onScan={(rootId) => scan.mutate({ rootId })}
-            onRequestRevoke={setRevokeTarget}
+            onRequestRemove={setRemoveTarget}
           />
           <MediaLibraryCard
             items={media.data?.pages.flatMap((page) => page.items) ?? []}
@@ -287,18 +303,20 @@ export function LibraryRoute() {
             onLoadMore={() => void media.fetchNextPage()}
             readyModelId={readyModelId}
             analysisProgress={analysisProgress}
-            pendingMediaId={transcribe.variables?.mediaId}
+            pendingMediaId={transcribe.isPending ? transcribe.variables?.mediaId : undefined}
             onTranscribe={(mediaId, modelId) => transcribe.mutate({ mediaId, modelId })}
+            busyScanRootIds={busyScanRootIds}
+            onRetryMetadata={(rootId) => scan.mutate({ rootId })}
           />
         </>
       ) : null}
 
-      {revokeTarget ? (
-        <RevokeDialog
-          root={revokeTarget}
-          pending={revoke.isPending}
-          onCancel={() => setRevokeTarget(null)}
-          onConfirm={() => revoke.mutate(revokeTarget.id)}
+      {removeTarget ? (
+        <RemoveFolderDialog
+          root={removeTarget}
+          pending={removeFolder.isPending}
+          onCancel={() => setRemoveTarget(null)}
+          onConfirm={() => removeFolder.mutate(removeTarget.id)}
         />
       ) : null}
     </div>
@@ -317,6 +335,8 @@ function MediaLibraryCard({
   analysisProgress,
   pendingMediaId,
   onTranscribe,
+  busyScanRootIds,
+  onRetryMetadata,
 }: {
   items: MediaListItem[];
   pending: boolean;
@@ -329,6 +349,8 @@ function MediaLibraryCard({
   analysisProgress: Record<string, AnalysisProgress>;
   pendingMediaId?: string;
   onTranscribe: (mediaId: string, modelId: string) => void;
+  busyScanRootIds: ReadonlySet<string>;
+  onRetryMetadata: (rootId: string) => void;
 }) {
   const mediaScrollRef = useRef<HTMLDivElement>(null);
   const virtualized = items.length > 200;
@@ -342,15 +364,32 @@ function MediaLibraryCard({
   const visibleRows = virtualized
     ? rows.getVirtualItems().map((row) => ({ index: row.index, start: row.start }))
     : items.map((_, index) => ({ index, start: undefined }));
+  const readyCount = items.filter((item) => item.probe_status === 'ready').length;
+  const attentionCount = items.filter((item) =>
+    ['failed', 'unavailable', 'missing'].includes(item.probe_status),
+  ).length;
   return (
     <Card>
-      <CardHeader>
-        <CardTitle>Media index</CardTitle>
-        <CardDescription>
-          Duration and streams come from ffprobe. Verified local Whisper models add searchable transcripts.
-        </CardDescription>
+      <CardHeader className="gap-3 border-b border-border/70 pb-5">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <CardTitle>Media index</CardTitle>
+            <CardDescription className="mt-1.5">
+              Local metadata and transcripts make your lectures searchable and ready to study.
+            </CardDescription>
+          </div>
+          {items.length > 0 ? (
+            <div className="flex flex-wrap gap-2" aria-label="Media summary">
+              <Badge tone="neutral">{items.length.toLocaleString()} loaded</Badge>
+              <Badge tone="success">{readyCount.toLocaleString()} ready</Badge>
+              {attentionCount > 0 ? (
+                <Badge tone="warning">{attentionCount.toLocaleString()} need attention</Badge>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
       </CardHeader>
-      <CardContent>
+      <CardContent className="pt-5">
         {pending ? (
           <div className="flex items-center gap-3 text-sm text-muted-foreground">
             <Spinner label="Loading indexed media" />
@@ -358,6 +397,20 @@ function MediaLibraryCard({
         ) : null}
         {error ? (
           <ErrorPanel title="Could not load indexed media" error={error} onRetry={onRetry} />
+        ) : null}
+        {!pending && !error && attentionCount > 0 ? (
+          <div className="mb-5 flex items-start gap-3 rounded-lg border border-amber-500/25 bg-amber-500/8 px-4 py-3 text-sm">
+            <TriangleAlert
+              aria-hidden="true"
+              className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-400"
+            />
+            <div>
+              <p className="font-medium">Some metadata needs another pass</p>
+              <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
+                Retry an affected item to rescan its folder. LectorBit leaves the media file untouched.
+              </p>
+            </div>
+          </div>
         ) : null}
         {!pending && !error && items.length === 0 ? (
           <div className="rounded-lg border border-dashed border-border bg-muted/35 px-6 py-8 text-center">
@@ -371,11 +424,11 @@ function MediaLibraryCard({
         {items.length > 0 ? (
           <div
             ref={mediaScrollRef}
-            className={cn('overflow-x-auto', virtualized && 'max-h-[640px] overflow-y-auto')}
+            className={cn('responsive-table-shell', virtualized && 'max-h-[640px] overflow-y-auto')}
           >
             <table className="w-full min-w-[900px] table-fixed text-sm">
               <thead>
-                <tr className="border-b border-border text-left text-xs font-medium uppercase tracking-[0.08em] text-muted-foreground">
+                <tr className="border-b border-border bg-card text-left text-xs font-medium uppercase tracking-[0.08em] text-muted-foreground">
                   <th className="w-[32%] py-2.5 pr-4">Media</th>
                   <th className="w-[12%] py-2.5 pr-4">Duration</th>
                   <th className="w-[18%] py-2.5 pr-4">Video</th>
@@ -404,6 +457,8 @@ function MediaLibraryCard({
                     analysisEvent={analysisProgress[items[row.index].id]}
                     pending={pendingMediaId === items[row.index].id}
                     onTranscribe={onTranscribe}
+                    retryingMetadata={busyScanRootIds.has(items[row.index].root_id)}
+                    onRetryMetadata={onRetryMetadata}
                   />
                 ))}
               </tbody>
@@ -429,6 +484,8 @@ function MediaRow({
   analysisEvent,
   pending,
   onTranscribe,
+  retryingMetadata,
+  onRetryMetadata,
 }: {
   item: MediaListItem;
   virtualStart?: number;
@@ -436,9 +493,12 @@ function MediaRow({
   analysisEvent?: AnalysisProgress;
   pending: boolean;
   onTranscribe: (mediaId: string, modelId: string) => void;
+  retryingMetadata: boolean;
+  onRetryMetadata: (rootId: string) => void;
 }) {
   return (
     <tr
+      className="transition-colors hover:bg-muted/25"
       style={
         virtualStart === undefined
           ? undefined
@@ -493,6 +553,20 @@ function MediaRow({
             </Button>
           </div>
         ) : null}
+        {['failed', 'unavailable', 'missing'].includes(item.probe_status) ? (
+          <div className="mt-2">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={retryingMetadata}
+              onClick={() => onRetryMetadata(item.root_id)}
+              leftIcon={<RotateCcw className="size-3.5" />}
+              title="Rescan this item’s approved folder and retry metadata"
+            >
+              {retryingMetadata ? 'Retrying…' : 'Retry metadata'}
+            </Button>
+          </div>
+        ) : null}
       </td>
     </tr>
   );
@@ -530,15 +604,15 @@ function ProbeState({ item }: { item: MediaListItem }) {
       break;
     case 'failed':
       status = 'failed';
-      label = item.probe_error ?? 'Unreadable media';
+      label = item.probe_error ?? 'Metadata could not be read';
       break;
     case 'unavailable':
       status = 'attention';
-      label = 'ffprobe unavailable';
+      label = item.probe_error ?? 'Metadata service unavailable';
       break;
     case 'missing':
       status = 'attention';
-      label = 'File unavailable';
+      label = 'File was not found during the last scan';
       break;
   }
   return (
@@ -590,28 +664,19 @@ function RootsTable({
   roots,
   jobs,
   liveScans,
-  pendingScanRootId,
-  pendingRevokeId,
+  busyScanRootIds,
+  pendingRemoveId,
   onScan,
-  onRequestRevoke,
+  onRequestRemove,
 }: {
   roots: LibraryRoot[];
   jobs: ScanJob[];
   liveScans: Record<string, LiveScan>;
-  pendingScanRootId: string | null;
-  pendingRevokeId: string | null;
+  busyScanRootIds: ReadonlySet<string>;
+  pendingRemoveId: string | null;
   onScan: (rootId: string) => void;
-  onRequestRevoke: (root: LibraryRoot) => void;
+  onRequestRemove: (root: LibraryRoot) => void;
 }) {
-  const sorted = useMemo(
-    () =>
-      [...roots].sort((left, right) => {
-        if (left.is_active === right.is_active) return 0;
-        return left.is_active ? -1 : 1;
-      }),
-    [roots],
-  );
-  const active = roots.filter((root) => root.is_active).length;
   const latestJobByRoot = useMemo(() => {
     const map = new Map<string, ScanJob>();
     for (const job of jobs) {
@@ -622,14 +687,14 @@ function RootsTable({
 
   return (
     <Card>
-      <CardHeader>
-        <CardTitle>Approved folders</CardTitle>
+      <CardHeader className="border-b border-border/70 pb-5">
+        <CardTitle>Library folders</CardTitle>
         <CardDescription>
-          {active} active · {roots.length - active} revoked
+          {roots.length.toLocaleString()} {roots.length === 1 ? 'folder' : 'folders'} indexed locally
         </CardDescription>
       </CardHeader>
-      <CardContent>
-        <div className="overflow-x-auto">
+      <CardContent className="pt-2">
+        <div className="responsive-table-shell">
           <table className="w-full min-w-[760px] text-sm">
             <thead>
               <tr className="border-b border-border text-left text-xs font-medium uppercase tracking-[0.08em] text-muted-foreground">
@@ -640,14 +705,12 @@ function RootsTable({
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
-              {sorted.map((root) => {
+              {roots.map((root) => {
                 const job = latestJobByRoot.get(root.id);
                 const live = liveScans[root.id];
-                const activeJob = job ? isActiveJob(job) : false;
-                const scanPending =
-                  pendingScanRootId === root.id || activeJob || live?.status === 'processing';
+                const scanPending = busyScanRootIds.has(root.id);
                 return (
-                  <tr key={root.id} className={cn(!root.is_active && 'opacity-60')}>
+                  <tr key={root.id} className="transition-colors hover:bg-muted/25">
                     <td className="py-4 pr-4 align-top">
                       <div className="flex flex-col gap-0.5">
                         <span className="font-medium">{root.display_name}</span>
@@ -657,45 +720,40 @@ function RootsTable({
                       </div>
                     </td>
                     <td className="py-4 pr-4 align-top">
-                      {root.is_active ? (
-                        <Badge tone="success">
-                          <CircleCheck aria-hidden="true" className="size-3.5" />
-                          Active
-                        </Badge>
-                      ) : (
-                        <Badge tone="neutral">
-                          <Ban aria-hidden="true" className="size-3.5" />
-                          Revoked
-                        </Badge>
-                      )}
+                      <Badge tone="success">
+                        <CircleCheck aria-hidden="true" className="size-3.5" />
+                        Active
+                      </Badge>
                     </td>
                     <td className="min-w-64 py-4 pr-4 align-top">
                       <ScanState live={live} job={job} />
                     </td>
                     <td className="py-4 text-right align-top">
-                      {root.is_active ? (
-                        <div className="flex justify-end gap-2">
-                          <Button
-                            size="sm"
-                            variant="secondary"
-                            disabled={scanPending}
-                            onClick={() => onScan(root.id)}
-                            leftIcon={<ScanLine className="size-3.5" />}
-                          >
-                            {scanPending ? 'Scanning…' : job ? 'Scan again' : 'Scan'}
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            disabled={pendingRevokeId === root.id}
-                            onClick={() => onRequestRevoke(root)}
-                          >
-                            {pendingRevokeId === root.id ? 'Revoking…' : 'Revoke'}
-                          </Button>
-                        </div>
-                      ) : (
-                        <span className="text-xs text-muted-foreground">—</span>
-                      )}
+                      <div className="flex justify-end gap-2">
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          disabled={scanPending}
+                          onClick={() => onScan(root.id)}
+                          leftIcon={<ScanLine className="size-3.5" />}
+                        >
+                          {scanPending
+                            ? 'Scanning folder…'
+                            : job
+                              ? 'Rescan folder'
+                              : 'Scan folder'}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="text-muted-foreground hover:text-destructive"
+                          disabled={pendingRemoveId === root.id}
+                          onClick={() => onRequestRemove(root)}
+                          leftIcon={<Trash2 className="size-3.5" />}
+                        >
+                          {pendingRemoveId === root.id ? 'Removing…' : 'Remove'}
+                        </Button>
+                      </div>
                     </td>
                   </tr>
                 );
@@ -743,7 +801,7 @@ function ScanState({ live, job }: { live?: LiveScan; job?: ScanJob }) {
   );
 }
 
-function RevokeDialog({
+function RemoveFolderDialog({
   root,
   pending,
   onCancel,
@@ -768,26 +826,29 @@ function RevokeDialog({
     <div
       role="dialog"
       aria-modal="true"
-      aria-labelledby="revoke-title"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-stone-950/60 px-4 backdrop-blur-[2px]"
+      aria-labelledby="remove-folder-title"
+      className="fixed inset-0 z-50 flex items-end justify-center bg-stone-950/60 p-3 backdrop-blur-[2px] sm:items-center sm:px-4"
     >
-      <div className="w-full max-w-md rounded-lg border border-border bg-background p-6 shadow-md">
-        <h2 id="revoke-title" className="font-display text-lg font-semibold">
-          Revoke “{root.display_name}”?
+      <div className="w-full max-w-md rounded-2xl border border-border bg-background p-5 shadow-2xl sm:p-6">
+        <div className="mb-4 grid size-10 place-items-center rounded-full bg-destructive/10 text-destructive">
+          <Trash2 aria-hidden="true" className="size-5" />
+        </div>
+        <h2 id="remove-folder-title" className="font-display text-lg font-semibold">
+          Remove “{root.display_name}”?
         </h2>
         <p className="mt-2 text-sm text-muted-foreground">
-          Future scans will skip this folder. Existing progress stays intact and
-          files remain untouched on disk.
+          This removes the folder and its media from the active LectorBit library.
+          Your original files and folders remain untouched on disk.
         </p>
         <p className="mt-3 rounded-md bg-muted px-3 py-2 font-mono text-xs text-muted-foreground">
           {root.path_redacted}
         </p>
-        <div className="mt-5 flex justify-end gap-2">
+        <div className="mt-5 grid grid-cols-2 gap-2 sm:flex sm:justify-end">
           <Button ref={cancelRef} variant="ghost" onClick={onCancel} disabled={pending}>
             Cancel
           </Button>
           <Button variant="destructive" onClick={onConfirm} disabled={pending}>
-            {pending ? 'Revoking…' : 'Revoke root'}
+            {pending ? 'Removing…' : 'Remove folder'}
           </Button>
         </div>
       </div>

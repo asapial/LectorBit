@@ -2,10 +2,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { invoke } from '@tauri-apps/api/core';
 import {
   commitPlan,
+  getCloudPlanningStatus,
   getRoutine,
   listPlanningCandidates,
   previewPlan,
   replanActive,
+  suggestPlanWithAi,
   type PlanRequest,
 } from './planner';
 
@@ -131,5 +133,37 @@ describe('ipc/planner', () => {
     expect((caught as { kind?: string }).kind).toBe('internal');
     expect((caught as Error).message).toBe('The planner service is unavailable.');
     expect(String(caught)).not.toContain('plan.sqlite');
+  });
+
+  it('sends the explicit cloud consent and preserves actionable provider failures', async () => {
+    vi.mocked(invoke).mockRejectedValueOnce({
+      kind: 'provider',
+      message: "OpenRouter's free request limit was reached. Try again later.",
+    });
+
+    await expect(
+      suggestPlanWithAi(['media'], request.constraints, true),
+    ).rejects.toThrow("OpenRouter's free request limit was reached");
+    expect(invoke).toHaveBeenCalledWith('plugin:lectorbit|cloud_planning_suggest', {
+      args: {
+        candidate_ids: ['media'],
+        constraints: request.constraints,
+        consent: true,
+      },
+    });
+  });
+
+  it('parses the capability-aware cloud planning status', async () => {
+    vi.mocked(invoke).mockResolvedValue({
+      configured: true,
+      provider: 'OpenRouter',
+      model:
+        'nvidia/nemotron-3-ultra-550b-a55b:free → google/gemma-4-26b-a4b-it:free',
+    });
+    await expect(getCloudPlanningStatus()).resolves.toMatchObject({
+      configured: true,
+      model:
+        'nvidia/nemotron-3-ultra-550b-a55b:free → google/gemma-4-26b-a4b-it:free',
+    });
   });
 });

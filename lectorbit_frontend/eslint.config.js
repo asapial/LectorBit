@@ -13,9 +13,13 @@ export default tseslint.config(
       ...tseslint.configs.disableTypeChecked.languageOptions,
       globals: {
         $: 'readonly',
+        before: 'readonly',
         browser: 'readonly',
         describe: 'readonly',
+        document: 'readonly',
         expect: 'readonly',
+        HTMLMediaElement: 'readonly',
+        HTMLVideoElement: 'readonly',
         it: 'readonly',
       },
     },

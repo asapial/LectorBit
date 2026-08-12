@@ -189,11 +189,11 @@ function KpiCard({
         <CardTitle>{title}</CardTitle>
       </CardHeader>
       <CardContent>
-        <dl className="grid grid-cols-[max-content_1fr] gap-x-6 gap-y-2 text-sm">
+        <dl className="space-y-0.5 text-sm">
           {rows.map((row) => (
-            <div key={row.label} className="contents">
+            <div key={row.label} className="flex flex-col gap-1 rounded-lg px-2 py-2 transition-colors hover:bg-muted/45 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
               <dt className="text-muted-foreground">{row.label}</dt>
-              <dd className="flex items-center justify-end gap-2 text-right">
+              <dd className="flex min-w-0 items-center gap-2 sm:justify-end sm:text-right">
                 {row.tone && (
                   <Badge tone={row.tone} className="text-[10px]">
                     {row.tone === 'success'
@@ -203,7 +203,7 @@ function KpiCard({
                         : '—'}
                   </Badge>
                 )}
-                <span className={row.mono ? 'font-mono text-xs' : undefined}>
+                <span className={row.mono ? 'break-all font-mono text-xs' : undefined}>
                   {row.value}
                 </span>
               </dd>

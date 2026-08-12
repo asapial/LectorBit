@@ -84,11 +84,12 @@ function RoutineView({ routine, focusDate }: { routine: RoutinePlan; focusDate?:
   return (
     <div className="space-y-6">
       <section
-        className="grid gap-4 lg:grid-cols-[minmax(0,1.5fr)_minmax(18rem,0.5fr)]"
+        className="grid gap-4 min-[1320px]:grid-cols-[minmax(0,1.5fr)_minmax(18rem,0.5fr)]"
         aria-label="Next study block"
       >
-        <Card className="overflow-hidden">
-          <div className="h-1 bg-primary" />
+        <Card className="featured-card relative overflow-hidden">
+          <div className="pointer-events-none absolute right-0 top-0 size-48 translate-x-1/3 -translate-y-1/3 rounded-full border-[28px] border-primary/5" />
+          <div className="h-1 bg-gradient-to-r from-primary via-vermillion-400 to-amber-300" />
           <CardHeader>
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
@@ -117,7 +118,7 @@ function RoutineView({ routine, focusDate }: { routine: RoutinePlan; focusDate?:
                     <Play className="size-4" /> Start focused study
                   </Link>
                   <span className="text-xs text-muted-foreground">
-                    Opens the authorized media in a focused mpv window.
+                    Plays the authorized media privately inside LectorBit.
                   </span>
                 </div>
               </>
@@ -128,7 +129,7 @@ function RoutineView({ routine, focusDate }: { routine: RoutinePlan; focusDate?:
             )}
           </CardContent>
         </Card>
-        <Card>
+        <Card className="bg-gradient-to-br from-card to-secondary/55">
           <CardHeader>
             <CardTitle>Day load</CardTitle>
           </CardHeader>

@@ -9,12 +9,16 @@ const mocks = vi.hoisted(() => ({
   listCandidates: vi.fn(),
   previewPlan: vi.fn(),
   commitPlan: vi.fn(),
+  cloudStatus: vi.fn(),
+  suggestPlan: vi.fn(),
 }));
 
 vi.mock('../../ipc/planner', () => ({
   listPlanningCandidates: mocks.listCandidates,
   previewPlan: mocks.previewPlan,
   commitPlan: mocks.commitPlan,
+  getCloudPlanningStatus: mocks.cloudStatus,
+  suggestPlanWithAi: mocks.suggestPlan,
 }));
 
 const feasiblePreview: PlanPreview = {
@@ -80,6 +84,11 @@ describe('PlanRoute', () => {
       plan_version_id: 'version',
       created_at: '2026-08-10T00:00:00Z',
     });
+    mocks.cloudStatus.mockResolvedValue({
+      configured: false,
+      provider: 'OpenRouter',
+      model: 'google/gemma-4-26b-a4b-it:free',
+    });
   });
 
   it('previews and commits a backend-owned feasible plan', async () => {
@@ -134,5 +143,110 @@ describe('PlanRoute', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Preview plan' }));
     expect(screen.getByRole('alert')).toHaveTextContent('Select at least one');
     expect(mocks.previewPlan).not.toHaveBeenCalled();
+  });
+
+  it('applies an explained AI sequence without bypassing deterministic preview', async () => {
+    mocks.cloudStatus.mockResolvedValue({
+      configured: true,
+      provider: 'OpenRouter',
+      model: 'google/gemma-4-26b-a4b-it:free',
+    });
+    mocks.listCandidates.mockResolvedValue({
+      items: [
+        {
+          media_id: 'ten',
+          display_name: '10 - Feature Scaling.mp4',
+          path_redacted: '[REDACTED]/10 - Feature Scaling.mp4',
+          duration_ms: 900_000,
+          chunk_count: 1,
+        },
+        {
+          media_id: 'two',
+          display_name: '2 - Machine Learning Demo Get Excited.mp4',
+          path_redacted: '[REDACTED]/2 - Machine Learning Demo Get Excited.mp4',
+          duration_ms: 600_000,
+          chunk_count: 1,
+        },
+      ],
+      next_cursor: null,
+    });
+    mocks.suggestPlan.mockResolvedValue({
+      title: 'Machine learning foundations',
+      description: 'Begin with motivation, then normalize features before model training.',
+      model: 'provider/model',
+      items: [
+        {
+          media_id: 'two',
+          priority: 4,
+          dependencies: [],
+          reason: 'Introduces the course and builds context.',
+        },
+        {
+          media_id: 'ten',
+          priority: 3,
+          dependencies: ['two'],
+          reason: 'Uses the context established by the demonstration.',
+        },
+      ],
+    });
+
+    renderRoute();
+    fireEvent.click(
+      await screen.findByRole('checkbox', { name: /I understand this request uses/i }),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Suggest my plan' }));
+
+    expect(
+      await screen.findByText(
+        'Begin with motivation, then normalize features before model training.',
+      ),
+    ).toBeInTheDocument();
+    expect(mocks.suggestPlan).toHaveBeenCalledWith(['ten', 'two'], expect.any(Object), true);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Preview plan' }));
+    await waitFor(() => expect(mocks.previewPlan).toHaveBeenCalledTimes(1));
+    const request = mocks.previewPlan.mock.calls[0][0] as PlanRequest;
+    expect(request.selections.map((selection) => selection.media_id)).toEqual(['two', 'ten']);
+    expect(request.selections[1].dependencies).toEqual(['two']);
+  });
+
+  it('shows AI failures beside the suggestion action and allows a retry', async () => {
+    mocks.cloudStatus.mockResolvedValue({
+      configured: true,
+      provider: 'OpenRouter',
+      model:
+        'nvidia/nemotron-3-ultra-550b-a55b:free → google/gemma-4-26b-a4b-it:free',
+    });
+    mocks.suggestPlan
+      .mockRejectedValueOnce(new Error('OpenRouter is temporarily unavailable.'))
+      .mockResolvedValueOnce({
+        title: 'Algorithms path',
+        description: 'A clear progression through the selected material.',
+        model: 'provider/free-model',
+        items: [
+          {
+            media_id: 'media',
+            priority: 3,
+            dependencies: [],
+            reason: 'Establish the core concepts first.',
+          },
+        ],
+      });
+
+    renderRoute();
+    const consent = await screen.findByRole('checkbox', {
+      name: /I understand this request uses/i,
+    });
+    fireEvent.click(consent);
+    fireEvent.click(screen.getByRole('button', { name: 'Suggest my plan' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'OpenRouter is temporarily unavailable.',
+    );
+    expect(screen.getByRole('button', { name: 'Suggest my plan' })).toBeEnabled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Suggest my plan' }));
+    expect(await screen.findByText('A clear progression through the selected material.')).toBeInTheDocument();
+    expect(mocks.suggestPlan).toHaveBeenCalledTimes(2);
   });
 });

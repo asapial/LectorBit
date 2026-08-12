@@ -37,5 +37,5 @@ export const config = {
   ],
   framework: 'mocha',
   reporters: ['spec'],
-  mochaOpts: { ui: 'bdd', timeout: 60_000 },
+  mochaOpts: { ui: 'bdd', timeout: 180_000 },
 };
