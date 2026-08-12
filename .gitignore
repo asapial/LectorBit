@@ -15,6 +15,7 @@ dist/
 
 # Rust
 target/
+target-e2e-validation/
 **/*.rs.bk
 Cargo.lock.bak
 __pycache__/
