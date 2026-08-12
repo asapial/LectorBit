@@ -2,7 +2,9 @@ use serde::{Deserialize, Serialize};
 
 macro_rules! unit_newtype {
     ($name:ident, $inner:ty, $doc:literal) => {
-        #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+        #[derive(
+            Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+        )]
         #[serde(transparent)]
         #[doc = $doc]
         pub struct $name(pub $inner);

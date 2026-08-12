@@ -5,11 +5,13 @@
 
 pub mod error;
 pub mod ids;
+pub mod natural_sort;
 pub mod planning;
 pub mod units;
 
 pub use error::{LectorError, LectorResult};
 pub use ids::{JobId, MediaId, PlanId, PlanItemId, RootId, StudyActionId, UserId};
+pub use natural_sort::natural_cmp;
 pub use planning::{
     build_plan, derive_coarse_chunks, CoarseChunk, DayLoad, InfeasibilityCode, MediaWork,
     PlanDraft, PlanningChunk, PlanningConstraints, PlanningError, ScheduledItem, UnscheduledWork,

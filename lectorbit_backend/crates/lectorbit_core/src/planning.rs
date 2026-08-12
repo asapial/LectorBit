@@ -176,6 +176,9 @@ impl From<CoarseChunk> for PlanningChunk {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MediaWork {
     pub media_id: String,
+    /// Stable user-facing course order used after deadline and priority.
+    #[serde(default)]
+    pub sequence: u32,
     /// 1 (low) through 5 (critical).
     pub priority: u8,
     pub deadline: Option<NaiveDate>,
@@ -478,6 +481,7 @@ fn validate_and_order(media: &[MediaWork]) -> Result<Vec<&MediaWork>, PlanningEr
             (
                 work.deadline.unwrap_or(NaiveDate::MAX),
                 Reverse(work.priority),
+                work.sequence,
                 work.media_id.as_str(),
             )
         });
@@ -554,6 +558,7 @@ mod tests {
     fn work(media_id: &str, minutes: u64) -> MediaWork {
         MediaWork {
             media_id: media_id.to_string(),
+            sequence: 0,
             priority: 3,
             deadline: None,
             dependencies: Vec::new(),
@@ -591,6 +596,27 @@ mod tests {
                 .unwrap();
             assert!(longest - shortest <= 1);
         }
+    }
+
+    #[test]
+    fn stable_sequence_breaks_equal_priority_ties() {
+        let mut later = work("10-feature-scaling", 10);
+        later.sequence = 1;
+        let mut earlier = work("2-demo", 10);
+        earlier.sequence = 0;
+        let start = NaiveDate::from_ymd_opt(2026, 8, 12).unwrap();
+        let draft = build_plan(
+            start,
+            &PlanningConstraints {
+                daily_budget_minutes: 60,
+                max_continuous_minutes: 30,
+                preferred_session_minutes: 25,
+                ..PlanningConstraints::default()
+            },
+            &[later, earlier],
+        )
+        .unwrap();
+        assert_eq!(draft.items[0].media_id, "2-demo");
     }
 
     #[test]
