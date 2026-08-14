@@ -44,7 +44,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "registry"] }
 log = "0.4"
 tempfile = "3"
-reqwest = { version = "0.12", default-features = false, features = ["native-tls", "stream"] }
+reqwest = { version = "0.13", default-features = false, features = ["native-tls", "stream"] }
 sha2 = "0.10"
 fs2 = "0.4"
 
