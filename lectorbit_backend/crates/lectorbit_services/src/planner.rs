@@ -17,6 +17,8 @@ const LOCAL_USER_ID: &str = "local";
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PlannerCandidate {
     pub media_id: String,
+    pub module_id: String,
+    pub module_name: String,
     pub display_name: String,
     pub path_redacted: String,
     pub duration_ms: u64,
@@ -116,16 +118,27 @@ impl PlannerService {
 
     pub async fn list_candidates(
         &self,
+        module_id: Option<&str>,
         cursor: Option<&str>,
         limit: u32,
     ) -> Result<PlannerCandidatePage, PlannerServiceError> {
-        let page = self.chunks.list_candidate_page(cursor, limit).await?;
+        if module_id
+            .is_some_and(|id| id.is_empty() || id.len() > 128 || id.chars().any(char::is_control))
+        {
+            return Err(PlannerServiceError::InvalidInput("folder module".into()));
+        }
+        let page = self
+            .chunks
+            .list_candidate_page(module_id, cursor, limit)
+            .await?;
         Ok(PlannerCandidatePage {
             items: page
                 .items
                 .into_iter()
                 .map(|entry| PlannerCandidate {
                     media_id: entry.media_id,
+                    module_id: entry.module_id,
+                    module_name: entry.module_name,
                     display_name: entry.display_name,
                     path_redacted: entry.path_redacted,
                     duration_ms: entry.duration_ms,
@@ -255,16 +268,31 @@ fn build_preview_with_states(
         .into_iter()
         .map(|entry| (entry.media.id.clone(), entry))
         .collect::<BTreeMap<_, _>>();
+    let module_by_media = by_id
+        .iter()
+        .map(|(media_id, entry)| (media_id.clone(), entry.media.root_id.clone()))
+        .collect::<BTreeMap<_, _>>();
     let mut labels = BTreeMap::new();
     let mut media_work = Vec::with_capacity(request.selections.len());
     for (sequence, selection) in request.selections.iter().enumerate() {
         let entry = by_id
             .remove(&selection.media_id)
             .ok_or_else(|| PlannerServiceError::MediaUnavailable(selection.media_id.clone()))?;
+        let selection_module = module_by_media.get(&selection.media_id);
+        if selection.dependencies.iter().any(|dependency| {
+            module_by_media
+                .get(dependency)
+                .is_some_and(|dependency_module| Some(dependency_module) != selection_module)
+        }) {
+            return Err(PlannerServiceError::InvalidInput(
+                "prerequisites must stay inside one folder module".into(),
+            ));
+        }
         labels.insert(selection.media_id.clone(), entry.media.display_name);
         let chunks = adjusted_chunks(entry.chunks, states.get(&selection.media_id));
         media_work.push(MediaWork {
             media_id: selection.media_id.clone(),
+            module_id: entry.media.root_id,
             sequence: u32::try_from(sequence).unwrap_or(u32::MAX),
             priority: selection.priority,
             deadline: selection.deadline,
@@ -496,6 +524,80 @@ mod tests {
             .items
             .iter()
             .all(|item| item.chunk_id == "chunk"));
+    }
+
+    #[test]
+    fn preview_rejects_cross_module_prerequisites() {
+        let mut available = available();
+        let mut other = available[0].clone();
+        other.media.id = "other".into();
+        other.media.root_id = "other-root".into();
+        other.media.display_name = "Statistics".into();
+        other.chunks[0].id = "other-chunk".into();
+        other.chunks[0].media_id = "other".into();
+        available.push(other);
+        let mut request = request();
+        request.selections.push(PlanningSelection {
+            media_id: "other".into(),
+            priority: 3,
+            deadline: None,
+            dependencies: vec!["media".into()],
+        });
+
+        assert!(matches!(
+            build_preview(&request, available),
+            Err(PlannerServiceError::InvalidInput(message))
+                if message.contains("folder module")
+        ));
+    }
+
+    #[test]
+    fn preview_preserves_folder_modules_across_priority_differences() {
+        let template = available().remove(0);
+        let mut catalog = Vec::new();
+        for (media_id, root_id) in [
+            ("a-first", "module-a"),
+            ("a-second", "module-a"),
+            ("b-first", "module-b"),
+            ("b-second", "module-b"),
+        ] {
+            let mut entry = template.clone();
+            entry.media.id = media_id.into();
+            entry.media.root_id = root_id.into();
+            entry.media.display_name = media_id.into();
+            entry.media.duration_ms = Some(5 * 60_000);
+            entry.chunks[0].id = format!("{media_id}-chunk");
+            entry.chunks[0].media_id = media_id.into();
+            entry.chunks[0].end_ms = 5 * 60_000;
+            catalog.push(entry);
+        }
+        let mut request = request();
+        request.selections = [
+            ("a-first", 5),
+            ("a-second", 1),
+            ("b-first", 4),
+            ("b-second", 3),
+        ]
+        .into_iter()
+        .map(|(media_id, priority)| PlanningSelection {
+            media_id: media_id.into(),
+            priority,
+            deadline: None,
+            dependencies: Vec::new(),
+        })
+        .collect();
+
+        let preview = build_preview(&request, catalog).unwrap();
+
+        assert_eq!(
+            preview
+                .draft
+                .items
+                .iter()
+                .map(|item| item.media_id.as_str())
+                .collect::<Vec<_>>(),
+            ["a-first", "a-second", "b-first", "b-second"]
+        );
     }
 
     #[test]

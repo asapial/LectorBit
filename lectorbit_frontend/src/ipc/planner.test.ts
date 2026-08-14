@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { invoke } from '@tauri-apps/api/core';
 import {
   commitPlan,
+  CloudPlanningRpcError,
   getCloudPlanningStatus,
   getRoutine,
   listPlanningCandidates,
@@ -35,8 +36,10 @@ describe('ipc/planner', () => {
       items: [
         {
           media_id: 'media',
+          module_id: 'algorithms',
+          module_name: 'Algorithms course',
           display_name: 'Algorithms',
-          path_redacted: '[REDACTED]/Algorithms.mp4',
+          path_redacted: '[REDACTED]/Algorithms course/Algorithms.mp4',
           duration_ms: 3_600_000,
           chunk_count: 3,
         },
@@ -47,6 +50,16 @@ describe('ipc/planner', () => {
     expect(candidates.items[0].path_redacted).toContain('[REDACTED]');
     expect(candidates.next_cursor).toBe('media');
     expect(JSON.stringify(candidates)).not.toContain('C:\\');
+  });
+
+  it('requests a paginated candidate page scoped to one folder module', async () => {
+    vi.mocked(invoke).mockResolvedValue({ items: [], next_cursor: null });
+
+    await listPlanningCandidates({ moduleId: 'module-b', cursor: 'media-20', limit: 20 });
+
+    expect(invoke).toHaveBeenCalledWith('plugin:lectorbit|planner_list_candidates', {
+      args: { module_id: 'module-b', cursor: 'media-20', limit: 20 },
+    });
   });
 
   it('sends a typed preview request and parses alternatives', async () => {
@@ -141,9 +154,15 @@ describe('ipc/planner', () => {
       message: "OpenRouter's free request limit was reached. Try again later.",
     });
 
-    await expect(
-      suggestPlanWithAi(['media'], request.constraints, true),
-    ).rejects.toThrow("OpenRouter's free request limit was reached");
+    let caught: unknown;
+    try {
+      await suggestPlanWithAi(['media'], request.constraints, true);
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(CloudPlanningRpcError);
+    expect((caught as CloudPlanningRpcError).kind).toBe('provider');
+    expect((caught as Error).message).toContain("OpenRouter's free request limit was reached");
     expect(invoke).toHaveBeenCalledWith('plugin:lectorbit|cloud_planning_suggest', {
       args: {
         candidate_ids: ['media'],
@@ -157,13 +176,11 @@ describe('ipc/planner', () => {
     vi.mocked(invoke).mockResolvedValue({
       configured: true,
       provider: 'OpenRouter',
-      model:
-        'nvidia/nemotron-3-ultra-550b-a55b:free → google/gemma-4-26b-a4b-it:free',
+      model: 'openrouter/free',
     });
     await expect(getCloudPlanningStatus()).resolves.toMatchObject({
       configured: true,
-      model:
-        'nvidia/nemotron-3-ultra-550b-a55b:free → google/gemma-4-26b-a4b-it:free',
+      model: 'openrouter/free',
     });
   });
 });

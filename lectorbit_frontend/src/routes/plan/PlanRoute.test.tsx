@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   commitPlan: vi.fn(),
   cloudStatus: vi.fn(),
   suggestPlan: vi.fn(),
+  parseIntent: vi.fn(),
 }));
 
 vi.mock('../../ipc/planner', () => ({
@@ -19,6 +20,7 @@ vi.mock('../../ipc/planner', () => ({
   commitPlan: mocks.commitPlan,
   getCloudPlanningStatus: mocks.cloudStatus,
   suggestPlanWithAi: mocks.suggestPlan,
+  parsePlanIntent: mocks.parseIntent,
 }));
 
 const feasiblePreview: PlanPreview = {
@@ -50,12 +52,12 @@ const feasiblePreview: PlanPreview = {
   alternatives: [],
 };
 
-function renderRoute() {
+function renderRoute(initialEntry = '/') {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   return render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={[initialEntry]}>
       <QueryClientProvider client={queryClient}>
         <PlanRoute />
       </QueryClientProvider>
@@ -70,6 +72,8 @@ describe('PlanRoute', () => {
       items: [
         {
           media_id: 'media',
+          module_id: 'algorithms',
+          module_name: 'Algorithms course',
           display_name: 'Algorithms',
           path_redacted: '[REDACTED]/Algorithms.mp4',
           duration_ms: 3_600_000,
@@ -145,6 +149,133 @@ describe('PlanRoute', () => {
     expect(mocks.previewPlan).not.toHaveBeenCalled();
   });
 
+  it('paginates media without combining folder modules', async () => {
+    mocks.listCandidates.mockImplementation(({ cursor }: { cursor?: string }) =>
+      Promise.resolve(
+        cursor
+          ? {
+              items: [
+                {
+                  media_id: 'rust-1',
+                  module_id: 'rust',
+                  module_name: 'Rust course',
+                  display_name: '1 - Ownership.mp4',
+                  path_redacted: '[REDACTED]/Rust course/1 - Ownership.mp4',
+                  duration_ms: 600_000,
+                  chunk_count: 1,
+                },
+              ],
+              next_cursor: null,
+            }
+          : {
+              items: [
+                {
+                  media_id: 'ml-1',
+                  module_id: 'ml',
+                  module_name: 'Machine learning',
+                  display_name: '1 - Introduction.mp4',
+                  path_redacted: '[REDACTED]/Machine learning/1 - Introduction.mp4',
+                  duration_ms: 900_000,
+                  chunk_count: 1,
+                },
+              ],
+              next_cursor: 'ml-1',
+            },
+      ),
+    );
+
+    renderRoute();
+    expect(
+      await screen.findByRole('region', { name: 'Machine learning module' }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Rust course module' })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+    expect(await screen.findByRole('region', { name: 'Rust course module' })).toBeInTheDocument();
+    expect(mocks.listCandidates).toHaveBeenLastCalledWith({ cursor: 'ml-1', limit: 24 });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Previous' }));
+    expect(
+      await screen.findByRole('region', { name: 'Machine learning module' }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('1 - Ownership.mp4')).not.toBeInTheDocument();
+  });
+
+  it('loads and preselects every page in a requested folder module', async () => {
+    mocks.cloudStatus.mockResolvedValue({
+      configured: true,
+      provider: 'OpenRouter',
+      model: 'google/gemma-4-26b-a4b-it:free',
+    });
+    mocks.listCandidates.mockImplementation(
+      ({ moduleId, cursor }: { moduleId?: string; cursor?: string }) => {
+        expect(moduleId).toBe('module-ml');
+        return Promise.resolve(
+          cursor
+            ? {
+                items: [
+                  {
+                    media_id: 'ml-2',
+                    module_id: 'module-ml',
+                    module_name: 'Machine learning',
+                    display_name: '2 - Regression.mp4',
+                    path_redacted: '[REDACTED]/Machine learning/2 - Regression.mp4',
+                    duration_ms: 1_200_000,
+                    chunk_count: 2,
+                  },
+                ],
+                next_cursor: null,
+              }
+            : {
+                items: [
+                  {
+                    media_id: 'ml-1',
+                    module_id: 'module-ml',
+                    module_name: 'Machine learning',
+                    display_name: '1 - Introduction.mp4',
+                    path_redacted: '[REDACTED]/Machine learning/1 - Introduction.mp4',
+                    duration_ms: 900_000,
+                    chunk_count: 1,
+                  },
+                ],
+                next_cursor: 'ml-1',
+              },
+        );
+      },
+    );
+    mocks.suggestPlan.mockResolvedValue({
+      title: 'Machine learning module',
+      description: 'The complete requested folder in a useful order.',
+      model: 'provider/free-model',
+      items: [
+        { media_id: 'ml-1', priority: 4, dependencies: [], reason: 'Start here.' },
+        {
+          media_id: 'ml-2',
+          priority: 3,
+          dependencies: ['ml-1'],
+          reason: 'Build on the introduction.',
+        },
+      ],
+    });
+
+    renderRoute('/plan?module=module-ml');
+    expect(await screen.findByText('2 selected')).toBeInTheDocument();
+    expect(
+      screen.getByText(/Folder module loaded: 2 ready videos across 2 pages/),
+    ).toBeInTheDocument();
+    expect(mocks.listCandidates).toHaveBeenLastCalledWith({
+      moduleId: 'module-ml',
+      cursor: 'ml-1',
+      limit: 24,
+    });
+
+    fireEvent.click(screen.getByRole('checkbox', { name: /I understand this request uses/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Suggest grounded prerequisites' }));
+    await waitFor(() =>
+      expect(mocks.suggestPlan).toHaveBeenCalledWith(['ml-1', 'ml-2'], expect.any(Object), true),
+    );
+  });
+
   it('applies an explained AI sequence without bypassing deterministic preview', async () => {
     mocks.cloudStatus.mockResolvedValue({
       configured: true,
@@ -155,6 +286,8 @@ describe('PlanRoute', () => {
       items: [
         {
           media_id: 'ten',
+          module_id: 'ml',
+          module_name: 'Machine learning',
           display_name: '10 - Feature Scaling.mp4',
           path_redacted: '[REDACTED]/10 - Feature Scaling.mp4',
           duration_ms: 900_000,
@@ -162,6 +295,8 @@ describe('PlanRoute', () => {
         },
         {
           media_id: 'two',
+          module_id: 'ml',
+          module_name: 'Machine learning',
           display_name: '2 - Machine Learning Demo Get Excited.mp4',
           path_redacted: '[REDACTED]/2 - Machine Learning Demo Get Excited.mp4',
           duration_ms: 600_000,
@@ -194,7 +329,7 @@ describe('PlanRoute', () => {
     fireEvent.click(
       await screen.findByRole('checkbox', { name: /I understand this request uses/i }),
     );
-    fireEvent.click(screen.getByRole('button', { name: 'Suggest my plan' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Suggest grounded prerequisites' }));
 
     expect(
       await screen.findByText(
@@ -214,8 +349,7 @@ describe('PlanRoute', () => {
     mocks.cloudStatus.mockResolvedValue({
       configured: true,
       provider: 'OpenRouter',
-      model:
-        'nvidia/nemotron-3-ultra-550b-a55b:free → google/gemma-4-26b-a4b-it:free',
+      model: 'nvidia/nemotron-3-ultra-550b-a55b:free → google/gemma-4-26b-a4b-it:free',
     });
     mocks.suggestPlan
       .mockRejectedValueOnce(new Error('OpenRouter is temporarily unavailable.'))
@@ -238,15 +372,17 @@ describe('PlanRoute', () => {
       name: /I understand this request uses/i,
     });
     fireEvent.click(consent);
-    fireEvent.click(screen.getByRole('button', { name: 'Suggest my plan' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Suggest grounded prerequisites' }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent(
       'OpenRouter is temporarily unavailable.',
     );
-    expect(screen.getByRole('button', { name: 'Suggest my plan' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Suggest grounded prerequisites' })).toBeEnabled();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Suggest my plan' }));
-    expect(await screen.findByText('A clear progression through the selected material.')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Suggest grounded prerequisites' }));
+    expect(
+      await screen.findByText('A clear progression through the selected material.'),
+    ).toBeInTheDocument();
     expect(mocks.suggestPlan).toHaveBeenCalledTimes(2);
   });
 });

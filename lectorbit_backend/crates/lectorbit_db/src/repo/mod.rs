@@ -11,6 +11,7 @@
 
 pub mod analysis;
 pub mod chunks;
+pub mod learning;
 pub mod library_roots;
 pub mod media;
 pub mod plans;

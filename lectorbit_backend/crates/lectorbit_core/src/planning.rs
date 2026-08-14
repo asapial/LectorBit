@@ -176,7 +176,12 @@ impl From<CoarseChunk> for PlanningChunk {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MediaWork {
     pub media_id: String,
-    /// Stable user-facing course order used after deadline and priority.
+    /// Stable folder/module identity. Items in one module are kept contiguous;
+    /// the first item sequence in each module determines module order.
+    #[serde(default)]
+    pub module_id: String,
+    /// Stable user-facing course order used within a module after deadline and
+    /// priority, and to determine the order of modules by their first item.
     #[serde(default)]
     pub sequence: u32,
     /// 1 (low) through 5 (critical).
@@ -246,6 +251,11 @@ pub enum PlanningError {
     DuplicateMedia(String),
     #[error("media {media_id} references missing dependency {dependency_id}")]
     MissingDependency {
+        media_id: String,
+        dependency_id: String,
+    },
+    #[error("media {media_id} references dependency {dependency_id} from another module")]
+    CrossModuleDependency {
         media_id: String,
         dependency_id: String,
     },
@@ -440,10 +450,15 @@ pub fn build_plan(
 
 fn validate_and_order(media: &[MediaWork]) -> Result<Vec<&MediaWork>, PlanningError> {
     let mut by_id = BTreeMap::<&str, &MediaWork>::new();
+    let mut module_sequence = BTreeMap::<&str, u32>::new();
     for work in media {
         if by_id.insert(&work.media_id, work).is_some() {
             return Err(PlanningError::DuplicateMedia(work.media_id.clone()));
         }
+        module_sequence
+            .entry(&work.module_id)
+            .and_modify(|sequence| *sequence = (*sequence).min(work.sequence))
+            .or_insert(work.sequence);
         if !(1..=5).contains(&work.priority) {
             return Err(PlanningError::InvalidPriority(work.media_id.clone()));
         }
@@ -453,8 +468,14 @@ fn validate_and_order(media: &[MediaWork]) -> Result<Vec<&MediaWork>, PlanningEr
     }
     for work in media {
         for dependency in &work.dependencies {
-            if !by_id.contains_key(dependency.as_str()) {
+            let Some(dependency_work) = by_id.get(dependency.as_str()) else {
                 return Err(PlanningError::MissingDependency {
+                    media_id: work.media_id.clone(),
+                    dependency_id: dependency.clone(),
+                });
+            };
+            if dependency_work.module_id != work.module_id {
+                return Err(PlanningError::CrossModuleDependency {
                     media_id: work.media_id.clone(),
                     dependency_id: dependency.clone(),
                 });
@@ -479,6 +500,8 @@ fn validate_and_order(media: &[MediaWork]) -> Result<Vec<&MediaWork>, PlanningEr
         }
         ready.sort_by_key(|work| {
             (
+                module_sequence[work.module_id.as_str()],
+                work.module_id.as_str(),
                 work.deadline.unwrap_or(NaiveDate::MAX),
                 Reverse(work.priority),
                 work.sequence,
@@ -558,6 +581,7 @@ mod tests {
     fn work(media_id: &str, minutes: u64) -> MediaWork {
         MediaWork {
             media_id: media_id.to_string(),
+            module_id: String::new(),
             sequence: 0,
             priority: 3,
             deadline: None,
@@ -617,6 +641,42 @@ mod tests {
         )
         .unwrap();
         assert_eq!(draft.items[0].media_id, "2-demo");
+    }
+
+    #[test]
+    fn folder_modules_remain_contiguous_despite_different_priorities() {
+        let mut a_first = work("a-first", 5);
+        a_first.module_id = "module-a".into();
+        a_first.sequence = 0;
+        a_first.priority = 5;
+        let mut a_second = work("a-second", 5);
+        a_second.module_id = "module-a".into();
+        a_second.sequence = 1;
+        a_second.priority = 1;
+        let mut b_first = work("b-first", 5);
+        b_first.module_id = "module-b".into();
+        b_first.sequence = 2;
+        b_first.priority = 4;
+        let mut b_second = work("b-second", 5);
+        b_second.module_id = "module-b".into();
+        b_second.sequence = 3;
+        b_second.priority = 3;
+
+        let draft = build_plan(
+            NaiveDate::from_ymd_opt(2026, 8, 12).unwrap(),
+            &PlanningConstraints::default(),
+            &[b_second, a_second, b_first, a_first],
+        )
+        .unwrap();
+
+        assert_eq!(
+            draft
+                .items
+                .iter()
+                .map(|item| item.media_id.as_str())
+                .collect::<Vec<_>>(),
+            ["a-first", "a-second", "b-first", "b-second"]
+        );
     }
 
     #[test]

@@ -3,6 +3,8 @@ import { z } from 'zod';
 
 const PlannerCandidateSchema = z.object({
   media_id: z.string().min(1),
+  module_id: z.string().min(1),
+  module_name: z.string().min(1),
   display_name: z.string().min(1),
   path_redacted: z.string().min(1),
   duration_ms: z.number().int().nonnegative(),
@@ -172,6 +174,20 @@ const AiPlanSuggestionSchema = z.object({
   ),
 });
 
+const AiPlanIntentSchema = z.object({
+  title: z.string().min(1).max(80).nullable(),
+  daily_budget_minutes: z.number().int().min(1).max(1440).nullable(),
+  allowed_weekdays: z.array(z.number().int().min(0).max(6)).min(1).nullable(),
+  preferred_session_minutes: z.number().int().min(1).max(480).nullable(),
+  max_continuous_minutes: z.number().int().min(1).max(480).nullable(),
+  minimum_break_minutes: z.number().int().min(0).max(120).nullable(),
+  playback_speed_milli: z.number().int().min(500).max(2000).nullable(),
+  horizon_days: z.number().int().min(1).max(366).nullable(),
+  deadline: z.iso.date().nullable(),
+  explanation: z.string().min(1).max(600),
+  model: z.string().min(1),
+});
+
 const CloudPlanningErrorSchema = z.object({
   kind: z.enum([
     'invalid_input',
@@ -197,6 +213,7 @@ export type PlanCommitResult = z.infer<typeof PlanCommitResultSchema>;
 export type RoutinePlan = z.infer<typeof RoutinePlanSchema>;
 export type CloudPlanningStatus = z.infer<typeof CloudPlanningStatusSchema>;
 export type AiPlanSuggestion = z.infer<typeof AiPlanSuggestionSchema>;
+export type AiPlanIntent = z.infer<typeof AiPlanIntentSchema>;
 
 export class PlannerRpcError extends Error {
   readonly kind: z.infer<typeof PlannerErrorSchema>['kind'];
@@ -208,7 +225,18 @@ export class PlannerRpcError extends Error {
   }
 }
 
+export class CloudPlanningRpcError extends Error {
+  readonly kind: z.infer<typeof CloudPlanningErrorSchema>['kind'];
+
+  constructor(kind: z.infer<typeof CloudPlanningErrorSchema>['kind'], message: string) {
+    super(message);
+    this.name = 'CloudPlanningRpcError';
+    this.kind = kind;
+  }
+}
+
 export async function listPlanningCandidates(options?: {
+  moduleId?: string;
   cursor?: string;
   limit?: number;
 }): Promise<PlannerCandidatePage> {
@@ -216,6 +244,7 @@ export async function listPlanningCandidates(options?: {
     'planner_list_candidates',
     {
       args: {
+        module_id: options?.moduleId ? z.string().min(1).max(128).parse(options.moduleId) : null,
         cursor: options?.cursor ?? null,
         limit: options?.limit ?? 100,
       },
@@ -287,6 +316,24 @@ export async function suggestPlanWithAi(
   );
 }
 
+export async function parsePlanIntent(
+  text: string,
+  today: string,
+  consent: boolean,
+): Promise<AiPlanIntent> {
+  return cloudCall(
+    'cloud_planning_parse_intent',
+    {
+      args: {
+        text: z.string().trim().min(1).max(1000).parse(text),
+        today: z.iso.date().parse(today),
+        consent,
+      },
+    },
+    AiPlanIntentSchema,
+  );
+}
+
 async function call<T>(
   command: string,
   args: Record<string, unknown> | undefined,
@@ -321,9 +368,11 @@ async function cloudCall<T>(
     (error: unknown) => {
       if (!(error instanceof Error)) {
         const parsed = CloudPlanningErrorSchema.safeParse(error);
-        if (parsed.success) throw new Error(parsed.data.message);
+        if (parsed.success) {
+          throw new CloudPlanningRpcError(parsed.data.kind, parsed.data.message);
+        }
       }
-      throw new Error('Cloud planning is unavailable.');
+      throw new CloudPlanningRpcError('internal', 'Cloud planning is unavailable.');
     },
   );
   return schema.parse(raw);

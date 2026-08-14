@@ -293,17 +293,34 @@ impl Repo {
                 "SELECT i.id, i.media_id, COALESCE(m.display_name, 'Unavailable media') AS display_name, \
                         i.chunk_id, i.sequence, i.raw_start_ms, i.raw_end_ms, \
                         i.effective_duration_ms, i.break_after_ms, \
-                        CASE action.kind \
+                        CASE directive.kind \
                           WHEN 'complete' THEN 'done' WHEN 'finished' THEN 'done' \
                           WHEN 'skip' THEN 'skipped' WHEN 'skipped' THEN 'skipped' \
                           WHEN 'postpone' THEN 'postponed' WHEN 'postponed' THEN 'postponed' \
-                          WHEN 'started' THEN 'in_progress' WHEN 'repeat' THEN 'pending' \
-                          WHEN 'must_watch' THEN 'pending' ELSE i.status END AS status \
+                          WHEN 'repeat' THEN CASE WHEN started.id IS NOT NULL AND ( \
+                            started.created_at > directive.created_at OR \
+                            (started.created_at = directive.created_at AND started.id > directive.id) \
+                          ) THEN 'in_progress' ELSE 'pending' END \
+                          WHEN 'must_watch' THEN CASE WHEN started.id IS NOT NULL AND ( \
+                            started.created_at > directive.created_at OR \
+                            (started.created_at = directive.created_at AND started.id > directive.id) \
+                          ) THEN 'in_progress' ELSE 'pending' END \
+                          ELSE CASE WHEN started.id IS NOT NULL THEN 'in_progress' ELSE i.status END \
+                        END AS status \
                  FROM plan_version_items i LEFT JOIN media_files m ON m.id = i.media_id \
-                 LEFT JOIN study_actions action ON action.id = ( \
+                 LEFT JOIN study_actions directive ON directive.id = ( \
                    SELECT latest.id FROM study_actions latest \
-                   WHERE latest.plan_version_item_id = i.id \
+                   WHERE latest.plan_version_item_id = i.id AND latest.kind IN ( \
+                     'complete', 'finished', 'skip', 'skipped', 'postpone', 'postponed', \
+                     'repeat', 'must_watch' \
+                   ) \
                    ORDER BY latest.created_at DESC, latest.id DESC LIMIT 1 \
+                 ) \
+                 LEFT JOIN study_actions started ON started.id = ( \
+                   SELECT latest_started.id FROM study_actions latest_started \
+                   WHERE latest_started.plan_version_item_id = i.id \
+                     AND latest_started.kind = 'started' \
+                   ORDER BY latest_started.created_at DESC, latest_started.id DESC LIMIT 1 \
                  ) \
                  WHERE i.plan_version_day_id = ? ORDER BY i.sequence",
             )
@@ -468,5 +485,87 @@ mod tests {
             .await
             .expect("count plans");
         assert_eq!(plan_count.0, 0);
+    }
+
+    #[tokio::test]
+    async fn passive_playback_events_do_not_erase_completion_directives() {
+        let db = Db::open_in_memory().await.expect("database");
+        let repo = Repo::new(db.pool().clone());
+        let committed = repo
+            .commit(
+                "local",
+                "Plan",
+                &PlanningConstraints::default(),
+                "[]",
+                &draft(),
+            )
+            .await
+            .expect("commit");
+        let item_id: String =
+            sqlx::query_scalar("SELECT id FROM plan_version_items WHERE plan_version_id = ?")
+                .bind(&committed.plan_version_id)
+                .fetch_one(db.pool())
+                .await
+                .expect("item");
+        for (id, kind, created_at) in [
+            ("01-started", "started", "2026-08-11T10:00:00Z"),
+            ("02-complete", "complete", "2026-08-11T10:01:00Z"),
+            ("03-paused", "paused", "2026-08-11T10:02:00Z"),
+        ] {
+            sqlx::query(
+                "INSERT INTO study_actions \
+                 (id, user_id, plan_item_id, media_id, kind, payload, created_at, plan_version_item_id) \
+                 VALUES (?, 'local', NULL, NULL, ?, NULL, ?, ?)",
+            )
+            .bind(id)
+            .bind(kind)
+            .bind(created_at)
+            .bind(&item_id)
+            .execute(db.pool())
+            .await
+            .expect("action");
+        }
+
+        let routine = repo
+            .get_active_routine("local", 14)
+            .await
+            .expect("routine")
+            .expect("active plan");
+        assert_eq!(routine.days[0].items[0].status, "done");
+
+        sqlx::query(
+            "INSERT INTO study_actions \
+             (id, user_id, plan_item_id, media_id, kind, payload, created_at, plan_version_item_id) \
+             VALUES ('04-repeat', 'local', NULL, NULL, 'repeat', NULL, \
+                     '2026-08-11T10:03:00Z', ?)",
+        )
+        .bind(&item_id)
+        .execute(db.pool())
+        .await
+        .expect("repeat");
+        let repeated = repo
+            .get_active_routine("local", 14)
+            .await
+            .expect("routine")
+            .expect("active plan");
+        assert_eq!(repeated.days[0].items[0].status, "pending");
+
+        sqlx::query(
+            "INSERT INTO study_actions \
+             (id, user_id, plan_item_id, media_id, kind, payload, created_at, plan_version_item_id) \
+             VALUES ('05-started', 'local', NULL, NULL, 'started', NULL, \
+                     '2026-08-11T10:04:00Z', ?)",
+        )
+        .bind(&item_id)
+        .execute(db.pool())
+        .await
+        .expect("restart");
+        let restarted = repo
+            .get_active_routine("local", 14)
+            .await
+            .expect("routine")
+            .expect("active plan");
+        assert_eq!(restarted.days[0].items[0].status, "in_progress");
+        db.close().await;
     }
 }

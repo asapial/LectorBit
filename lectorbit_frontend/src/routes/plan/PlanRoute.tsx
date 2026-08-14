@@ -1,6 +1,5 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useVirtualizer } from '@tanstack/react-virtual';
 import CalendarClock from 'lucide-react/dist/esm/icons/calendar-clock';
 import CheckCircle2 from 'lucide-react/dist/esm/icons/circle-check-big';
 import ChevronRight from 'lucide-react/dist/esm/icons/chevron-right';
@@ -8,7 +7,7 @@ import ListChecks from 'lucide-react/dist/esm/icons/list-checks';
 import LoaderCircle from 'lucide-react/dist/esm/icons/loader-circle';
 import Sparkles from 'lucide-react/dist/esm/icons/sparkles';
 import TriangleAlert from 'lucide-react/dist/esm/icons/triangle-alert';
-import { Link } from 'react-router';
+import { Link, useSearchParams } from 'react-router';
 import { PageHeader } from '../../components/layout/PageHeader';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
@@ -23,6 +22,7 @@ import {
   commitPlan,
   getCloudPlanningStatus,
   listPlanningCandidates,
+  parsePlanIntent,
   previewPlan,
   suggestPlanWithAi,
   type AiPlanSuggestion,
@@ -56,8 +56,13 @@ const defaultConstraints: PlanningConstraints = {
   horizon_days: 14,
 };
 
+const CANDIDATE_PAGE_SIZE = 24;
+const AI_CANDIDATE_LIMIT = 200;
+
 export function PlanRoute() {
   const queryClient = useQueryClient();
+  const [searchParams] = useSearchParams();
+  const moduleFilter = searchParams.get('module')?.trim() || undefined;
   const [constraints, setConstraints] = useState(defaultConstraints);
   const [selections, setSelections] = useState<Record<string, PlanningSelection>>({});
   const [title, setTitle] = useState('My study plan');
@@ -68,17 +73,89 @@ export function PlanRoute() {
   const [aiConsent, setAiConsent] = useState(false);
   const [aiSuggestion, setAiSuggestion] = useState<AiPlanSuggestion | null>(null);
   const [aiError, setAiError] = useState<string | null>(null);
+  const [planIntentText, setPlanIntentText] = useState('');
+  const [planIntentMessage, setPlanIntentMessage] = useState<string | null>(null);
+  const [candidatePage, setCandidatePage] = useState(0);
+  const [moduleSelectionInitialized, setModuleSelectionInitialized] = useState(false);
 
   const candidatesQuery = useInfiniteQuery({
-    queryKey: ['planner', 'candidates'],
+    queryKey: ['planner', 'candidates', moduleFilter ?? 'all'],
     initialPageParam: undefined as string | undefined,
-    queryFn: ({ pageParam }) => listPlanningCandidates({ cursor: pageParam, limit: 100 }),
+    queryFn: ({ pageParam }) =>
+      listPlanningCandidates({
+        ...(moduleFilter ? { moduleId: moduleFilter } : {}),
+        cursor: pageParam,
+        limit: CANDIDATE_PAGE_SIZE,
+      }),
     getNextPageParam: (page) => page.next_cursor ?? undefined,
   });
   const candidates = useMemo(
     () => candidatesQuery.data?.pages.flatMap((page) => page.items) ?? [],
     [candidatesQuery.data],
   );
+  const candidatePages = candidatesQuery.data?.pages ?? [];
+  const currentCandidates = candidatePages[candidatePage]?.items ?? [];
+  useEffect(() => {
+    if (candidatePages.length > 0 && candidatePage >= candidatePages.length) {
+      setCandidatePage(candidatePages.length - 1);
+    }
+  }, [candidatePage, candidatePages.length]);
+  useEffect(() => {
+    setCandidatePage(0);
+    setSelections({});
+    setModuleSelectionInitialized(false);
+    setAiSuggestion(null);
+    setPreview(null);
+    setPreviewedRequest(null);
+    setCommitMessage(null);
+    setFormError(null);
+    setTitle('My study plan');
+    setAiConsent(false);
+    setAiError(null);
+    setPlanIntentText('');
+    setPlanIntentMessage(null);
+  }, [moduleFilter]);
+  const loadingCompleteModule = Boolean(
+    moduleFilter &&
+    candidatesQuery.hasNextPage &&
+    !candidatesQuery.isFetchNextPageError &&
+    candidates.length <= AI_CANDIDATE_LIMIT,
+  );
+  useEffect(() => {
+    if (!loadingCompleteModule || candidatesQuery.isFetchingNextPage) return;
+    void candidatesQuery.fetchNextPage();
+  }, [candidatesQuery.fetchNextPage, candidatesQuery.isFetchingNextPage, loadingCompleteModule]);
+  useEffect(() => {
+    if (
+      !moduleFilter ||
+      moduleSelectionInitialized ||
+      candidatesQuery.isLoading ||
+      candidatesQuery.isFetchingNextPage ||
+      loadingCompleteModule
+    ) {
+      return;
+    }
+    if (candidates.some((candidate) => candidate.module_id !== moduleFilter)) {
+      setFormError(
+        'The selected folder returned media from another module. Refresh the Library and try again.',
+      );
+      setModuleSelectionInitialized(true);
+      return;
+    }
+    setSelections(
+      Object.fromEntries(
+        candidates.map((candidate) => [candidate.media_id, defaultSelection(candidate.media_id)]),
+      ),
+    );
+    setModuleSelectionInitialized(true);
+  }, [
+    candidates,
+    candidatesQuery.isFetchingNextPage,
+    candidatesQuery.isLoading,
+    loadingCompleteModule,
+    moduleFilter,
+    moduleSelectionInitialized,
+  ]);
   const cloudPlanningQuery = useQuery({
     queryKey: ['cloud-planning', 'status'],
     queryFn: getCloudPlanningStatus,
@@ -106,7 +183,7 @@ export function PlanRoute() {
   const aiSuggestionMutation = useMutation({
     mutationFn: () => {
       const selected = candidates.filter((candidate) => selections[candidate.media_id]);
-      const source = selected.length > 0 ? selected : candidates;
+      const source = selected.length > 0 ? selected : moduleFilter ? [] : currentCandidates;
       return suggestPlanWithAi(
         source.map((candidate) => candidate.media_id),
         constraints,
@@ -142,6 +219,66 @@ export function PlanRoute() {
     },
     onError: (error: Error) => setAiError(error.message),
   });
+  const planIntentMutation = useMutation({
+    mutationFn: () => parsePlanIntent(planIntentText, localIsoDate(), aiConsent),
+    onMutate: () => {
+      setAiError(null);
+      setPlanIntentMessage(null);
+    },
+    onSuccess: (intent) => {
+      const next = {
+        ...constraints,
+        ...(intent.daily_budget_minutes === null
+          ? {}
+          : { daily_budget_minutes: intent.daily_budget_minutes }),
+        ...(intent.allowed_weekdays === null
+          ? {}
+          : { allowed_weekdays: intent.allowed_weekdays }),
+        ...(intent.preferred_session_minutes === null
+          ? {}
+          : { preferred_session_minutes: intent.preferred_session_minutes }),
+        ...(intent.max_continuous_minutes === null
+          ? {}
+          : { max_continuous_minutes: intent.max_continuous_minutes }),
+        ...(intent.minimum_break_minutes === null
+          ? {}
+          : { minimum_break_minutes: intent.minimum_break_minutes }),
+        ...(intent.playback_speed_milli === null
+          ? {}
+          : { playback_speed_milli: intent.playback_speed_milli }),
+        ...(intent.horizon_days === null ? {} : { horizon_days: intent.horizon_days }),
+      };
+      next.max_continuous_minutes = Math.min(
+        next.max_continuous_minutes,
+        next.daily_budget_minutes,
+      );
+      updateConstraints(next);
+      if (intent.title) setTitle(intent.title);
+      if (intent.deadline) {
+        setSelections((current) =>
+          Object.fromEntries(
+            Object.entries(current).map(([id, selection]) => [
+              id,
+              { ...selection, deadline: intent.deadline },
+            ]),
+          ),
+        );
+      }
+      setPlanIntentMessage(`${intent.explanation} Checked locally before preview.`);
+      setPreview(null);
+      setPreviewedRequest(null);
+    },
+    onError: (error: Error) => setAiError(error.message),
+  });
+
+  const selectedCandidateCount = candidates.reduce(
+    (count, candidate) => count + (selections[candidate.media_id] ? 1 : 0),
+    0,
+  );
+  const aiSourceCount = selectedCandidateCount || (moduleFilter ? 0 : currentCandidates.length);
+  const moduleExceedsAiLimit = Boolean(
+    moduleFilter && (candidates.length > AI_CANDIDATE_LIMIT || candidatesQuery.hasNextPage),
+  );
 
   const currentRequest = useMemo<PlanRequest>(() => {
     const preferredOrder =
@@ -229,6 +366,17 @@ export function PlanRoute() {
     previewMutation.mutate(next);
   }
 
+  async function showNextCandidatePage() {
+    const nextPage = candidatePage + 1;
+    if (nextPage < candidatePages.length) {
+      setCandidatePage(nextPage);
+      return;
+    }
+    if (!candidatesQuery.hasNextPage || candidatesQuery.isFetchingNextPage) return;
+    const result = await candidatesQuery.fetchNextPage();
+    if (result.data?.pages[nextPage]) setCandidatePage(nextPage);
+  }
+
   return (
     <>
       <PageHeader
@@ -250,15 +398,21 @@ export function PlanRoute() {
               <Badge tone="primary">{Object.keys(selections).length} selected</Badge>
             </CardHeader>
             <CardContent>
-              {candidatesQuery.isLoading ? (
-                <LoadingLine label="Loading ready media" />
-              ) : candidatesQuery.isError ? (
+              {candidatesQuery.isError ? (
                 <InlineError message="Ready media could not be loaded." />
-              ) : candidates.length === 0 ? (
+              ) : candidatesQuery.isLoading || (moduleFilter && !moduleSelectionInitialized) ? (
+                <LoadingLine
+                  label={
+                    moduleFilter ? 'Loading the complete folder module' : 'Loading ready media'
+                  }
+                />
+              ) : currentCandidates.length === 0 && candidatePage === 0 ? (
                 <div className="rounded-lg border border-dashed p-6 text-center">
                   <p className="text-sm font-medium">No schedulable media yet</p>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    Add a folder and let metadata inspection finish first.
+                    {moduleFilter
+                      ? 'This folder has no metadata-ready videos yet.'
+                      : 'Add a folder and let metadata inspection finish first.'}
                   </p>
                   <Link
                     to="/library"
@@ -269,21 +423,33 @@ export function PlanRoute() {
                 </div>
               ) : (
                 <CandidateList
-                  candidates={candidates}
+                  candidates={currentCandidates}
                   selections={selections}
                   onToggle={toggleCandidate}
                   onUpdate={updateSelection}
                 />
               )}
-              {candidatesQuery.hasNextPage ? (
-                <Button
-                  variant="outline"
-                  className="mt-3 w-full"
-                  disabled={candidatesQuery.isFetchingNextPage}
-                  onClick={() => void candidatesQuery.fetchNextPage()}
-                >
-                  {candidatesQuery.isFetchingNextPage ? 'Loading…' : 'Load more media'}
-                </Button>
+              {currentCandidates.length > 0 && (!moduleFilter || moduleSelectionInitialized) ? (
+                <CandidatePagination
+                  page={candidatePage}
+                  itemCount={currentCandidates.length}
+                  pageSize={CANDIDATE_PAGE_SIZE}
+                  hasPrevious={candidatePage > 0}
+                  hasNext={
+                    candidatePage + 1 < candidatePages.length ||
+                    Boolean(candidatesQuery.hasNextPage)
+                  }
+                  loadingNext={candidatesQuery.isFetchingNextPage}
+                  onPrevious={() => setCandidatePage((page) => Math.max(0, page - 1))}
+                  onNext={() => void showNextCandidatePage()}
+                />
+              ) : null}
+              {moduleFilter && moduleSelectionInitialized ? (
+                <p className="mt-3 text-xs text-muted-foreground" role="status">
+                  {candidatesQuery.hasNextPage
+                    ? `Loaded the first ${candidates.length.toLocaleString()} ready videos; this folder contains more.`
+                    : `Folder module loaded: ${candidates.length.toLocaleString()} ready video${candidates.length === 1 ? '' : 's'} across ${candidatePages.length} page${candidatePages.length === 1 ? '' : 's'}.`}
+                </p>
               ) : null}
             </CardContent>
           </Card>
@@ -297,10 +463,11 @@ export function PlanRoute() {
                     <Sparkles className="size-4" />
                   </span>
                   <div>
-                    <CardTitle>2. Shape the course with AI</CardTitle>
+                    <CardTitle>2. Optional AI planning assistants</CardTitle>
                     <CardDescription className="mt-1 max-w-2xl leading-6">
-                      Get a thoughtful sequence, priorities, prerequisites, and rationale. Your
-                      local deterministic planner still owns every date and hard constraint.
+                      Interpret a natural-language routine or suggest transcript-grounded
+                      prerequisites. The local deterministic planner owns order, priority, dates,
+                      and every hard constraint.
                     </CardDescription>
                   </div>
                 </div>
@@ -312,7 +479,7 @@ export function PlanRoute() {
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="grid gap-2 sm:grid-cols-3" aria-label="AI planning boundaries">
-                <AiFact value="Metadata only" label="No media or transcripts" />
+                <AiFact value="Grounded summaries" label="No media or raw transcripts" />
                 <AiFact value="You approve" label="Consent every request" />
                 <AiFact value="Locally checked" label="Feasibility stays on-device" />
               </div>
@@ -342,9 +509,10 @@ export function PlanRoute() {
                   <div className="rounded-xl border border-primary/15 bg-background/65 p-4 text-sm text-muted-foreground shadow-sm backdrop-blur">
                     <p className="leading-6">
                       LectorBit will send{' '}
-                      {Object.keys(selections).length > 0 ? 'the selected' : 'all loaded'} video
-                      names, durations, and the limits below to OpenRouter. It will not send media,
-                      transcripts, viewing history, or absolute paths.
+                      {Object.keys(selections).length > 0 ? 'the selected' : 'the current page of'}{' '}
+                      module names, video names, durations, the limits below, and generated
+                      transcript-grounded summaries when available to OpenRouter. It will not send
+                      media, raw transcripts, viewing history, or absolute paths.
                     </p>
                     <label className="mt-4 flex cursor-pointer items-start gap-3 rounded-lg border border-border/70 bg-card/75 p-3 text-foreground transition-colors hover:border-primary/25">
                       <input
@@ -359,11 +527,70 @@ export function PlanRoute() {
                       </span>
                     </label>
                   </div>
+                  <div className="rounded-xl border bg-background/65 p-4">
+                    <label htmlFor="natural-plan-request" className="text-sm font-semibold">
+                      Describe your routine in plain language
+                    </label>
+                    <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                      AI only converts your words into typed fields. Rust still validates and
+                      schedules everything.
+                    </p>
+                    <textarea
+                      id="natural-plan-request"
+                      value={planIntentText}
+                      onChange={(event) => setPlanIntentText(event.target.value)}
+                      rows={3}
+                      maxLength={1000}
+                      placeholder="Study 45 minutes on weekdays and finish this module before September 30."
+                      className="mt-3 w-full rounded-lg border bg-background p-3 text-sm leading-6 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    />
+                    <div className="mt-3 flex flex-wrap items-center gap-3">
+                      <Button
+                        variant="outline"
+                        disabled={
+                          !aiConsent ||
+                          !planIntentText.trim() ||
+                          planIntentMutation.isPending
+                        }
+                        onClick={() => planIntentMutation.mutate()}
+                      >
+                        {planIntentMutation.isPending ? (
+                          <LoaderCircle className="size-4 animate-spin" />
+                        ) : (
+                          <Sparkles className="size-4" />
+                        )}
+                        Apply interpreted constraints
+                      </Button>
+                      {planIntentMessage ? (
+                        <p className="text-xs text-success" role="status">
+                          {planIntentMessage}
+                        </p>
+                      ) : null}
+                    </div>
+                  </div>
                   {aiError ? <InlineError message={aiError} /> : null}
+                  {moduleExceedsAiLimit ? (
+                    <div
+                      className="rounded-xl border border-warning/30 bg-warning/10 p-4 text-sm"
+                      role="alert"
+                    >
+                      This module has more than {AI_CANDIDATE_LIMIT} ready videos, so one AI request
+                      cannot cover the whole folder. AI can sequence a selected subset of at most{' '}
+                      {AI_CANDIDATE_LIMIT}
+                      {selectedCandidateCount > AI_CANDIDATE_LIMIT
+                        ? `; deselect at least ${(selectedCandidateCount - AI_CANDIDATE_LIMIT).toLocaleString()} to continue`
+                        : ''}
+                      . Local deterministic planning still supports the selected media.
+                    </div>
+                  ) : null}
                   <Button
                     className="w-full sm:w-auto"
                     disabled={
-                      !aiConsent || candidates.length === 0 || aiSuggestionMutation.isPending
+                      !aiConsent ||
+                      aiSourceCount === 0 ||
+                      aiSourceCount > AI_CANDIDATE_LIMIT ||
+                      (Boolean(moduleFilter) && !moduleSelectionInitialized) ||
+                      aiSuggestionMutation.isPending
                     }
                     onClick={() => aiSuggestionMutation.mutate()}
                     leftIcon={
@@ -374,12 +601,14 @@ export function PlanRoute() {
                       )
                     }
                   >
-                    {aiSuggestionMutation.isPending ? 'Building suggestion…' : 'Suggest my plan'}
+                    {aiSuggestionMutation.isPending
+                      ? 'Checking prerequisites…'
+                      : 'Suggest grounded prerequisites'}
                   </Button>
                   {aiSuggestionMutation.isPending ? (
                     <p className="text-xs text-muted-foreground" role="status" aria-live="polite">
-                      A compatible free model is being selected. This can take up to a minute during
-                      busy periods.
+                      A compatible free model is being selected. Free providers can take a few
+                      minutes during busy periods.
                     </p>
                   ) : null}
                 </>
@@ -401,14 +630,17 @@ export function PlanRoute() {
                     <p className="flex items-center gap-2 font-display font-semibold">
                       <CheckCircle2 className="size-4 text-success" /> {aiSuggestion.title}
                     </p>
-                    <Badge tone="success">Sequence applied</Badge>
+                    <Badge tone="success">Prerequisites applied</Badge>
                   </div>
                   <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
                     {aiSuggestion.description}
                   </p>
                   <ol className="mt-3 space-y-2">
                     {aiSuggestion.items.slice(0, 6).map((item, index) => (
-                      <li key={item.media_id} className="flex gap-3 rounded-lg bg-background/55 p-2.5 text-xs text-muted-foreground">
+                      <li
+                        key={item.media_id}
+                        className="flex gap-3 rounded-lg bg-background/55 p-2.5 text-xs text-muted-foreground"
+                      >
                         <span className="grid size-5 shrink-0 place-items-center rounded-md bg-success/15 font-mono text-[10px] font-semibold text-success">
                           {index + 1}
                         </span>
@@ -427,7 +659,7 @@ export function PlanRoute() {
                     </p>
                   ) : null}
                   <p className="mt-3 font-mono text-[10px] text-muted-foreground">
-                    Curated by {aiSuggestion.model}
+                    Suggested by {aiSuggestion.model}; order and feasibility remain local
                   </p>
                 </div>
               ) : null}
@@ -610,44 +842,105 @@ function CandidateList({
   onToggle: (candidate: PlannerCandidate) => void;
   onUpdate: (mediaId: string, patch: Partial<PlanningSelection>) => void;
 }) {
-  const parentRef = useRef<HTMLDivElement>(null);
-  const virtualized = candidates.length > 200;
-  const virtualizer = useVirtualizer({
-    count: candidates.length,
-    getScrollElement: () => parentRef.current,
-    estimateSize: (index) => (selections[candidates[index].media_id] ? 136 : 76),
-    overscan: 6,
-    enabled: virtualized,
-  });
-  const renderRow = (candidate: PlannerCandidate) => (
-    <CandidateRow
-      key={candidate.media_id}
-      candidate={candidate}
-      selection={selections[candidate.media_id]}
-      onToggle={() => onToggle(candidate)}
-      onUpdate={(patch) => onUpdate(candidate.media_id, patch)}
-    />
-  );
-  if (!virtualized) {
-    return <div className="divide-y rounded-lg border">{candidates.map(renderRow)}</div>;
-  }
+  const modules = groupCandidatesByModule(candidates);
   return (
-    <div ref={parentRef} className="scrollbar-thin h-[34rem] overflow-auto rounded-lg border">
-      <div className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
-        {virtualizer.getVirtualItems().map((row) => (
-          <div
-            key={candidates[row.index].media_id}
-            ref={virtualizer.measureElement}
-            data-index={row.index}
-            className="absolute left-0 top-0 w-full"
-            style={{ transform: `translateY(${row.start}px)` }}
-          >
-            {renderRow(candidates[row.index])}
+    <div className="space-y-4">
+      {modules.map((module) => (
+        <section
+          key={module.id}
+          className="overflow-hidden rounded-lg border"
+          aria-label={`${module.name} module`}
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-muted/35 px-3 py-2.5">
+            <div>
+              <p className="text-sm font-semibold">{module.name}</p>
+              <p className="mt-0.5 text-xs text-muted-foreground">Independent folder module</p>
+            </div>
+            <div className="flex gap-2">
+              <Badge tone="neutral">{module.items.length} on this page</Badge>
+              <Badge tone="neutral">{formatDuration(module.durationMs)}</Badge>
+            </div>
           </div>
-        ))}
-      </div>
+          <div className="divide-y">
+            {module.items.map((candidate) => (
+              <CandidateRow
+                key={candidate.media_id}
+                candidate={candidate}
+                selection={selections[candidate.media_id]}
+                onToggle={() => onToggle(candidate)}
+                onUpdate={(patch) => onUpdate(candidate.media_id, patch)}
+              />
+            ))}
+          </div>
+        </section>
+      ))}
     </div>
   );
+}
+
+function CandidatePagination({
+  page,
+  itemCount,
+  pageSize,
+  hasPrevious,
+  hasNext,
+  loadingNext,
+  onPrevious,
+  onNext,
+}: {
+  page: number;
+  itemCount: number;
+  pageSize: number;
+  hasPrevious: boolean;
+  hasNext: boolean;
+  loadingNext: boolean;
+  onPrevious: () => void;
+  onNext: () => void;
+}) {
+  const firstItem = page * pageSize + 1;
+  const lastItem = firstItem + itemCount - 1;
+  return (
+    <nav
+      className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t pt-4"
+      aria-label="Study media pages"
+    >
+      <p className="text-xs text-muted-foreground">
+        Page {page + 1} · media {firstItem.toLocaleString()}–{lastItem.toLocaleString()}
+      </p>
+      <div className="flex gap-2">
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={!hasPrevious || loadingNext}
+          onClick={onPrevious}
+        >
+          Previous
+        </Button>
+        <Button variant="outline" size="sm" disabled={!hasNext || loadingNext} onClick={onNext}>
+          {loadingNext ? 'Loading…' : 'Next'}
+        </Button>
+      </div>
+    </nav>
+  );
+}
+
+function groupCandidatesByModule(candidates: PlannerCandidate[]) {
+  const modules = new Map<
+    string,
+    { id: string; name: string; durationMs: number; items: PlannerCandidate[] }
+  >();
+  for (const candidate of candidates) {
+    const module = modules.get(candidate.module_id) ?? {
+      id: candidate.module_id,
+      name: candidate.module_name,
+      durationMs: 0,
+      items: [],
+    };
+    module.items.push(candidate);
+    module.durationMs += candidate.duration_ms;
+    modules.set(candidate.module_id, module);
+  }
+  return [...modules.values()];
 }
 
 function CandidateRow({
@@ -983,6 +1276,15 @@ function candidateName(candidates: PlannerCandidate[], mediaId: string): string 
   return candidates.find((candidate) => candidate.media_id === mediaId)?.display_name ?? 'Video';
 }
 
+function defaultSelection(mediaId: string): PlanningSelection {
+  return {
+    media_id: mediaId,
+    priority: 3,
+    deadline: null,
+    dependencies: [],
+  };
+}
+
 function formatDuration(milliseconds: number): string {
   const minutes = Math.max(0, Math.round(milliseconds / 60_000));
   if (minutes < 60) return `${minutes}m`;
@@ -999,5 +1301,4 @@ function formatDay(date: string): string {
   }).format(new Date(`${date}T00:00:00Z`));
 }
 
-const inputClass =
-  'form-control mt-1 h-10 font-normal text-foreground';
+const inputClass = 'form-control mt-1 h-10 font-normal text-foreground';

@@ -27,12 +27,13 @@ impl PlannerAdapter {
 impl PlannerOps for PlannerAdapter {
     fn list_candidates(
         &self,
+        module_id: Option<String>,
         cursor: Option<String>,
         limit: u32,
     ) -> BoxFuture<'_, Result<PlannerCandidatePageDto, PlannerErrorCode>> {
         Box::pin(async move {
             self.service
-                .list_candidates(cursor.as_deref(), limit)
+                .list_candidates(module_id.as_deref(), cursor.as_deref(), limit)
                 .await
                 .map(|page| PlannerCandidatePageDto {
                     items: page
@@ -40,6 +41,8 @@ impl PlannerOps for PlannerAdapter {
                         .into_iter()
                         .map(|item| PlannerCandidateDto {
                             media_id: item.media_id,
+                            module_id: item.module_id,
+                            module_name: item.module_name,
                             display_name: item.display_name,
                             path_redacted: item.path_redacted,
                             duration_ms: item.duration_ms,
