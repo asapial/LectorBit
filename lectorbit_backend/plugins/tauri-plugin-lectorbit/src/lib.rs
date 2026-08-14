@@ -87,14 +87,26 @@ pub struct MediaListItemDto {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MediaSummaryDto {
+    pub total_items: u64,
+    pub ready_items: u64,
+    pub attention_items: u64,
+    pub known_duration_ms: u64,
+    pub duration_known_items: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MediaPageDto {
     pub items: Vec<MediaListItemDto>,
     pub next_cursor: Option<String>,
+    pub summary: MediaSummaryDto,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PlannerCandidateDto {
     pub media_id: String,
+    pub module_id: String,
+    pub module_name: String,
     pub display_name: String,
     pub path_redacted: String,
     pub duration_ms: u64,
@@ -128,6 +140,21 @@ pub struct AiPlanSuggestionDto {
     pub description: String,
     pub model: String,
     pub items: Vec<AiPlanSuggestionItemDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AiPlanIntentDto {
+    pub title: Option<String>,
+    pub daily_budget_minutes: Option<u32>,
+    pub allowed_weekdays: Option<Vec<u8>>,
+    pub preferred_session_minutes: Option<u32>,
+    pub max_continuous_minutes: Option<u32>,
+    pub minimum_break_minutes: Option<u32>,
+    pub playback_speed_milli: Option<u16>,
+    pub horizon_days: Option<u16>,
+    pub deadline: Option<String>,
+    pub explanation: String,
+    pub model: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -264,6 +291,13 @@ pub struct PlaybackCapabilityDto {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CaptionTrackDto {
+    pub label: String,
+    pub language: String,
+    pub url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PlaybackViewDto {
     pub plan_item_id: String,
     pub media_id: String,
@@ -279,6 +313,8 @@ pub struct PlaybackViewDto {
     pub item_duration_ms: u64,
     pub completed: bool,
     pub stream_url: String,
+    #[serde(default)]
+    pub caption_tracks: Vec<CaptionTrackDto>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -359,6 +395,7 @@ pub trait LibraryOps: Send + Sync + 'static {
 pub trait PlannerOps: Send + Sync + 'static {
     fn list_candidates(
         &self,
+        module_id: Option<String>,
         cursor: Option<String>,
         limit: u32,
     ) -> BoxFuture<'_, Result<PlannerCandidatePageDto, PlannerErrorCode>>;
@@ -394,6 +431,20 @@ pub trait CloudPlanningOps: Send + Sync + 'static {
         constraints: PlanningConstraintsDto,
         consent: bool,
     ) -> BoxFuture<'_, Result<AiPlanSuggestionDto, CloudPlanningErrorCode>>;
+    fn parse_intent(
+        &self,
+        text: String,
+        today: String,
+        consent: bool,
+    ) -> BoxFuture<'_, Result<AiPlanIntentDto, CloudPlanningErrorCode>> {
+        let _ = (text, today, consent);
+        Box::pin(async {
+            Err(CloudPlanningErrorCode::new(
+                CloudPlanningErrorKind::Internal,
+                "Natural-language planning is unavailable.",
+            ))
+        })
+    }
 }
 
 pub trait PlaybackOps: Send + Sync + 'static {
@@ -491,6 +542,175 @@ pub enum AnalysisProgressDto {
         job_id: String,
         message: String,
     },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+pub struct LearningEvidenceDto {
+    pub segment_id: i64,
+    pub start_ms: u64,
+    pub end_ms: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct EvidencedTextDto {
+    pub text: String,
+    pub evidence: Vec<LearningEvidenceDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LectureChapterDto {
+    pub title: String,
+    pub summary: String,
+    pub start_ms: u64,
+    pub end_ms: u64,
+    pub evidence: Vec<LearningEvidenceDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LectureConceptDto {
+    pub name: String,
+    pub definition: String,
+    pub evidence: Vec<LearningEvidenceDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DifficultyEstimateDto {
+    pub level: String,
+    pub confidence: String,
+    pub reason: String,
+    pub evidence: Vec<LearningEvidenceDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LectureUnderstandingDto {
+    pub artifact_id: String,
+    pub media_id: String,
+    pub transcript_id: String,
+    pub summary: EvidencedTextDto,
+    pub learning_objectives: Vec<EvidencedTextDto>,
+    pub chapters: Vec<LectureChapterDto>,
+    pub concepts: Vec<LectureConceptDto>,
+    pub prerequisites: Vec<EvidencedTextDto>,
+    pub key_examples: Vec<EvidencedTextDto>,
+    pub difficulty: DifficultyEstimateDto,
+    pub model: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ExplanationNoteDto {
+    pub id: String,
+    pub media_id: String,
+    pub transcript_id: Option<String>,
+    pub at_ms: u64,
+    pub title: String,
+    pub body_markdown: String,
+    pub evidence: Vec<LearningEvidenceDto>,
+    pub model: String,
+    pub frame_grounded: bool,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct StudyItemDto {
+    pub id: String,
+    pub media_id: String,
+    pub chapter_start_ms: Option<u64>,
+    pub kind: String,
+    pub prompt: String,
+    pub answer: String,
+    pub hint: Option<String>,
+    pub options: Vec<String>,
+    pub evidence: Vec<LearningEvidenceDto>,
+    pub due_at: String,
+    pub interval_days: u32,
+    pub repetitions: u32,
+    pub ease_milli: u32,
+    pub last_quality: Option<u8>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReviewStateDto {
+    pub study_item_id: String,
+    pub due_at: String,
+    pub interval_days: u32,
+    pub repetitions: u32,
+    pub ease_milli: u32,
+    pub last_quality: Option<u8>,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CompanionAnswerDto {
+    pub action: String,
+    pub answer_markdown: String,
+    pub evidence: Vec<LearningEvidenceDto>,
+    pub model: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    tag = "event",
+    content = "data"
+)]
+pub enum LearningProgressDto {
+    Queued { job_id: String },
+    Generating { job_id: String },
+    Validating { job_id: String },
+    Completed { job_id: String },
+    Failed { job_id: String, message: String },
+}
+
+pub type LearningEventSink = Arc<dyn Fn(LearningProgressDto) + Send + Sync>;
+
+pub trait LearningOps: Send + Sync + 'static {
+    fn start_lecture_understanding(
+        &self,
+        media_id: String,
+        consent: bool,
+        sink: LearningEventSink,
+    ) -> BoxFuture<'_, Result<AnalysisJobDto, LearningErrorCode>>;
+    fn lecture_understanding(
+        &self,
+        media_id: String,
+    ) -> BoxFuture<'_, Result<Option<LectureUnderstandingDto>, LearningErrorCode>>;
+    fn explain_frame(
+        &self,
+        media_id: String,
+        at_ms: u64,
+        image_data_url: Option<String>,
+        consent: bool,
+    ) -> BoxFuture<'_, Result<ExplanationNoteDto, LearningErrorCode>>;
+    fn list_explanation_notes(
+        &self,
+        media_id: String,
+    ) -> BoxFuture<'_, Result<Vec<ExplanationNoteDto>, LearningErrorCode>>;
+    fn generate_study_materials(
+        &self,
+        media_id: String,
+        consent: bool,
+    ) -> BoxFuture<'_, Result<Vec<StudyItemDto>, LearningErrorCode>>;
+    fn list_study_materials(
+        &self,
+        media_id: String,
+    ) -> BoxFuture<'_, Result<Vec<StudyItemDto>, LearningErrorCode>>;
+    fn record_review(
+        &self,
+        study_item_id: String,
+        quality: u8,
+        confidence: u8,
+        response_time_ms: u64,
+        answer_text: Option<String>,
+    ) -> BoxFuture<'_, Result<ReviewStateDto, LearningErrorCode>>;
+    fn companion(
+        &self,
+        media_id: String,
+        at_ms: u64,
+        action: String,
+        consent: bool,
+    ) -> BoxFuture<'_, Result<CompanionAnswerDto, LearningErrorCode>>;
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -700,6 +920,34 @@ pub enum AnalysisErrorKind {
     Internal,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, thiserror::Error)]
+#[error("{message}")]
+pub struct LearningErrorCode {
+    pub kind: LearningErrorKind,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum LearningErrorKind {
+    InvalidInput,
+    ConsentRequired,
+    NotConfigured,
+    TranscriptUnavailable,
+    Provider,
+    Database,
+    Internal,
+}
+
+impl LearningErrorCode {
+    pub fn new(kind: LearningErrorKind, message: impl Into<String>) -> Self {
+        Self {
+            kind,
+            message: message.into(),
+        }
+    }
+}
+
 impl AnalysisErrorCode {
     pub fn new(kind: AnalysisErrorKind, message: impl Into<String>) -> Self {
         Self {
@@ -793,6 +1041,8 @@ pub struct PlannerPreviewArgs {
 #[derive(Debug, Default, Deserialize)]
 pub struct PlannerCandidatesArgs {
     #[serde(default)]
+    pub module_id: Option<String>,
+    #[serde(default)]
     pub cursor: Option<String>,
     #[serde(default = "default_media_limit")]
     pub limit: u32,
@@ -824,6 +1074,14 @@ pub struct CloudPlanningKeyArgs {
 pub struct AiPlanSuggestionArgs {
     pub candidate_ids: Vec<String>,
     pub constraints: PlanningConstraintsDto,
+    pub consent: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AiPlanIntentArgs {
+    pub text: String,
+    pub today: String,
+    #[serde(default)]
     pub consent: bool,
 }
 
@@ -871,6 +1129,54 @@ pub struct TranscriptionArgs {
 #[derive(Debug, Deserialize)]
 pub struct TranscriptStateArgs {
     pub media_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LectureUnderstandingArgs {
+    pub media_id: String,
+    #[serde(default)]
+    pub consent: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MediaLearningArgs {
+    pub media_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ExplainFrameArgs {
+    pub media_id: String,
+    pub at_ms: u64,
+    #[serde(default)]
+    pub image_data_url: Option<String>,
+    #[serde(default)]
+    pub consent: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GenerateLearningArgs {
+    pub media_id: String,
+    #[serde(default)]
+    pub consent: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RecordReviewArgs {
+    pub study_item_id: String,
+    pub quality: u8,
+    pub confidence: u8,
+    pub response_time_ms: u64,
+    #[serde(default)]
+    pub answer_text: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CompanionArgs {
+    pub media_id: String,
+    pub at_ms: u64,
+    pub action: String,
+    #[serde(default)]
+    pub consent: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -982,7 +1288,8 @@ mod commands {
         args: Option<PlannerCandidatesArgs>,
     ) -> Result<PlannerCandidatePageDto, PlannerErrorCode> {
         let args = args.unwrap_or_default();
-        ops.list_candidates(args.cursor, args.limit).await
+        ops.list_candidates(args.module_id, args.cursor, args.limit)
+            .await
     }
 
     #[tauri::command]
@@ -1046,6 +1353,14 @@ mod commands {
     ) -> Result<AiPlanSuggestionDto, CloudPlanningErrorCode> {
         ops.suggest(args.candidate_ids, args.constraints, args.consent)
             .await
+    }
+
+    #[tauri::command]
+    pub(crate) async fn cloud_planning_parse_intent(
+        ops: State<'_, Arc<dyn CloudPlanningOps>>,
+        args: AiPlanIntentArgs,
+    ) -> Result<AiPlanIntentDto, CloudPlanningErrorCode> {
+        ops.parse_intent(args.text, args.today, args.consent).await
     }
 
     #[tauri::command]
@@ -1185,6 +1500,85 @@ mod commands {
     }
 
     #[tauri::command]
+    pub(crate) async fn learning_start_lecture_understanding(
+        ops: State<'_, Arc<dyn LearningOps>>,
+        args: LectureUnderstandingArgs,
+        on_event: Channel<LearningProgressDto>,
+    ) -> Result<AnalysisJobDto, LearningErrorCode> {
+        let sink: LearningEventSink = Arc::new(move |event| {
+            let _ = on_event.send(event);
+        });
+        ops.start_lecture_understanding(args.media_id, args.consent, sink)
+            .await
+    }
+
+    #[tauri::command]
+    pub(crate) async fn learning_get_lecture_understanding(
+        ops: State<'_, Arc<dyn LearningOps>>,
+        args: MediaLearningArgs,
+    ) -> Result<Option<LectureUnderstandingDto>, LearningErrorCode> {
+        ops.lecture_understanding(args.media_id).await
+    }
+
+    #[tauri::command]
+    pub(crate) async fn learning_explain_frame(
+        ops: State<'_, Arc<dyn LearningOps>>,
+        args: ExplainFrameArgs,
+    ) -> Result<ExplanationNoteDto, LearningErrorCode> {
+        ops.explain_frame(args.media_id, args.at_ms, args.image_data_url, args.consent)
+            .await
+    }
+
+    #[tauri::command]
+    pub(crate) async fn learning_list_explanation_notes(
+        ops: State<'_, Arc<dyn LearningOps>>,
+        args: MediaLearningArgs,
+    ) -> Result<Vec<ExplanationNoteDto>, LearningErrorCode> {
+        ops.list_explanation_notes(args.media_id).await
+    }
+
+    #[tauri::command]
+    pub(crate) async fn learning_generate_study_materials(
+        ops: State<'_, Arc<dyn LearningOps>>,
+        args: GenerateLearningArgs,
+    ) -> Result<Vec<StudyItemDto>, LearningErrorCode> {
+        ops.generate_study_materials(args.media_id, args.consent)
+            .await
+    }
+
+    #[tauri::command]
+    pub(crate) async fn learning_list_study_materials(
+        ops: State<'_, Arc<dyn LearningOps>>,
+        args: MediaLearningArgs,
+    ) -> Result<Vec<StudyItemDto>, LearningErrorCode> {
+        ops.list_study_materials(args.media_id).await
+    }
+
+    #[tauri::command]
+    pub(crate) async fn learning_record_review(
+        ops: State<'_, Arc<dyn LearningOps>>,
+        args: RecordReviewArgs,
+    ) -> Result<ReviewStateDto, LearningErrorCode> {
+        ops.record_review(
+            args.study_item_id,
+            args.quality,
+            args.confidence,
+            args.response_time_ms,
+            args.answer_text,
+        )
+        .await
+    }
+
+    #[tauri::command]
+    pub(crate) async fn learning_companion(
+        ops: State<'_, Arc<dyn LearningOps>>,
+        args: CompanionArgs,
+    ) -> Result<CompanionAnswerDto, LearningErrorCode> {
+        ops.companion(args.media_id, args.at_ms, args.action, args.consent)
+            .await
+    }
+
+    #[tauri::command]
     pub(crate) async fn search_query(
         ops: State<'_, Arc<dyn SearchOps>>,
         args: SearchArgs,
@@ -1245,6 +1639,7 @@ mod plugin_builder {
                 super::commands::cloud_planning_save_key,
                 super::commands::cloud_planning_remove_key,
                 super::commands::cloud_planning_suggest,
+                super::commands::cloud_planning_parse_intent,
                 super::commands::playback_get_capability,
                 super::commands::playback_open,
                 super::commands::playback_play,
@@ -1261,6 +1656,14 @@ mod plugin_builder {
                 super::commands::analysis_start_transcription,
                 super::commands::analysis_get_transcript_state,
                 super::commands::analysis_list_jobs,
+                super::commands::learning_start_lecture_understanding,
+                super::commands::learning_get_lecture_understanding,
+                super::commands::learning_explain_frame,
+                super::commands::learning_list_explanation_notes,
+                super::commands::learning_generate_study_materials,
+                super::commands::learning_list_study_materials,
+                super::commands::learning_record_review,
+                super::commands::learning_companion,
                 super::commands::search_query,
                 super::commands::updates_check,
                 super::commands::updates_install,

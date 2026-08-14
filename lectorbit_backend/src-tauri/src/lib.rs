@@ -4,8 +4,8 @@ use std::io::stderr;
 use std::sync::Arc;
 
 use lectorbit_db::{
-    AnalysisRepo, ChunksRepo, LibraryRootsRepo, MediaRepo, PlansRepo, RedactingMakeWriter,
-    StudyRepo,
+    AnalysisRepo, ChunksRepo, LearningRepo, LibraryRootsRepo, MediaRepo, PlansRepo,
+    RedactingMakeWriter, StudyRepo,
 };
 use lectorbit_playback::MpvEngine;
 use lectorbit_services::{
@@ -14,8 +14,8 @@ use lectorbit_services::{
 };
 use tauri::Manager;
 use tauri_plugin_lectorbit::{
-    AnalysisOps, CloudPlanningOps, DiagnosticsProvider, LibraryOps, PlannerOps, PlaybackOps,
-    SearchOps, UpdateOps,
+    AnalysisOps, CloudPlanningOps, DiagnosticsProvider, LearningOps, LibraryOps, PlannerOps,
+    PlaybackOps, SearchOps, UpdateOps,
 };
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -26,6 +26,7 @@ mod embedded_media;
 mod library_adapter;
 mod media_adapter;
 mod openrouter_adapter;
+mod openrouter_learning_adapter;
 mod planner_adapter;
 mod playback_adapter;
 mod update_adapter;
@@ -34,6 +35,7 @@ use embedded_media::EmbeddedMediaRegistry;
 use library_adapter::LibraryAdapter;
 use media_adapter::ProbeScheduler;
 use openrouter_adapter::OpenRouterPlanningAdapter;
+use openrouter_learning_adapter::OpenRouterLearningAdapter;
 use planner_adapter::PlannerAdapter;
 use playback_adapter::PlaybackAdapter;
 use update_adapter::UpdateAdapter;
@@ -108,7 +110,13 @@ pub fn run() {
                 PlansRepo::new(database.pool().clone()),
                 StudyRepo::new(database.pool().clone()),
             );
-            let cloud_planning_adapter = Arc::new(OpenRouterPlanningAdapter::new(chunks_repo)?);
+            let cloud_planning_adapter = Arc::new(OpenRouterPlanningAdapter::new(
+                chunks_repo,
+                LearningRepo::new(database.pool().clone()),
+            )?);
+            let learning_adapter = Arc::new(OpenRouterLearningAdapter::new(LearningRepo::new(
+                database.pool().clone(),
+            ))?);
             let mpv_path = resolve_mpv_path(
                 app.path().resource_dir().ok().as_deref(),
                 std::env::var_os("LECTORBIT_MPV_PATH"),
@@ -161,11 +169,14 @@ pub fn run() {
                 .map_err(|error| format!("recover probe jobs: {error}"))?;
             tauri::async_runtime::block_on(analysis_adapter.recover_and_resume())
                 .map_err(|error| format!("recover analysis jobs: {error}"))?;
+            tauri::async_runtime::block_on(learning_adapter.recover_and_resume())
+                .map_err(|error| format!("recover learning jobs: {}", error.message))?;
 
             app.manage(Arc::new(DiagnosticsAdapter(diagnostics)) as Arc<dyn DiagnosticsProvider>);
             app.manage(library_adapter as Arc<dyn LibraryOps>);
             app.manage(Arc::new(PlannerAdapter::new(planner_service)) as Arc<dyn PlannerOps>);
             app.manage(cloud_planning_adapter as Arc<dyn CloudPlanningOps>);
+            app.manage(learning_adapter as Arc<dyn LearningOps>);
             let playback_work = app_data.join("playback-work");
             std::fs::create_dir_all(&playback_work)
                 .map_err(|error| format!("create playback work directory: {error}"))?;

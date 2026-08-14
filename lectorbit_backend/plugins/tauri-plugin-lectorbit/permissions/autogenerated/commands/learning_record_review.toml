@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-learning-record-review"
+description = "Enables the learning_record_review command without any pre-configured scope."
+commands.allow = ["learning_record_review"]
+
+[[permission]]
+identifier = "deny-learning-record-review"
+description = "Denies the learning_record_review command without any pre-configured scope."
+commands.deny = ["learning_record_review"]

@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-learning-get-lecture-understanding"
+description = "Enables the learning_get_lecture_understanding command without any pre-configured scope."
+commands.allow = ["learning_get_lecture_understanding"]
+
+[[permission]]
+identifier = "deny-learning-get-lecture-understanding"
+description = "Denies the learning_get_lecture_understanding command without any pre-configured scope."
+commands.deny = ["learning_get_lecture_understanding"]

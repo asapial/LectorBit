@@ -40,7 +40,9 @@ use tracing::field::{Field, Visit};
 fn patterns() -> &'static Patterns {
     static PATTERNS: OnceLock<Patterns> = OnceLock::new();
     PATTERNS.get_or_init(|| Patterns {
-        windows_abs: Regex::new(r#"(?i)([A-Za-z]:\\(?:[^\\\s'"<>|*?]+\\?)*)"#)
+        // Match both normal Windows paths (`C:\Users`) and debug-formatted
+        // paths (`C:\\Users`) emitted by tracing's quoted string fields.
+        windows_abs: Regex::new(r#"(?i)([A-Za-z]:(?:\\+[^\\\s'"<>|*?]+)+\\*)"#)
             .expect("windows path regex"),
         posix_abs: Regex::new(r#"(/[^\s'"<>|*?]+(?:/[^\s'"<>|*?]+)*)"#).expect("posix path regex"),
         bearer: Regex::new(r#"(?i)\b(?:Bearer|Token|Api[_-]?Key)\s+[A-Za-z0-9._\-]{8,}"#)
@@ -199,7 +201,8 @@ mod tests {
 
     #[test]
     fn redacts_emails() {
-        let r = redact("user [email protected] requested sync");
+        let email = format!("{}@{}", "alice", "example.com");
+        let r = redact(&format!("user {email} requested sync"));
         assert!(!r.contains("@example.com"));
         assert!(r.contains("[REDACTED]"));
     }

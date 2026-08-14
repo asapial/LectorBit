@@ -8,6 +8,12 @@ const PlaybackCapabilitySchema = z.object({
   detected_version: z.string().min(1).nullable(),
 });
 
+const CaptionTrackSchema = z.object({
+  label: z.string().min(1),
+  language: z.string().min(1),
+  url: z.string().url(),
+});
+
 const PlaybackViewSchema = z.object({
   plan_item_id: z.string().min(1),
   media_id: z.string().min(1),
@@ -23,6 +29,7 @@ const PlaybackViewSchema = z.object({
   item_duration_ms: z.number().int().positive(),
   completed: z.boolean(),
   stream_url: z.string().url(),
+  caption_tracks: z.array(CaptionTrackSchema).default([]),
 });
 
 const PlaybackEventSchema = z.discriminatedUnion('event', [

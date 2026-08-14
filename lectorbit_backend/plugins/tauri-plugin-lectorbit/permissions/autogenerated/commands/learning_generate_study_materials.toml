@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-learning-generate-study-materials"
+description = "Enables the learning_generate_study_materials command without any pre-configured scope."
+commands.allow = ["learning_generate_study_materials"]
+
+[[permission]]
+identifier = "deny-learning-generate-study-materials"
+description = "Denies the learning_generate_study_materials command without any pre-configured scope."
+commands.deny = ["learning_generate_study_materials"]

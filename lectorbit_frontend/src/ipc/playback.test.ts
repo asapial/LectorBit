@@ -26,6 +26,13 @@ const view = {
   item_duration_ms: 1_500_000,
   completed: false,
   stream_url: 'http://lector-media.localhost/0123456789abcdef0123456789abcdef',
+  caption_tracks: [
+    {
+      label: 'Captions',
+      language: 'en',
+      url: 'http://lector-media.localhost/fedcba9876543210fedcba9876543210',
+    },
+  ],
 };
 
 describe('ipc/playback', () => {

@@ -21,6 +21,7 @@ Default LectorBit permissions for the main window
 - `allow-cloud-planning-save-key`
 - `allow-cloud-planning-remove-key`
 - `allow-cloud-planning-suggest`
+- `allow-cloud-planning-parse-intent`
 - `allow-playback-get-capability`
 - `allow-playback-open`
 - `allow-playback-play`
@@ -37,6 +38,14 @@ Default LectorBit permissions for the main window
 - `allow-analysis-start-transcription`
 - `allow-analysis-get-transcript-state`
 - `allow-analysis-list-jobs`
+- `allow-learning-start-lecture-understanding`
+- `allow-learning-get-lecture-understanding`
+- `allow-learning-explain-frame`
+- `allow-learning-list-explanation-notes`
+- `allow-learning-generate-study-materials`
+- `allow-learning-list-study-materials`
+- `allow-learning-record-review`
+- `allow-learning-companion`
 - `allow-search-query`
 - `allow-updates-check`
 - `allow-updates-install`
@@ -209,6 +218,32 @@ Denies the cloud_planning_get_status command without any pre-configured scope.
 <tr>
 <td>
 
+`lectorbit:allow-cloud-planning-parse-intent`
+
+</td>
+<td>
+
+Enables the cloud_planning_parse_intent command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:deny-cloud-planning-parse-intent`
+
+</td>
+<td>
+
+Denies the cloud_planning_parse_intent command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `lectorbit:allow-cloud-planning-remove-key`
 
 </td>
@@ -280,6 +315,214 @@ Enables the cloud_planning_suggest command without any pre-configured scope.
 <td>
 
 Denies the cloud_planning_suggest command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:allow-learning-companion`
+
+</td>
+<td>
+
+Enables the learning_companion command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:deny-learning-companion`
+
+</td>
+<td>
+
+Denies the learning_companion command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:allow-learning-explain-frame`
+
+</td>
+<td>
+
+Enables the learning_explain_frame command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:deny-learning-explain-frame`
+
+</td>
+<td>
+
+Denies the learning_explain_frame command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:allow-learning-generate-study-materials`
+
+</td>
+<td>
+
+Enables the learning_generate_study_materials command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:deny-learning-generate-study-materials`
+
+</td>
+<td>
+
+Denies the learning_generate_study_materials command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:allow-learning-get-lecture-understanding`
+
+</td>
+<td>
+
+Enables the learning_get_lecture_understanding command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:deny-learning-get-lecture-understanding`
+
+</td>
+<td>
+
+Denies the learning_get_lecture_understanding command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:allow-learning-list-explanation-notes`
+
+</td>
+<td>
+
+Enables the learning_list_explanation_notes command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:deny-learning-list-explanation-notes`
+
+</td>
+<td>
+
+Denies the learning_list_explanation_notes command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:allow-learning-list-study-materials`
+
+</td>
+<td>
+
+Enables the learning_list_study_materials command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:deny-learning-list-study-materials`
+
+</td>
+<td>
+
+Denies the learning_list_study_materials command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:allow-learning-record-review`
+
+</td>
+<td>
+
+Enables the learning_record_review command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:deny-learning-record-review`
+
+</td>
+<td>
+
+Denies the learning_record_review command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:allow-learning-start-lecture-understanding`
+
+</td>
+<td>
+
+Enables the learning_start_lecture_understanding command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:deny-learning-start-lecture-understanding`
+
+</td>
+<td>
+
+Denies the learning_start_lecture_understanding command without any pre-configured scope.
 
 </td>
 </tr>

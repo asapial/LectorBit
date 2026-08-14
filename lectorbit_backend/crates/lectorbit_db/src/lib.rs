@@ -28,10 +28,14 @@ pub use repo::analysis::{
 pub use repo::chunks::{
     PlannerCandidatePage, PlannerCandidateRow, Repo as ChunksRepo, SchedulableMedia, StoredChunk,
 };
+pub use repo::learning::{
+    ExplanationNoteRow, LearningArtifactRow, Repo as LearningRepo, ReviewStateRow, StudyItemInput,
+    StudyItemRow, TranscriptContextRow, TranscriptEvidenceRow,
+};
 pub use repo::library_roots::{InsertOutcome, LibraryRoot, Repo as LibraryRootsRepo};
 pub use repo::media::{
-    DiscoveredMedia, MediaListItem, MediaPage, ProbeCandidate, ProbeTarget, Repo as MediaRepo,
-    StoredProbe, StoredStream,
+    DiscoveredMedia, MediaListItem, MediaPage, MediaSummary, ProbeCandidate, ProbeTarget,
+    Repo as MediaRepo, StoredProbe, StoredStream,
 };
 pub use repo::plans::{
     ActivePlanSeed, CommittedPlan, Repo as PlansRepo, RoutineDay, RoutineItem, RoutinePlan,

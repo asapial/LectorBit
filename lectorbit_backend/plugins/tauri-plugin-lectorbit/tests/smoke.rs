@@ -2,9 +2,9 @@ use std::sync::Arc;
 
 use tauri_plugin_lectorbit::{
     current_app_version, BoxFuture, DiagnosticsProvider, LibraryErrorCode, LibraryErrorKind,
-    LibraryOps, LibraryRootDto, MediaPageDto, PlanCommitResultDto, PlanPreviewDto, PlanRequestDto,
-    PlannerCandidateDto, PlannerCandidatePageDto, PlannerErrorCode, PlannerOps, RoutinePlanDto,
-    ScanEventSink, ScanJobDto,
+    LibraryOps, LibraryRootDto, MediaPageDto, MediaSummaryDto, PlanCommitResultDto, PlanPreviewDto,
+    PlanRequestDto, PlannerCandidateDto, PlannerCandidatePageDto, PlannerErrorCode, PlannerOps,
+    RoutinePlanDto, ScanEventSink, ScanJobDto,
 };
 
 #[test]
@@ -17,6 +17,7 @@ struct FakePlanner;
 impl PlannerOps for FakePlanner {
     fn list_candidates(
         &self,
+        _module_id: Option<String>,
         _cursor: Option<String>,
         _limit: u32,
     ) -> BoxFuture<'_, Result<PlannerCandidatePageDto, PlannerErrorCode>> {
@@ -24,6 +25,8 @@ impl PlannerOps for FakePlanner {
             Ok(PlannerCandidatePageDto {
                 items: vec![PlannerCandidateDto {
                     media_id: "media".into(),
+                    module_id: "module".into(),
+                    module_name: "Course".into(),
                     display_name: "Lesson".into(),
                     path_redacted: "[REDACTED]/Lesson.mp4".into(),
                     duration_ms: 60_000,
@@ -68,7 +71,7 @@ impl PlannerOps for FakePlanner {
 async fn planner_boundary_paginates_safe_candidate_metadata() {
     let planner: Arc<dyn PlannerOps> = Arc::new(FakePlanner);
     let page = planner
-        .list_candidates(None, 100)
+        .list_candidates(None, None, 100)
         .await
         .expect("candidates");
     let serialized = serde_json::to_string(&page).expect("serialize");
@@ -162,6 +165,13 @@ impl LibraryOps for FakeLibrary {
             Ok(MediaPageDto {
                 items: Vec::new(),
                 next_cursor: None,
+                summary: MediaSummaryDto {
+                    total_items: 0,
+                    ready_items: 0,
+                    attention_items: 0,
+                    known_duration_ms: 0,
+                    duration_known_items: 0,
+                },
             })
         })
     }

@@ -367,6 +367,18 @@
           "markdownDescription": "Denies the cloud_planning_get_status command without any pre-configured scope."
         },
         {
+          "description": "Enables the cloud_planning_parse_intent command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-cloud-planning-parse-intent",
+          "markdownDescription": "Enables the cloud_planning_parse_intent command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the cloud_planning_parse_intent command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-cloud-planning-parse-intent",
+          "markdownDescription": "Denies the cloud_planning_parse_intent command without any pre-configured scope."
+        },
+        {
           "description": "Enables the cloud_planning_remove_key command without any pre-configured scope.",
           "type": "string",
           "const": "allow-cloud-planning-remove-key",
@@ -401,6 +413,102 @@
           "type": "string",
           "const": "deny-cloud-planning-suggest",
           "markdownDescription": "Denies the cloud_planning_suggest command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the learning_companion command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-learning-companion",
+          "markdownDescription": "Enables the learning_companion command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the learning_companion command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-learning-companion",
+          "markdownDescription": "Denies the learning_companion command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the learning_explain_frame command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-learning-explain-frame",
+          "markdownDescription": "Enables the learning_explain_frame command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the learning_explain_frame command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-learning-explain-frame",
+          "markdownDescription": "Denies the learning_explain_frame command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the learning_generate_study_materials command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-learning-generate-study-materials",
+          "markdownDescription": "Enables the learning_generate_study_materials command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the learning_generate_study_materials command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-learning-generate-study-materials",
+          "markdownDescription": "Denies the learning_generate_study_materials command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the learning_get_lecture_understanding command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-learning-get-lecture-understanding",
+          "markdownDescription": "Enables the learning_get_lecture_understanding command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the learning_get_lecture_understanding command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-learning-get-lecture-understanding",
+          "markdownDescription": "Denies the learning_get_lecture_understanding command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the learning_list_explanation_notes command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-learning-list-explanation-notes",
+          "markdownDescription": "Enables the learning_list_explanation_notes command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the learning_list_explanation_notes command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-learning-list-explanation-notes",
+          "markdownDescription": "Denies the learning_list_explanation_notes command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the learning_list_study_materials command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-learning-list-study-materials",
+          "markdownDescription": "Enables the learning_list_study_materials command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the learning_list_study_materials command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-learning-list-study-materials",
+          "markdownDescription": "Denies the learning_list_study_materials command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the learning_record_review command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-learning-record-review",
+          "markdownDescription": "Enables the learning_record_review command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the learning_record_review command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-learning-record-review",
+          "markdownDescription": "Denies the learning_record_review command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the learning_start_lecture_understanding command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-learning-start-lecture-understanding",
+          "markdownDescription": "Enables the learning_start_lecture_understanding command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the learning_start_lecture_understanding command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-learning-start-lecture-understanding",
+          "markdownDescription": "Denies the learning_start_lecture_understanding command without any pre-configured scope."
         },
         {
           "description": "Enables the library_enqueue_scan command without any pre-configured scope.",
@@ -727,10 +835,10 @@
           "markdownDescription": "Denies the updates_install command without any pre-configured scope."
         },
         {
-          "description": "Default LectorBit permissions for the main window\n#### This default permission set includes:\n\n- `allow-app-get-version`\n- `allow-app-get-diagnostics`\n- `allow-library-list-roots`\n- `allow-library-pick-and-register-root`\n- `allow-library-revoke-root`\n- `allow-library-enqueue-scan`\n- `allow-library-list-scan-jobs`\n- `allow-library-list-media`\n- `allow-planner-list-candidates`\n- `allow-planner-preview`\n- `allow-plan-commit`\n- `allow-plan-get-routine`\n- `allow-plan-replan`\n- `allow-cloud-planning-get-status`\n- `allow-cloud-planning-save-key`\n- `allow-cloud-planning-remove-key`\n- `allow-cloud-planning-suggest`\n- `allow-playback-get-capability`\n- `allow-playback-open`\n- `allow-playback-play`\n- `allow-playback-pause`\n- `allow-playback-seek`\n- `allow-playback-set-speed`\n- `allow-playback-get-state`\n- `allow-playback-sync`\n- `allow-playback-close`\n- `allow-study-record-action`\n- `allow-models-list`\n- `allow-models-install`\n- `allow-models-remove`\n- `allow-analysis-start-transcription`\n- `allow-analysis-get-transcript-state`\n- `allow-analysis-list-jobs`\n- `allow-search-query`\n- `allow-updates-check`\n- `allow-updates-install`",
+          "description": "Default LectorBit permissions for the main window\n#### This default permission set includes:\n\n- `allow-app-get-version`\n- `allow-app-get-diagnostics`\n- `allow-library-list-roots`\n- `allow-library-pick-and-register-root`\n- `allow-library-revoke-root`\n- `allow-library-enqueue-scan`\n- `allow-library-list-scan-jobs`\n- `allow-library-list-media`\n- `allow-planner-list-candidates`\n- `allow-planner-preview`\n- `allow-plan-commit`\n- `allow-plan-get-routine`\n- `allow-plan-replan`\n- `allow-cloud-planning-get-status`\n- `allow-cloud-planning-save-key`\n- `allow-cloud-planning-remove-key`\n- `allow-cloud-planning-suggest`\n- `allow-cloud-planning-parse-intent`\n- `allow-playback-get-capability`\n- `allow-playback-open`\n- `allow-playback-play`\n- `allow-playback-pause`\n- `allow-playback-seek`\n- `allow-playback-set-speed`\n- `allow-playback-get-state`\n- `allow-playback-sync`\n- `allow-playback-close`\n- `allow-study-record-action`\n- `allow-models-list`\n- `allow-models-install`\n- `allow-models-remove`\n- `allow-analysis-start-transcription`\n- `allow-analysis-get-transcript-state`\n- `allow-analysis-list-jobs`\n- `allow-learning-start-lecture-understanding`\n- `allow-learning-get-lecture-understanding`\n- `allow-learning-explain-frame`\n- `allow-learning-list-explanation-notes`\n- `allow-learning-generate-study-materials`\n- `allow-learning-list-study-materials`\n- `allow-learning-record-review`\n- `allow-learning-companion`\n- `allow-search-query`\n- `allow-updates-check`\n- `allow-updates-install`",
           "type": "string",
           "const": "default",
-          "markdownDescription": "Default LectorBit permissions for the main window\n#### This default permission set includes:\n\n- `allow-app-get-version`\n- `allow-app-get-diagnostics`\n- `allow-library-list-roots`\n- `allow-library-pick-and-register-root`\n- `allow-library-revoke-root`\n- `allow-library-enqueue-scan`\n- `allow-library-list-scan-jobs`\n- `allow-library-list-media`\n- `allow-planner-list-candidates`\n- `allow-planner-preview`\n- `allow-plan-commit`\n- `allow-plan-get-routine`\n- `allow-plan-replan`\n- `allow-cloud-planning-get-status`\n- `allow-cloud-planning-save-key`\n- `allow-cloud-planning-remove-key`\n- `allow-cloud-planning-suggest`\n- `allow-playback-get-capability`\n- `allow-playback-open`\n- `allow-playback-play`\n- `allow-playback-pause`\n- `allow-playback-seek`\n- `allow-playback-set-speed`\n- `allow-playback-get-state`\n- `allow-playback-sync`\n- `allow-playback-close`\n- `allow-study-record-action`\n- `allow-models-list`\n- `allow-models-install`\n- `allow-models-remove`\n- `allow-analysis-start-transcription`\n- `allow-analysis-get-transcript-state`\n- `allow-analysis-list-jobs`\n- `allow-search-query`\n- `allow-updates-check`\n- `allow-updates-install`"
+          "markdownDescription": "Default LectorBit permissions for the main window\n#### This default permission set includes:\n\n- `allow-app-get-version`\n- `allow-app-get-diagnostics`\n- `allow-library-list-roots`\n- `allow-library-pick-and-register-root`\n- `allow-library-revoke-root`\n- `allow-library-enqueue-scan`\n- `allow-library-list-scan-jobs`\n- `allow-library-list-media`\n- `allow-planner-list-candidates`\n- `allow-planner-preview`\n- `allow-plan-commit`\n- `allow-plan-get-routine`\n- `allow-plan-replan`\n- `allow-cloud-planning-get-status`\n- `allow-cloud-planning-save-key`\n- `allow-cloud-planning-remove-key`\n- `allow-cloud-planning-suggest`\n- `allow-cloud-planning-parse-intent`\n- `allow-playback-get-capability`\n- `allow-playback-open`\n- `allow-playback-play`\n- `allow-playback-pause`\n- `allow-playback-seek`\n- `allow-playback-set-speed`\n- `allow-playback-get-state`\n- `allow-playback-sync`\n- `allow-playback-close`\n- `allow-study-record-action`\n- `allow-models-list`\n- `allow-models-install`\n- `allow-models-remove`\n- `allow-analysis-start-transcription`\n- `allow-analysis-get-transcript-state`\n- `allow-analysis-list-jobs`\n- `allow-learning-start-lecture-understanding`\n- `allow-learning-get-lecture-understanding`\n- `allow-learning-explain-frame`\n- `allow-learning-list-explanation-notes`\n- `allow-learning-generate-study-materials`\n- `allow-learning-list-study-materials`\n- `allow-learning-record-review`\n- `allow-learning-companion`\n- `allow-search-query`\n- `allow-updates-check`\n- `allow-updates-install`"
         }
       ]
     }
