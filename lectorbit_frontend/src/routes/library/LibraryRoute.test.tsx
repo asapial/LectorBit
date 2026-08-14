@@ -1,5 +1,6 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { MemoryRouter } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { LibraryRoot, MediaPage, ScanEvent, ScanJob } from '../../ipc/library';
 import { LibraryRoute } from './LibraryRoute';
@@ -13,19 +14,18 @@ const {
   startScanMock,
 } = vi.hoisted(() => ({
   listRootsMock: vi.fn<() => Promise<LibraryRoot[]>>(),
-  listMediaMock: vi.fn<(options?: { cursor?: string }) => Promise<MediaPage>>(),
+  listMediaMock:
+    vi.fn<(options?: { rootId?: string; cursor?: string; limit?: number }) => Promise<MediaPage>>(),
   listScanJobsMock: vi.fn<() => Promise<ScanJob[]>>(),
   pickAndRegisterRootMock: vi.fn<() => Promise<LibraryRoot | null>>(),
   revokeRootMock: vi.fn<(id: string) => Promise<LibraryRoot>>(),
-  startScanMock:
-    vi.fn<
-      (rootId: string, onEvent: (event: ScanEvent) => void) => Promise<ScanJob>
-    >(),
+  startScanMock: vi.fn<(rootId: string, onEvent: (event: ScanEvent) => void) => Promise<ScanJob>>(),
 }));
 
 vi.mock('../../ipc/library', () => ({
   listRoots: () => listRootsMock(),
-  listMedia: (options?: { cursor?: string }) => listMediaMock(options),
+  listMedia: (options?: { rootId?: string; cursor?: string; limit?: number }) =>
+    listMediaMock(options),
   listScanJobs: () => listScanJobsMock(),
   pickAndRegisterRoot: () => pickAndRegisterRootMock(),
   revokeRoot: (id: string) => revokeRootMock(id),
@@ -65,9 +65,11 @@ function renderRoute() {
     defaultOptions: { queries: { retry: false } },
   });
   return render(
-    <QueryClientProvider client={queryClient}>
-      <LibraryRoute />
-    </QueryClientProvider>,
+    <MemoryRouter initialEntries={['/library']}>
+      <QueryClientProvider client={queryClient}>
+        <LibraryRoute />
+      </QueryClientProvider>
+    </MemoryRouter>,
   );
 }
 
@@ -89,17 +91,15 @@ describe('LibraryRoute', () => {
     listRootsMock.mockResolvedValueOnce([]);
     renderRoute();
     expect(await screen.findByText(/no folders yet/i)).toBeInTheDocument();
-    expect(
-      screen.getByRole('button', { name: /add your first folder/i }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /add your first folder/i })).toBeInTheDocument();
   });
 
   it('shows safe root metadata and scan state', async () => {
     listRootsMock.mockResolvedValueOnce([activeRoot]);
     listScanJobsMock.mockResolvedValueOnce([queuedJob]);
     renderRoute();
-    expect(await screen.findByText('Videos')).toBeInTheDocument();
-    expect(screen.getByText('[REDACTED]/Videos')).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Videos' })).toBeInTheDocument();
+    expect(screen.getAllByText('[REDACTED]/Videos')).toHaveLength(2);
     expect(screen.getByText('Queued')).toBeInTheDocument();
   });
 
@@ -172,7 +172,171 @@ describe('LibraryRoute', () => {
     fireEvent.click(await screen.findByRole('button', { name: /load more/i }));
 
     expect(await screen.findByText('second.mp4')).toBeInTheDocument();
-    expect(listMediaMock).toHaveBeenLastCalledWith({ cursor: 'cursor-1', limit: 50 });
+    expect(listMediaMock).toHaveBeenLastCalledWith({
+      rootId: 'root-1',
+      cursor: 'cursor-1',
+      limit: 50,
+    });
+  });
+
+  it('renders every selected folder as an independent media module', async () => {
+    const secondRoot: LibraryRoot = {
+      ...activeRoot,
+      id: 'root-2',
+      display_name: 'Statistics',
+      path_redacted: '[REDACTED]/Statistics',
+    };
+    listRootsMock.mockResolvedValueOnce([activeRoot, secondRoot]);
+    listMediaMock.mockImplementation(({ rootId } = {}) =>
+      Promise.resolve({
+        items:
+          rootId === 'root-2'
+            ? [
+                {
+                  id: 'stats-media',
+                  root_id: 'root-2',
+                  display_name: 'Regression.mp4',
+                  path_redacted: '[REDACTED]/Statistics/Regression.mp4',
+                  media_kind: 'video',
+                  size_bytes: 2_048,
+                  duration_ms: 600_000,
+                  container: 'mp4',
+                  video_codec: 'h264',
+                  audio_codec: 'aac',
+                  width: 1280,
+                  height: 720,
+                  audio_streams: 1,
+                  subtitle_streams: 0,
+                  probe_status: 'ready',
+                  probe_error: null,
+                  discovered_at: '2026-08-08T00:00:00Z',
+                },
+              ]
+            : rootId === 'root-1'
+              ? [
+                  {
+                    id: 'videos-media',
+                    root_id: 'root-1',
+                    display_name: 'Introduction.mp4',
+                    path_redacted: '[REDACTED]/Videos/Introduction.mp4',
+                    media_kind: 'video',
+                    size_bytes: 1_024,
+                    duration_ms: 120_000,
+                    container: 'mp4',
+                    video_codec: 'h264',
+                    audio_codec: 'aac',
+                    width: 1280,
+                    height: 720,
+                    audio_streams: 1,
+                    subtitle_streams: 0,
+                    probe_status: 'ready',
+                    probe_error: null,
+                    discovered_at: '2026-08-08T00:00:00Z',
+                  },
+                ]
+              : [],
+        next_cursor: null,
+      }),
+    );
+
+    renderRoute();
+
+    const videosModule = await screen.findByRole('region', { name: 'Videos' });
+    const statisticsModule = screen.getByRole('region', { name: 'Statistics' });
+
+    expect(await within(videosModule).findByText('Introduction.mp4')).toBeInTheDocument();
+    expect(within(videosModule).queryByText('Regression.mp4')).not.toBeInTheDocument();
+    expect(within(videosModule).getByText('2m')).toBeInTheDocument();
+    expect(await within(statisticsModule).findByText('Regression.mp4')).toBeInTheDocument();
+    expect(within(statisticsModule).queryByText('Introduction.mp4')).not.toBeInTheDocument();
+    expect(within(statisticsModule).getByText('10m')).toBeInTheDocument();
+    expect(
+      within(statisticsModule).getByRole('link', {
+        name: 'Plan Statistics module with AI',
+      }),
+    ).toHaveAttribute('href', '/plan?module=root-2');
+    expect(listMediaMock).toHaveBeenCalledWith({ rootId: 'root-1', cursor: undefined, limit: 50 });
+    expect(listMediaMock).toHaveBeenCalledWith({ rootId: 'root-2', cursor: undefined, limit: 50 });
+  });
+
+  it('keeps pagination independent for each folder module', async () => {
+    const secondRoot: LibraryRoot = {
+      ...activeRoot,
+      id: 'root-2',
+      display_name: 'Statistics',
+      path_redacted: '[REDACTED]/Statistics',
+    };
+    const base = {
+      path_redacted: '[REDACTED]/lesson.mp4',
+      media_kind: 'video' as const,
+      size_bytes: 100,
+      duration_ms: 60_000,
+      container: 'mp4',
+      video_codec: 'h264',
+      audio_codec: 'aac',
+      width: 1280,
+      height: 720,
+      audio_streams: 1,
+      subtitle_streams: 0,
+      probe_status: 'ready' as const,
+      probe_error: null,
+      discovered_at: '2026-08-08T00:00:00Z',
+    };
+    listRootsMock.mockResolvedValueOnce([activeRoot, secondRoot]);
+    listMediaMock.mockImplementation(({ rootId, cursor } = {}) => {
+      if (rootId === 'root-2' && cursor === 'stats-next') {
+        return Promise.resolve({
+          items: [{ ...base, id: 'stats-2', root_id: 'root-2', display_name: 'Statistics 2.mp4' }],
+          next_cursor: null,
+          summary: {
+            total_items: 2,
+            ready_items: 2,
+            attention_items: 0,
+            known_duration_ms: 120_000,
+            duration_known_items: 2,
+          },
+        });
+      }
+      if (rootId === 'root-2') {
+        return Promise.resolve({
+          items: [{ ...base, id: 'stats-1', root_id: 'root-2', display_name: 'Statistics 1.mp4' }],
+          next_cursor: 'stats-next',
+          summary: {
+            total_items: 2,
+            ready_items: 2,
+            attention_items: 0,
+            known_duration_ms: 120_000,
+            duration_known_items: 2,
+          },
+        });
+      }
+      return Promise.resolve({
+        items: [{ ...base, id: 'video-1', root_id: 'root-1', display_name: 'Video 1.mp4' }],
+        next_cursor: 'videos-next',
+      });
+    });
+
+    renderRoute();
+
+    const statisticsModule = await screen.findByRole('region', { name: 'Statistics' });
+    expect(await within(statisticsModule).findByText('2m')).toBeInTheDocument();
+    expect(within(statisticsModule).getByText('2 of 2 durations known')).toBeInTheDocument();
+    fireEvent.click(await within(statisticsModule).findByRole('button', { name: /load more/i }));
+
+    expect(await within(statisticsModule).findByText('Statistics 2.mp4')).toBeInTheDocument();
+    expect(listMediaMock).toHaveBeenCalledWith({
+      rootId: 'root-2',
+      cursor: 'stats-next',
+      limit: 50,
+    });
+    expect(listMediaMock).not.toHaveBeenCalledWith({
+      rootId: 'root-1',
+      cursor: 'videos-next',
+      limit: 50,
+    });
+    expect(
+      within(screen.getByRole('region', { name: 'Videos' })).queryByText('Statistics 2.mp4'),
+    ).not.toBeInTheDocument();
   });
 
   it('registers with the privileged picker and starts the first scan', async () => {

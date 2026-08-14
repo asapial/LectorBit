@@ -7,8 +7,8 @@ use std::time::Duration;
 use lectorbit_db::StudyActionKind;
 use lectorbit_services::{PlaybackService, PlaybackUpdate, PlaybackView, ProgressError};
 use tauri_plugin_lectorbit::{
-    BoxFuture, PlaybackCapabilityDto, PlaybackErrorCode, PlaybackErrorKind, PlaybackEventDto,
-    PlaybackEventSink, PlaybackOps, PlaybackViewDto,
+    BoxFuture, CaptionTrackDto, PlaybackCapabilityDto, PlaybackErrorCode, PlaybackErrorKind,
+    PlaybackEventDto, PlaybackEventSink, PlaybackOps, PlaybackViewDto,
 };
 use tokio::process::Command;
 use tokio::sync::Mutex;
@@ -18,6 +18,7 @@ use uuid::Uuid;
 use crate::embedded_media::EmbeddedMediaRegistry;
 
 const REMUX_TIMEOUT: Duration = Duration::from_secs(120);
+const CAPTION_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Clone)]
 pub struct PlaybackAdapter {
@@ -32,11 +33,19 @@ struct ActiveGrant {
     token: String,
     url: String,
     cleanup_path: Option<PathBuf>,
+    caption: Option<ActiveCaptionGrant>,
+}
+
+struct ActiveCaptionGrant {
+    token: String,
+    track: CaptionTrackDto,
+    cleanup_path: PathBuf,
 }
 
 struct PreparedMedia {
     path: PathBuf,
     cleanup_path: Option<PathBuf>,
+    caption_path: Option<PathBuf>,
 }
 
 impl PlaybackAdapter {
@@ -55,36 +64,93 @@ impl PlaybackAdapter {
         }
     }
 
-    async fn active_url(&self) -> Result<String, PlaybackErrorCode> {
-        self.grant
-            .lock()
-            .await
+    async fn active_streams(&self) -> Result<(String, Vec<CaptionTrackDto>), PlaybackErrorCode> {
+        let grant = self.grant.lock().await;
+        let grant = grant
             .as_ref()
-            .map(|grant| grant.url.clone())
-            .ok_or_else(|| map_error(ProgressError::NotOpen))
+            .ok_or_else(|| map_error(ProgressError::NotOpen))?;
+        let captions = grant
+            .caption
+            .as_ref()
+            .map(|caption| vec![caption.track.clone()])
+            .unwrap_or_default();
+        Ok((grant.url.clone(), captions))
     }
 
     async fn view(&self, view: PlaybackView) -> Result<PlaybackViewDto, PlaybackErrorCode> {
-        Ok(to_view(view, &self.active_url().await?))
+        let (stream_url, caption_tracks) = self.active_streams().await?;
+        Ok(to_view(view, &stream_url, &caption_tracks))
     }
 
     async fn prepare_media(&self, source: PathBuf) -> Result<PreparedMedia, PlaybackErrorCode> {
-        if !requires_mp4_remux(&source) {
-            return Ok(PreparedMedia {
-                path: source,
+        let mut prepared = if !requires_mp4_remux(&source) {
+            PreparedMedia {
+                path: source.clone(),
                 cleanup_path: None,
-            });
-        }
-        let ffmpeg = self.ffmpeg_path.as_ref().ok_or_else(|| {
-            playback_unavailable(
-                "This video needs the local FFmpeg helper before it can play in this window.",
-            )
-        })?;
+                caption_path: None,
+            }
+        } else {
+            let ffmpeg = self.ffmpeg_path.as_ref().ok_or_else(|| {
+                playback_unavailable(
+                    "This video needs the local FFmpeg helper before it can play in this window.",
+                )
+            })?;
+            let identifier = Uuid::now_v7().simple().to_string();
+            let partial = self
+                .work_dir
+                .join(format!("stream-{identifier}.partial.mp4"));
+            let output = self.work_dir.join(format!("stream-{identifier}.mp4"));
+            let mut command = Command::new(ffmpeg);
+            command
+                .kill_on_drop(true)
+                .arg("-hide_banner")
+                .arg("-loglevel")
+                .arg("error")
+                .arg("-nostdin")
+                .arg("-y")
+                .arg("-i")
+                .arg(&source)
+                .arg("-map")
+                .arg("0:v:0?")
+                .arg("-map")
+                .arg("0:a:0?")
+                .arg("-c")
+                .arg("copy")
+                .arg("-movflags")
+                .arg("+faststart")
+                .arg(&partial);
+            let status = timeout(REMUX_TIMEOUT, command.status()).await;
+            let succeeded = matches!(status, Ok(Ok(status)) if status.success())
+                && partial.metadata().is_ok_and(|metadata| metadata.len() > 0)
+                && std::fs::rename(&partial, &output).is_ok();
+            if !succeeded {
+                let _ = std::fs::remove_file(&partial);
+                let _ = std::fs::remove_file(&output);
+                tracing::warn!("browser-compatible media remux failed");
+                return Err(playback_unavailable(
+                    "This video's container could not be prepared for the in-app player.",
+                ));
+            }
+            PreparedMedia {
+                path: output.clone(),
+                cleanup_path: Some(output),
+                caption_path: None,
+            }
+        };
+        prepared.caption_path = self.prepare_caption(&source).await;
+        Ok(prepared)
+    }
+
+    /// Extract the first embedded text subtitle as WebVTT. Caption preparation
+    /// is best-effort: bitmap subtitles and files without subtitle streams keep
+    /// playing normally, while supported text tracks appear in native controls.
+    async fn prepare_caption(&self, source: &Path) -> Option<PathBuf> {
+        let ffmpeg = self.ffmpeg_path.as_ref()?;
         let identifier = Uuid::now_v7().simple().to_string();
         let partial = self
             .work_dir
-            .join(format!("stream-{identifier}.partial.mp4"));
-        let output = self.work_dir.join(format!("stream-{identifier}.mp4"));
+            .join(format!("caption-{identifier}.partial.vtt"));
+        let output = self.work_dir.join(format!("caption-{identifier}.vtt"));
         let mut command = Command::new(ffmpeg);
         command
             .kill_on_drop(true)
@@ -94,32 +160,23 @@ impl PlaybackAdapter {
             .arg("-nostdin")
             .arg("-y")
             .arg("-i")
-            .arg(&source)
+            .arg(source)
             .arg("-map")
-            .arg("0:v:0?")
-            .arg("-map")
-            .arg("0:a:0?")
-            .arg("-c")
-            .arg("copy")
-            .arg("-movflags")
-            .arg("+faststart")
+            .arg("0:s:0?")
+            .arg("-c:s")
+            .arg("webvtt")
             .arg(&partial);
-        let status = timeout(REMUX_TIMEOUT, command.status()).await;
+        let status = timeout(CAPTION_TIMEOUT, command.status()).await;
         let succeeded = matches!(status, Ok(Ok(status)) if status.success())
-            && partial.metadata().is_ok_and(|metadata| metadata.len() > 0)
+            && partial.metadata().is_ok_and(|metadata| metadata.len() > 6)
             && std::fs::rename(&partial, &output).is_ok();
-        if !succeeded {
+        if succeeded {
+            Some(output)
+        } else {
             let _ = std::fs::remove_file(&partial);
             let _ = std::fs::remove_file(&output);
-            tracing::warn!("browser-compatible media remux failed");
-            return Err(playback_unavailable(
-                "This video's container could not be prepared for the in-app player.",
-            ));
+            None
         }
-        Ok(PreparedMedia {
-            path: output.clone(),
-            cleanup_path: Some(output),
-        })
     }
 }
 
@@ -141,6 +198,12 @@ impl PlaybackOps for PlaybackAdapter {
         sink: PlaybackEventSink,
     ) -> BoxFuture<'_, Result<PlaybackViewDto, PlaybackErrorCode>> {
         Box::pin(async move {
+            // An open request replaces the previous session. Revoke its opaque
+            // URL up front so a failed resolve/remux cannot leave stale media
+            // readable from the loopback server after the service has closed.
+            if let Some(previous) = self.grant.lock().await.take() {
+                cleanup_grant(&self.media, previous);
+            }
             let opened_item_id = plan_item_id.clone();
             let opened = self
                 .service
@@ -158,18 +221,47 @@ impl PlaybackOps for PlaybackAdapter {
                 if let Some(path) = prepared.cleanup_path {
                     let _ = std::fs::remove_file(path);
                 }
+                if let Some(path) = prepared.caption_path {
+                    let _ = std::fs::remove_file(path);
+                }
                 let _ = self.service.close().await;
                 return Err(map_error(ProgressError::PlaybackUnavailable));
             };
+            let caption = prepared.caption_path.and_then(|path| {
+                let granted = self.media.grant(path.clone());
+                match granted {
+                    Some((caption_token, caption_url)) => Some(ActiveCaptionGrant {
+                        token: caption_token,
+                        track: CaptionTrackDto {
+                            label: "Captions".into(),
+                            language: "und".into(),
+                            url: caption_url,
+                        },
+                        cleanup_path: path,
+                    }),
+                    None => {
+                        let _ = std::fs::remove_file(path);
+                        None
+                    }
+                }
+            });
             if let Some(previous) = self.grant.lock().await.replace(ActiveGrant {
                 token: token.clone(),
                 url: url.clone(),
                 cleanup_path: prepared.cleanup_path,
+                caption,
             }) {
-                self.media.revoke(&previous.token);
-                cleanup_grant(previous);
+                cleanup_grant(&self.media, previous);
             }
-            let view = to_view(opened.view, &url);
+            let caption_tracks = self
+                .grant
+                .lock()
+                .await
+                .as_ref()
+                .and_then(|grant| grant.caption.as_ref())
+                .map(|caption| vec![caption.track.clone()])
+                .unwrap_or_default();
+            let view = to_view(opened.view, &url, &caption_tracks);
             let mut updates = self.service.subscribe();
             tauri::async_runtime::spawn(async move {
                 while let Ok(update) = updates.recv().await {
@@ -178,7 +270,7 @@ impl PlaybackOps for PlaybackAdapter {
                         PlaybackUpdate::Closed { plan_item_id }
                             if plan_item_id == &opened_item_id
                     ) || matches!(&update, PlaybackUpdate::Failed { .. });
-                    sink(to_event(update, &url));
+                    sink(to_event(update, &url, &caption_tracks));
                     if finished {
                         break;
                     }
@@ -243,8 +335,7 @@ impl PlaybackOps for PlaybackAdapter {
         Box::pin(async move {
             let result = self.service.close().await.map_err(map_error);
             if let Some(grant) = self.grant.lock().await.take() {
-                self.media.revoke(&grant.token);
-                cleanup_grant(grant);
+                cleanup_grant(&self.media, grant);
             }
             result
         })
@@ -287,9 +378,14 @@ fn has_iso_bmff_signature(path: &Path) -> bool {
     file.read_exact(&mut header).is_ok() && &header[4..8] == b"ftyp"
 }
 
-fn cleanup_grant(grant: ActiveGrant) {
+fn cleanup_grant(media: &EmbeddedMediaRegistry, grant: ActiveGrant) {
+    media.revoke(&grant.token);
     if let Some(path) = grant.cleanup_path {
         let _ = std::fs::remove_file(path);
+    }
+    if let Some(caption) = grant.caption {
+        media.revoke(&caption.token);
+        let _ = std::fs::remove_file(caption.cleanup_path);
     }
 }
 
@@ -312,7 +408,11 @@ fn parse_action(kind: &str) -> Result<StudyActionKind, PlaybackErrorCode> {
     }
 }
 
-fn to_view(view: PlaybackView, stream_url: &str) -> PlaybackViewDto {
+fn to_view(
+    view: PlaybackView,
+    stream_url: &str,
+    caption_tracks: &[CaptionTrackDto],
+) -> PlaybackViewDto {
     PlaybackViewDto {
         plan_item_id: view.plan_item_id,
         media_id: view.media_id,
@@ -328,12 +428,19 @@ fn to_view(view: PlaybackView, stream_url: &str) -> PlaybackViewDto {
         item_duration_ms: view.item_duration_ms,
         completed: view.completed,
         stream_url: stream_url.into(),
+        caption_tracks: caption_tracks.to_vec(),
     }
 }
 
-fn to_event(update: PlaybackUpdate, stream_url: &str) -> PlaybackEventDto {
+fn to_event(
+    update: PlaybackUpdate,
+    stream_url: &str,
+    caption_tracks: &[CaptionTrackDto],
+) -> PlaybackEventDto {
     match update {
-        PlaybackUpdate::State(view) => PlaybackEventDto::State(to_view(view, stream_url)),
+        PlaybackUpdate::State(view) => {
+            PlaybackEventDto::State(to_view(view, stream_url, caption_tracks))
+        }
         PlaybackUpdate::Closed { plan_item_id } => PlaybackEventDto::Closed { plan_item_id },
         PlaybackUpdate::Failed { message } => PlaybackEventDto::Failed { message },
     }

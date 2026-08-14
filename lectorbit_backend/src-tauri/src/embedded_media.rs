@@ -376,6 +376,7 @@ fn media_type(path: &Path) -> &'static str {
         "m4a" | "aac" => "audio/mp4",
         "wav" => "audio/wav",
         "flac" => "audio/flac",
+        "vtt" => "text/vtt; charset=utf-8",
         _ => "application/octet-stream",
     }
 }
@@ -402,6 +403,15 @@ mod tests {
         assert_eq!(byte_range(Some("bytes=-5"), 100), Some((95, 99)));
         assert_eq!(byte_range(Some("bytes=10-20,30-40"), 100), None);
         assert_eq!(byte_range(Some("bytes=100-"), 100), None);
+    }
+
+    #[test]
+    fn webvtt_caption_grants_use_the_browser_caption_content_type() {
+        let file = tempfile::Builder::new()
+            .suffix(".vtt")
+            .tempfile()
+            .expect("temporary caption");
+        assert_eq!(media_type(file.path()), "text/vtt; charset=utf-8");
     }
 
     #[test]

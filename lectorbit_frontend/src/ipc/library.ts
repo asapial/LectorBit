@@ -13,15 +13,7 @@ const LibraryRootSchema = z.object({
 const ScanJobSchema = z.object({
   id: z.string().min(1),
   root_id: z.string().min(1),
-  status: z.enum([
-    'queued',
-    'running',
-    'paused',
-    'retry_wait',
-    'completed',
-    'failed',
-    'cancelled',
-  ]),
+  status: z.enum(['queued', 'running', 'paused', 'retry_wait', 'completed', 'failed', 'cancelled']),
   attempt: z.number().int().nonnegative(),
   last_error: z.string().nullable(),
   created_at: z.string().min(1),
@@ -87,32 +79,29 @@ const MediaListItemSchema = z.object({
   height: z.number().int().nonnegative().nullable(),
   audio_streams: z.number().int().nonnegative(),
   subtitle_streams: z.number().int().nonnegative(),
-  probe_status: z.enum([
-    'queued',
-    'probing',
-    'ready',
-    'failed',
-    'unavailable',
-    'missing',
-  ]),
+  probe_status: z.enum(['queued', 'probing', 'ready', 'failed', 'unavailable', 'missing']),
   probe_error: z.string().nullable(),
   discovered_at: z.string().min(1),
+});
+
+const MediaSummarySchema = z.object({
+  total_items: z.number().int().nonnegative(),
+  ready_items: z.number().int().nonnegative(),
+  attention_items: z.number().int().nonnegative(),
+  known_duration_ms: z.number().int().nonnegative(),
+  duration_known_items: z.number().int().nonnegative(),
 });
 
 const MediaPageSchema = z.object({
   items: z.array(MediaListItemSchema),
   next_cursor: z.string().nullable(),
+  // Optional while upgrading from pre-summary desktop bridges. Current
+  // backends always provide exact, root-scoped totals.
+  summary: MediaSummarySchema.optional(),
 });
 
 const LibraryErrorSchema = z.object({
-  kind: z.enum([
-    'empty_path',
-    'not_a_directory',
-    'not_found',
-    'io',
-    'database',
-    'internal',
-  ]),
+  kind: z.enum(['empty_path', 'not_a_directory', 'not_found', 'io', 'database', 'internal']),
   message: z.string(),
 });
 
@@ -120,6 +109,7 @@ export type LibraryRoot = z.infer<typeof LibraryRootSchema>;
 export type ScanJob = z.infer<typeof ScanJobSchema>;
 export type ScanEvent = z.infer<typeof ScanEventSchema>;
 export type MediaListItem = z.infer<typeof MediaListItemSchema>;
+export type MediaSummary = z.infer<typeof MediaSummarySchema>;
 export type MediaPage = z.infer<typeof MediaPageSchema>;
 export type LibraryErrorKind = z.infer<typeof LibraryErrorSchema>['kind'];
 
@@ -144,9 +134,7 @@ export async function listRoots(): Promise<LibraryRoot[]> {
 
 export async function pickAndRegisterRoot(): Promise<LibraryRoot | null> {
   try {
-    const raw = await invoke<unknown>(
-      'plugin:lectorbit|library_pick_and_register_root',
-    );
+    const raw = await invoke<unknown>('plugin:lectorbit|library_pick_and_register_root');
     return LibraryRootSchema.nullable().parse(raw);
   } catch (error) {
     throw wrapLibraryError(error);
@@ -155,10 +143,7 @@ export async function pickAndRegisterRoot(): Promise<LibraryRoot | null> {
 
 export async function revokeRoot(id: string): Promise<LibraryRoot> {
   try {
-    const raw = await invoke<unknown>(
-      'plugin:lectorbit|library_revoke_root',
-      { args: { id } },
-    );
+    const raw = await invoke<unknown>('plugin:lectorbit|library_revoke_root', { args: { id } });
     return LibraryRootSchema.parse(raw);
   } catch (error) {
     throw wrapLibraryError(error);
@@ -175,10 +160,10 @@ export async function startScan(
     if (parsed.success) onEvent(parsed.data);
   };
   try {
-    const raw = await invoke<unknown>(
-      'plugin:lectorbit|library_enqueue_scan',
-      { args: { root_id: rootId }, onEvent: channel },
-    );
+    const raw = await invoke<unknown>('plugin:lectorbit|library_enqueue_scan', {
+      args: { root_id: rootId },
+      onEvent: channel,
+    });
     return ScanJobSchema.parse(raw);
   } catch (error) {
     throw wrapLibraryError(error);
@@ -187,10 +172,9 @@ export async function startScan(
 
 export async function listScanJobs(rootId?: string): Promise<ScanJob[]> {
   try {
-    const raw = await invoke<unknown>(
-      'plugin:lectorbit|library_list_scan_jobs',
-      { args: { root_id: rootId ?? null } },
-    );
+    const raw = await invoke<unknown>('plugin:lectorbit|library_list_scan_jobs', {
+      args: { root_id: rootId ?? null },
+    });
     return z.array(ScanJobSchema).parse(raw);
   } catch (error) {
     throw wrapLibraryError(error);

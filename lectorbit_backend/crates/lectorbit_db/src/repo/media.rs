@@ -80,9 +80,19 @@ pub struct MediaListItem {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MediaSummary {
+    pub total_items: u64,
+    pub ready_items: u64,
+    pub attention_items: u64,
+    pub known_duration_ms: u64,
+    pub duration_known_items: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MediaPage {
     pub items: Vec<MediaListItem>,
     pub next_cursor: Option<String>,
+    pub summary: MediaSummary,
 }
 
 #[derive(Clone)]
@@ -393,6 +403,27 @@ impl Repo {
         limit: u32,
     ) -> DbResult<MediaPage> {
         let page_size = limit.clamp(1, 200);
+        let summary_row = sqlx::query(
+            "SELECT COUNT(*) AS total_items, \
+                    COALESCE(SUM(CASE WHEN m.probe_status = 'ready' THEN 1 ELSE 0 END), 0) AS ready_items, \
+                    COALESCE(SUM(CASE WHEN m.probe_status IN ('failed', 'unavailable', 'missing') THEN 1 ELSE 0 END), 0) AS attention_items, \
+                    COALESCE(SUM(m.duration_ms), 0) AS known_duration_ms, \
+                    COUNT(m.duration_ms) AS duration_known_items \
+             FROM media_files m \
+             JOIN library_roots r ON r.id = m.root_id \
+             WHERE r.revoked_at IS NULL AND (? IS NULL OR m.root_id = ?)",
+        )
+        .bind(root_id)
+        .bind(root_id)
+        .fetch_one(&self.pool)
+        .await?;
+        let summary = MediaSummary {
+            total_items: nonnegative_u64(summary_row.try_get("total_items")?),
+            ready_items: nonnegative_u64(summary_row.try_get("ready_items")?),
+            attention_items: nonnegative_u64(summary_row.try_get("attention_items")?),
+            known_duration_ms: nonnegative_u64(summary_row.try_get("known_duration_ms")?),
+            duration_known_items: nonnegative_u64(summary_row.try_get("duration_known_items")?),
+        };
         let rows = sqlx::query(
             "SELECT m.id, m.root_id, m.display_name, m.media_kind, m.size_bytes, m.duration_ms, \
                     m.container, m.video_codec, m.audio_codec, m.width, m.height, m.audio_streams, \
@@ -425,7 +456,11 @@ impl Repo {
         } else {
             None
         };
-        Ok(MediaPage { items, next_cursor })
+        Ok(MediaPage {
+            items,
+            next_cursor,
+            summary,
+        })
     }
 }
 
@@ -586,6 +621,58 @@ mod tests {
         assert_eq!(chunks.len(), 1);
         assert_eq!(chunks[0].start_ms, 0);
         assert_eq!(chunks[0].end_ms, 90_500);
+        db.close().await;
+    }
+
+    #[tokio::test]
+    async fn page_summary_is_exact_for_the_root_beyond_the_loaded_page() {
+        let (db, repo, root_id) = fixture().await;
+        repo.reconcile_discovery(
+            &root_id,
+            &[discovered("ready.mp4"), discovered("failed.mp4")],
+            true,
+        )
+        .await
+        .expect("discover");
+        sqlx::query(
+            "UPDATE media_files SET probe_status = 'ready', duration_ms = 120000 \
+             WHERE root_id = ? AND display_name = 'ready.mp4'",
+        )
+        .bind(&root_id)
+        .execute(repo.pool())
+        .await
+        .expect("ready metadata");
+        sqlx::query(
+            "UPDATE media_files SET probe_status = 'failed' \
+             WHERE root_id = ? AND display_name = 'failed.mp4'",
+        )
+        .bind(&root_id)
+        .execute(repo.pool())
+        .await
+        .expect("failed metadata");
+        let other_root = match LibraryRootsRepo::new(db.pool().clone())
+            .insert_root("/safe/other", Some("Other"))
+            .await
+            .expect("other root")
+        {
+            crate::InsertOutcome::Inserted(root) => root,
+            crate::InsertOutcome::AlreadyPresent(_) => panic!("new other root"),
+        };
+        repo.reconcile_discovery(&other_root.id, &[discovered("other.mp4")], true)
+            .await
+            .expect("other media");
+
+        let page = repo
+            .list_page(Some(&root_id), None, 1)
+            .await
+            .expect("first page");
+        assert_eq!(page.items.len(), 1);
+        assert!(page.next_cursor.is_some());
+        assert_eq!(page.summary.total_items, 2);
+        assert_eq!(page.summary.ready_items, 1);
+        assert_eq!(page.summary.attention_items, 1);
+        assert_eq!(page.summary.known_duration_ms, 120_000);
+        assert_eq!(page.summary.duration_known_items, 1);
         db.close().await;
     }
 

@@ -8,14 +8,11 @@ import Captions from 'lucide-react/dist/esm/icons/captions';
 import RotateCcw from 'lucide-react/dist/esm/icons/rotate-ccw';
 import Trash2 from 'lucide-react/dist/esm/icons/trash-2';
 import TriangleAlert from 'lucide-react/dist/esm/icons/triangle-alert';
+import Sparkles from 'lucide-react/dist/esm/icons/sparkles';
 import X from 'lucide-react/dist/esm/icons/x';
-import {
-  useInfiniteQuery,
-  useMutation,
-  useQuery,
-  useQueryClient,
-} from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useVirtualizer } from '@tanstack/react-virtual';
+import { Link } from 'react-router';
 import {
   listMedia,
   listRoots,
@@ -27,6 +24,7 @@ import {
   type LibraryErrorKind,
   type LibraryRoot,
   type MediaListItem,
+  type MediaSummary,
   type ScanEvent,
   type ScanJob,
 } from '../../ipc/library';
@@ -44,11 +42,7 @@ import {
   CardTitle,
 } from '../../components/ui/Card';
 import { cn } from '../../lib/cn';
-import {
-  listModels,
-  startTranscription,
-  type AnalysisProgress,
-} from '../../ipc/analysis';
+import { listModels, startTranscription, type AnalysisProgress } from '../../ipc/analysis';
 
 interface LiveScan {
   status: StatusKind;
@@ -75,24 +69,11 @@ export function LibraryRoute() {
     queryKey: ['library', 'scan-jobs'] as const,
     queryFn: () => listScanJobs(),
     staleTime: 1_000,
-    refetchInterval: (query) =>
-      query.state.data?.some((job) => isActiveJob(job)) ? 1_500 : false,
+    refetchInterval: (query) => (query.state.data?.some((job) => isActiveJob(job)) ? 1_500 : false),
   });
 
-  const media = useInfiniteQuery({
-    queryKey: ['library', 'media'] as const,
-    queryFn: ({ pageParam }) => listMedia({ cursor: pageParam, limit: 50 }),
-    initialPageParam: undefined as string | undefined,
-    getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
-    refetchInterval: (query) =>
-      query.state.data?.pages.some((page) =>
-        page.items.some(
-          (item) => item.probe_status === 'queued' || item.probe_status === 'probing',
-        ),
-      )
-        ? 1_500
-        : false,
-  });
+  // Media is queried per-root (see FolderMediaCard below) so each folder shows
+  // its own independent list with separate pagination and per-folder counters.
 
   const models = useQuery({
     queryKey: ['analysis', 'models'] as const,
@@ -112,8 +93,10 @@ export function LibraryRoute() {
         }
         if (event.event === 'failed') setBanner(event.data.message);
       }),
-    onSuccess: () => setBanner('Transcription queued locally. You can keep studying while it runs.'),
-    onError: (error) => setBanner(error instanceof Error ? error.message : 'Transcription could not start.'),
+    onSuccess: () =>
+      setBanner('Transcription queued locally. You can keep studying while it runs.'),
+    onError: (error) =>
+      setBanner(error instanceof Error ? error.message : 'Transcription could not start.'),
   });
 
   const scan = useMutation({
@@ -188,10 +171,7 @@ export function LibraryRoute() {
     mutationFn: (id: string) => revokeRoot(id),
     onMutate: async (id) => {
       await queryClient.cancelQueries({ queryKey: ['library', 'roots'] });
-      const previous = queryClient.getQueryData<LibraryRoot[]>([
-        'library',
-        'roots',
-      ]);
+      const previous = queryClient.getQueryData<LibraryRoot[]>(['library', 'roots']);
       queryClient.setQueryData<LibraryRoot[]>(['library', 'roots'], (current) =>
         (current ?? []).map((root) =>
           root.id === id
@@ -289,25 +269,22 @@ export function LibraryRoute() {
             jobs={jobs.data ?? []}
             liveScans={liveScans}
             busyScanRootIds={busyScanRootIds}
-            pendingRemoveId={removeFolder.isPending ? removeFolder.variables ?? null : null}
+            pendingRemoveId={removeFolder.isPending ? (removeFolder.variables ?? null) : null}
             onScan={(rootId) => scan.mutate({ rootId })}
             onRequestRemove={setRemoveTarget}
           />
-          <MediaLibraryCard
-            items={media.data?.pages.flatMap((page) => page.items) ?? []}
-            pending={media.isPending}
-            error={media.error}
-            hasNextPage={media.hasNextPage}
-            loadingMore={media.isFetchingNextPage}
-            onRetry={() => void media.refetch()}
-            onLoadMore={() => void media.fetchNextPage()}
-            readyModelId={readyModelId}
-            analysisProgress={analysisProgress}
-            pendingMediaId={transcribe.isPending ? transcribe.variables?.mediaId : undefined}
-            onTranscribe={(mediaId, modelId) => transcribe.mutate({ mediaId, modelId })}
-            busyScanRootIds={busyScanRootIds}
-            onRetryMetadata={(rootId) => scan.mutate({ rootId })}
-          />
+          {activeRoots.map((root) => (
+            <FolderMediaCard
+              key={root.id}
+              root={root}
+              readyModelId={readyModelId}
+              analysisProgress={analysisProgress}
+              pendingMediaId={transcribe.isPending ? transcribe.variables?.mediaId : undefined}
+              onTranscribe={(mediaId, modelId) => transcribe.mutate({ mediaId, modelId })}
+              busyScanRootIds={busyScanRootIds}
+              onRetryMetadata={(rootId) => scan.mutate({ rootId })}
+            />
+          ))}
         </>
       ) : null}
 
@@ -323,8 +300,76 @@ export function LibraryRoute() {
   );
 }
 
+/**
+ * Per-folder wrapper: owns a single `useInfiniteQuery` scoped to one root.
+ * This ensures each library folder is its own independent module — pagination,
+ * counters, and media rows never mix across different roots.
+ */
+function FolderMediaCard({
+  root,
+  readyModelId,
+  analysisProgress,
+  pendingMediaId,
+  onTranscribe,
+  busyScanRootIds,
+  onRetryMetadata,
+}: {
+  root: LibraryRoot;
+  readyModelId?: string;
+  analysisProgress: Record<string, AnalysisProgress>;
+  pendingMediaId?: string;
+  onTranscribe: (mediaId: string, modelId: string) => void;
+  busyScanRootIds: ReadonlySet<string>;
+  onRetryMetadata: (rootId: string) => void;
+}) {
+  const media = useInfiniteQuery({
+    queryKey: ['library', 'media', root.id] as const,
+    queryFn: ({ pageParam }) => listMedia({ rootId: root.id, cursor: pageParam, limit: 50 }),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
+    refetchInterval: (query) =>
+      query.state.data?.pages.some((page) =>
+        page.items.some(
+          (item) => item.probe_status === 'queued' || item.probe_status === 'probing',
+        ),
+      )
+        ? 1_500
+        : false,
+  });
+
+  // Treat the root boundary defensively as well as at the database query. A
+  // malformed/stale page can never leak another folder's media into this module.
+  const items =
+    media.data?.pages.flatMap((page) => page.items).filter((item) => item.root_id === root.id) ??
+    [];
+
+  return (
+    <MediaLibraryCard
+      root={root}
+      items={items}
+      summary={media.data?.pages[0]?.summary}
+      loadedPageCount={media.data?.pages.length ?? 0}
+      pending={media.isPending}
+      error={media.error}
+      hasNextPage={media.hasNextPage}
+      loadingMore={media.isFetchingNextPage}
+      onRetry={() => void media.refetch()}
+      onLoadMore={() => void media.fetchNextPage()}
+      readyModelId={readyModelId}
+      analysisProgress={analysisProgress}
+      pendingMediaId={pendingMediaId}
+      onTranscribe={onTranscribe}
+      busyScanRootIds={busyScanRootIds}
+      onRetryMetadata={onRetryMetadata}
+    />
+  );
+}
+
 function MediaLibraryCard({
+  root,
   items,
+  summary,
+  loadedPageCount,
   pending,
   error,
   hasNextPage,
@@ -338,7 +383,10 @@ function MediaLibraryCard({
   busyScanRootIds,
   onRetryMetadata,
 }: {
+  root: LibraryRoot;
   items: MediaListItem[];
+  summary?: MediaSummary;
+  loadedPageCount: number;
   pending: boolean;
   error: Error | null;
   hasNextPage: boolean;
@@ -364,116 +412,209 @@ function MediaLibraryCard({
   const visibleRows = virtualized
     ? rows.getVirtualItems().map((row) => ({ index: row.index, start: row.start }))
     : items.map((_, index) => ({ index, start: undefined }));
-  const readyCount = items.filter((item) => item.probe_status === 'ready').length;
-  const attentionCount = items.filter((item) =>
+  const loadedReadyCount = items.filter((item) => item.probe_status === 'ready').length;
+  const loadedAttentionCount = items.filter((item) =>
     ['failed', 'unavailable', 'missing'].includes(item.probe_status),
   ).length;
+  const loadedDurationMs = items.reduce((total, item) => total + (item.duration_ms ?? 0), 0);
+  const loadedDurationKnownCount = items.filter((item) => item.duration_ms !== null).length;
+  const totalCount = summary?.total_items ?? items.length;
+  const readyCount = summary?.ready_items ?? loadedReadyCount;
+  const attentionCount = summary?.attention_items ?? loadedAttentionCount;
+  const knownDurationMs = summary?.known_duration_ms ?? loadedDurationMs;
+  const durationKnownCount = summary?.duration_known_items ?? loadedDurationKnownCount;
+  const totalsAreExact = summary !== undefined;
+  const loadedPagesDetail = `${loadedPageCount.toLocaleString()} ${loadedPageCount === 1 ? 'page' : 'pages'} loaded`;
+  const mediaMetricLabel = totalsAreExact || !hasNextPage ? 'Media in module' : 'Media loaded';
+  const mediaMetricDetail = totalsAreExact
+    ? `${items.length.toLocaleString()} currently loaded · ${loadedPagesDetail}`
+    : loadedPagesDetail;
+  const readyMetricDetail = totalsAreExact
+    ? `${readyCount.toLocaleString()} metadata-ready in this module`
+    : `${readyCount.toLocaleString()} metadata-ready on loaded pages`;
+  const attentionMetricDetail =
+    attentionCount === 0
+      ? 'module is healthy'
+      : loadedAttentionCount > 0
+        ? 'retry loaded items below'
+        : 'load more to review affected items';
+  const moduleHeadingId = `library-module-${root.id}`;
   return (
-    <Card>
-      <CardHeader className="gap-3 border-b border-border/70 pb-5">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <CardTitle>Media index</CardTitle>
-            <CardDescription className="mt-1.5">
-              Local metadata and transcripts make your lectures searchable and ready to study.
-            </CardDescription>
+    <section aria-labelledby={moduleHeadingId}>
+      <Card className="overflow-hidden border-border/90">
+        <CardHeader className="gap-4 border-b border-border/70 bg-muted/15 pb-5">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="min-w-0">
+              <Badge tone="primary">Independent folder module</Badge>
+              <CardTitle id={moduleHeadingId} className="mt-2 text-lg">
+                {root.display_name}
+              </CardTitle>
+              <CardDescription
+                className="mt-1.5 truncate font-mono text-xs"
+                title={root.path_redacted}
+              >
+                {root.path_redacted}
+              </CardDescription>
+            </div>
+            <Link
+              to={{ pathname: '/plan', search: `?module=${encodeURIComponent(root.id)}` }}
+              aria-label={`Plan ${root.display_name} module with AI`}
+              className="inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded-lg border border-primary/15 bg-primary px-3 text-sm font-semibold text-primary-foreground shadow-sm transition-[background-color,box-shadow,transform] hover:-translate-y-px hover:bg-primary/90 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+            >
+              <Sparkles aria-hidden="true" className="size-3.5" />
+              Plan module with AI
+            </Link>
           </div>
+          {!pending && !error ? (
+            <div
+              className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4"
+              aria-label={`${root.display_name} module summary`}
+            >
+              <ModuleMetric
+                label={mediaMetricLabel}
+                value={totalCount.toLocaleString()}
+                detail={mediaMetricDetail}
+              />
+              <ModuleMetric
+                label="Ready to plan"
+                value={readyCount.toLocaleString()}
+                detail={readyMetricDetail}
+                tone="success"
+              />
+              <ModuleMetric
+                label={summary || !hasNextPage ? 'Known study time' : 'Loaded study time'}
+                value={formatModuleDuration(knownDurationMs)}
+                detail={`${durationKnownCount.toLocaleString()} of ${totalCount.toLocaleString()} durations known`}
+              />
+              <ModuleMetric
+                label="Needs attention"
+                value={attentionCount.toLocaleString()}
+                detail={attentionMetricDetail}
+                tone={attentionCount > 0 ? 'warning' : 'neutral'}
+              />
+            </div>
+          ) : null}
+        </CardHeader>
+        <CardContent className="pt-5">
+          {pending ? (
+            <div className="flex items-center gap-3 text-sm text-muted-foreground">
+              <Spinner label="Loading indexed media" />
+            </div>
+          ) : null}
+          {error ? (
+            <ErrorPanel title="Could not load indexed media" error={error} onRetry={onRetry} />
+          ) : null}
+          {!pending && !error && loadedAttentionCount > 0 ? (
+            <div className="mb-5 flex items-start gap-3 rounded-lg border border-amber-500/25 bg-amber-500/8 px-4 py-3 text-sm">
+              <TriangleAlert
+                aria-hidden="true"
+                className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-400"
+              />
+              <div>
+                <p className="font-medium">Some metadata needs another pass</p>
+                <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
+                  Retry an affected item to rescan its folder. LectorBit leaves the media file
+                  untouched.
+                </p>
+              </div>
+            </div>
+          ) : null}
+          {!pending && !error && items.length === 0 ? (
+            <div className="rounded-lg border border-dashed border-border bg-muted/35 px-6 py-8 text-center">
+              <FileVideo aria-hidden="true" className="mx-auto size-6 text-muted-foreground" />
+              <p className="mt-3 text-sm font-medium">No media indexed yet</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Scan an approved folder to discover supported video and audio files.
+              </p>
+            </div>
+          ) : null}
           {items.length > 0 ? (
-            <div className="flex flex-wrap gap-2" aria-label="Media summary">
-              <Badge tone="neutral">{items.length.toLocaleString()} loaded</Badge>
-              <Badge tone="success">{readyCount.toLocaleString()} ready</Badge>
-              {attentionCount > 0 ? (
-                <Badge tone="warning">{attentionCount.toLocaleString()} need attention</Badge>
+            <div
+              ref={mediaScrollRef}
+              className={cn(
+                'responsive-table-shell',
+                virtualized && 'max-h-[640px] overflow-y-auto',
+              )}
+            >
+              <table className="w-full min-w-[900px] table-fixed text-sm">
+                <thead>
+                  <tr className="border-b border-border bg-card text-left text-xs font-medium uppercase tracking-[0.08em] text-muted-foreground">
+                    <th className="w-[32%] py-2.5 pr-4">Media</th>
+                    <th className="w-[12%] py-2.5 pr-4">Duration</th>
+                    <th className="w-[18%] py-2.5 pr-4">Video</th>
+                    <th className="w-[20%] py-2.5 pr-4">Audio &amp; captions</th>
+                    <th className="w-[18%] py-2.5">Metadata</th>
+                  </tr>
+                </thead>
+                <tbody
+                  className="divide-y divide-border"
+                  style={
+                    virtualized
+                      ? {
+                          display: 'block',
+                          height: `${rows.getTotalSize()}px`,
+                          position: 'relative',
+                        }
+                      : undefined
+                  }
+                >
+                  {visibleRows.map((row) => (
+                    <MediaRow
+                      key={items[row.index].id}
+                      item={items[row.index]}
+                      virtualStart={row.start}
+                      readyModelId={readyModelId}
+                      analysisEvent={analysisProgress[items[row.index].id]}
+                      pending={pendingMediaId === items[row.index].id}
+                      onTranscribe={onTranscribe}
+                      retryingMetadata={busyScanRootIds.has(items[row.index].root_id)}
+                      onRetryMetadata={onRetryMetadata}
+                    />
+                  ))}
+                </tbody>
+              </table>
+              {hasNextPage ? (
+                <div className="flex justify-center border-t border-border pt-4">
+                  <Button variant="secondary" size="sm" disabled={loadingMore} onClick={onLoadMore}>
+                    {loadingMore ? 'Loading…' : 'Load more'}
+                  </Button>
+                </div>
               ) : null}
             </div>
           ) : null}
-        </div>
-      </CardHeader>
-      <CardContent className="pt-5">
-        {pending ? (
-          <div className="flex items-center gap-3 text-sm text-muted-foreground">
-            <Spinner label="Loading indexed media" />
-          </div>
-        ) : null}
-        {error ? (
-          <ErrorPanel title="Could not load indexed media" error={error} onRetry={onRetry} />
-        ) : null}
-        {!pending && !error && attentionCount > 0 ? (
-          <div className="mb-5 flex items-start gap-3 rounded-lg border border-amber-500/25 bg-amber-500/8 px-4 py-3 text-sm">
-            <TriangleAlert
-              aria-hidden="true"
-              className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-400"
-            />
-            <div>
-              <p className="font-medium">Some metadata needs another pass</p>
-              <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
-                Retry an affected item to rescan its folder. LectorBit leaves the media file untouched.
-              </p>
-            </div>
-          </div>
-        ) : null}
-        {!pending && !error && items.length === 0 ? (
-          <div className="rounded-lg border border-dashed border-border bg-muted/35 px-6 py-8 text-center">
-            <FileVideo aria-hidden="true" className="mx-auto size-6 text-muted-foreground" />
-            <p className="mt-3 text-sm font-medium">No media indexed yet</p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Scan an approved folder to discover supported video and audio files.
-            </p>
-          </div>
-        ) : null}
-        {items.length > 0 ? (
-          <div
-            ref={mediaScrollRef}
-            className={cn('responsive-table-shell', virtualized && 'max-h-[640px] overflow-y-auto')}
-          >
-            <table className="w-full min-w-[900px] table-fixed text-sm">
-              <thead>
-                <tr className="border-b border-border bg-card text-left text-xs font-medium uppercase tracking-[0.08em] text-muted-foreground">
-                  <th className="w-[32%] py-2.5 pr-4">Media</th>
-                  <th className="w-[12%] py-2.5 pr-4">Duration</th>
-                  <th className="w-[18%] py-2.5 pr-4">Video</th>
-                  <th className="w-[20%] py-2.5 pr-4">Audio &amp; captions</th>
-                  <th className="w-[18%] py-2.5">Metadata</th>
-                </tr>
-              </thead>
-              <tbody
-                className="divide-y divide-border"
-                style={
-                  virtualized
-                    ? {
-                        display: 'block',
-                        height: `${rows.getTotalSize()}px`,
-                        position: 'relative',
-                      }
-                    : undefined
-                }
-              >
-                {visibleRows.map((row) => (
-                  <MediaRow
-                    key={items[row.index].id}
-                    item={items[row.index]}
-                    virtualStart={row.start}
-                    readyModelId={readyModelId}
-                    analysisEvent={analysisProgress[items[row.index].id]}
-                    pending={pendingMediaId === items[row.index].id}
-                    onTranscribe={onTranscribe}
-                    retryingMetadata={busyScanRootIds.has(items[row.index].root_id)}
-                    onRetryMetadata={onRetryMetadata}
-                  />
-                ))}
-              </tbody>
-            </table>
-            {hasNextPage ? (
-              <div className="flex justify-center border-t border-border pt-4">
-                <Button variant="secondary" size="sm" disabled={loadingMore} onClick={onLoadMore}>
-                  {loadingMore ? 'Loading…' : 'Load more'}
-                </Button>
-              </div>
-            ) : null}
-          </div>
-        ) : null}
-      </CardContent>
-    </Card>
+        </CardContent>
+      </Card>
+    </section>
+  );
+}
+
+function ModuleMetric({
+  label,
+  value,
+  detail,
+  tone = 'neutral',
+}: {
+  label: string;
+  value: string;
+  detail: string;
+  tone?: 'neutral' | 'success' | 'warning';
+}) {
+  return (
+    <div className="rounded-xl border border-border/70 bg-background/75 px-3.5 py-3 shadow-sm">
+      <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+        {label}
+      </p>
+      <p
+        className={cn(
+          'mt-1 font-display text-xl font-semibold tabular-nums',
+          tone === 'success' && 'text-success',
+          tone === 'warning' && 'text-warning',
+        )}
+      >
+        {value}
+      </p>
+      <p className="mt-0.5 text-xs text-muted-foreground">{detail}</p>
+    </div>
   );
 }
 
@@ -547,7 +688,11 @@ function MediaRow({
               disabled={!readyModelId || pending || isAnalysisActive(analysisEvent)}
               onClick={() => readyModelId && onTranscribe(item.id, readyModelId)}
               leftIcon={<Captions className="size-3.5" />}
-              title={readyModelId ? 'Create or refresh the local transcript' : 'Install a model in Settings first'}
+              title={
+                readyModelId
+                  ? 'Create or refresh the local transcript'
+                  : 'Install a model in Settings first'
+              }
             >
               {analysisLabel(analysisEvent, pending)}
             </Button>
@@ -573,7 +718,10 @@ function MediaRow({
 }
 
 function isAnalysisActive(event?: AnalysisProgress) {
-  return event !== undefined && ['queued', 'extracting', 'transcribing', 'indexing'].includes(event.event);
+  return (
+    event !== undefined &&
+    ['queued', 'extracting', 'transcribing', 'indexing'].includes(event.event)
+  );
 }
 
 function analysisLabel(event: AnalysisProgress | undefined, pending: boolean) {
@@ -634,6 +782,14 @@ function formatDuration(durationMs: number | null): string {
     : `${minutes}:${seconds.toString().padStart(2, '0')}`;
 }
 
+function formatModuleDuration(durationMs: number): string {
+  if (durationMs <= 0) return '0m';
+  const totalMinutes = Math.max(1, Math.round(durationMs / 60_000));
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
+}
+
 function formatBytes(bytes: number): string {
   if (bytes < 1_024) return `${bytes} B`;
   if (bytes < 1_048_576) return `${(bytes / 1_024).toFixed(1)} KB`;
@@ -643,9 +799,11 @@ function formatBytes(bytes: number): string {
 
 function formatVideoDetails(item: MediaListItem): string {
   const resolution = item.width && item.height ? `${item.width}×${item.height}` : null;
-  return [item.video_codec?.toUpperCase(), resolution, item.container?.toUpperCase()]
-    .filter(Boolean)
-    .join(' · ') || '—';
+  return (
+    [item.video_codec?.toUpperCase(), resolution, item.container?.toUpperCase()]
+      .filter(Boolean)
+      .join(' · ') || '—'
+  );
 }
 
 function formatAudioDetails(item: MediaListItem): string {
@@ -655,7 +813,9 @@ function formatAudioDetails(item: MediaListItem): string {
     details.push(`${item.audio_streams} audio ${item.audio_streams === 1 ? 'track' : 'tracks'}`);
   }
   if (item.subtitle_streams > 0) {
-    details.push(`${item.subtitle_streams} caption ${item.subtitle_streams === 1 ? 'track' : 'tracks'}`);
+    details.push(
+      `${item.subtitle_streams} caption ${item.subtitle_streams === 1 ? 'track' : 'tracks'}`,
+    );
   }
   return details.join(' · ') || '—';
 }
@@ -690,7 +850,8 @@ function RootsTable({
       <CardHeader className="border-b border-border/70 pb-5">
         <CardTitle>Library folders</CardTitle>
         <CardDescription>
-          {roots.length.toLocaleString()} {roots.length === 1 ? 'folder' : 'folders'} indexed locally
+          {roots.length.toLocaleString()} {roots.length === 1 ? 'folder' : 'folders'} indexed
+          locally
         </CardDescription>
       </CardHeader>
       <CardContent className="pt-2">
@@ -737,11 +898,7 @@ function RootsTable({
                           onClick={() => onScan(root.id)}
                           leftIcon={<ScanLine className="size-3.5" />}
                         >
-                          {scanPending
-                            ? 'Scanning folder…'
-                            : job
-                              ? 'Rescan folder'
-                              : 'Scan folder'}
+                          {scanPending ? 'Scanning folder…' : job ? 'Rescan folder' : 'Scan folder'}
                         </Button>
                         <Button
                           size="sm"
@@ -771,8 +928,7 @@ function ScanState({ live, job }: { live?: LiveScan; job?: ScanJob }) {
   if (!state) {
     return <span className="text-xs text-muted-foreground">Not scanned yet</span>;
   }
-  const hasProgress =
-    state.current !== undefined && state.total !== undefined && state.total > 0;
+  const hasProgress = state.current !== undefined && state.total !== undefined && state.total > 0;
   const progress = hasProgress
     ? Math.min(100, Math.round((state.current! / state.total!) * 100))
     : undefined;
@@ -837,8 +993,8 @@ function RemoveFolderDialog({
           Remove “{root.display_name}”?
         </h2>
         <p className="mt-2 text-sm text-muted-foreground">
-          This removes the folder and its media from the active LectorBit library.
-          Your original files and folders remain untouched on disk.
+          This removes the folder and its media from the active LectorBit library. Your original
+          files and folders remain untouched on disk.
         </p>
         <p className="mt-3 rounded-md bg-muted px-3 py-2 font-mono text-xs text-muted-foreground">
           {root.path_redacted}

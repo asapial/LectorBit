@@ -20,7 +20,12 @@ export function HomeRoute() {
   });
   const routine = routineQuery.data;
   const today = localIsoDate();
-  const focusDay = routine?.days.find((day) => day.date >= today) ?? routine?.days[0];
+  const focusDay =
+    routine?.days.find(
+      (day) => day.date >= today && day.items.some((item) => isActionable(item.status)),
+    ) ??
+    routine?.days.find((day) => day.date >= today) ??
+    routine?.days[0];
 
   return (
     <>
@@ -78,9 +83,7 @@ function EmptyRoutine() {
 
 function RoutineView({ routine, focusDate }: { routine: RoutinePlan; focusDate?: string }) {
   const focusDay = routine.days.find((day) => day.date === focusDate);
-  const nextItem = focusDay?.items.find(
-    (item) => !['done', 'skipped', 'postponed'].includes(item.status),
-  );
+  const nextItem = focusDay?.items.find((item) => isActionable(item.status));
   return (
     <div className="space-y-6">
       <section
@@ -204,6 +207,10 @@ function RoutineView({ routine, focusDate }: { routine: RoutinePlan; focusDate?:
       </section>
     </div>
   );
+}
+
+function isActionable(status: string): boolean {
+  return !['done', 'skipped', 'postponed'].includes(status);
 }
 
 function RoutineMetric({

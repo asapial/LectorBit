@@ -43,6 +43,13 @@ pub struct ReplanMediaState {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+struct TimedRange {
+    start_ms: u64,
+    end_ms: u64,
+    created_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CheckpointResult {
     Saved(ProgressSnapshot),
     Conflict(ProgressSnapshot),
@@ -315,7 +322,7 @@ async fn build_snapshot(
         ),
     };
     let rows = sqlx::query(
-        "SELECT start_ms, end_ms FROM playback_coverage_ranges \
+        "SELECT start_ms, end_ms, created_at FROM playback_coverage_ranges \
          WHERE media_id = ? ORDER BY start_ms, end_ms",
     )
     .bind(&item.media_id)
@@ -324,13 +331,38 @@ async fn build_snapshot(
     let ranges = rows
         .into_iter()
         .map(|row| {
-            Ok((
-                nonnegative_u64(row.try_get("start_ms")?),
-                nonnegative_u64(row.try_get("end_ms")?),
-            ))
+            Ok(TimedRange {
+                start_ms: nonnegative_u64(row.try_get("start_ms")?),
+                end_ms: nonnegative_u64(row.try_get("end_ms")?),
+                created_at: row.try_get("created_at")?,
+            })
         })
         .collect::<DbResult<Vec<_>>>()?;
-    let merged = merge_ranges(ranges);
+    // Reopen actions are range-specific coverage reset points. Earlier ranges
+    // remain append-only history, but cannot instantly complete a repeated or
+    // must-watch block (including its newly-created item after a replan).
+    let reset_rows = sqlx::query(
+        "SELECT source.raw_start_ms, source.raw_end_ms, action.created_at \
+         FROM study_actions action \
+         JOIN plan_version_items source ON source.id = action.plan_version_item_id \
+         WHERE source.media_id = ? \
+           AND action.kind IN ('postpone', 'repeat', 'must_watch') \
+         ORDER BY action.created_at, action.id",
+    )
+    .bind(&item.media_id)
+    .fetch_all(&mut **transaction)
+    .await?;
+    let reset_ranges = reset_rows
+        .into_iter()
+        .map(|row| {
+            Ok(TimedRange {
+                start_ms: nonnegative_u64(row.try_get("raw_start_ms")?),
+                end_ms: nonnegative_u64(row.try_get("raw_end_ms")?),
+                created_at: row.try_get("created_at")?,
+            })
+        })
+        .collect::<DbResult<Vec<_>>>()?;
+    let merged = effective_coverage_ranges(ranges, &reset_ranges);
     let covered_ms: u64 = merged.iter().map(|(start, end)| end - start).sum();
     let item_covered_ms: u64 = merged
         .iter()
@@ -384,15 +416,14 @@ async fn blocks_automatic_completion(
 ) -> DbResult<bool> {
     Ok(latest_completion_instruction(&mut **transaction, item_id)
         .await?
-        .is_some_and(|kind| matches!(kind.as_str(), "complete" | "skip" | "repeat" | "must_watch")))
+        .is_some_and(|kind| matches!(kind.as_str(), "complete" | "skip")))
 }
 
 fn completion_state(instruction: Option<&str>, covered_enough: bool) -> bool {
     match instruction {
         Some("complete" | "skip") => true,
-        // These instructions deliberately reopen the item. Old coverage remains
-        // history, but cannot silently complete the new request.
-        Some("postpone" | "repeat" | "must_watch") => false,
+        // For reopen instructions, `covered_enough` already excludes stale
+        // coverage from before the applicable reset point.
         _ => covered_enough,
     }
 }
@@ -431,6 +462,45 @@ fn row_to_item(row: sqlx::sqlite::SqliteRow) -> DbResult<PlaybackItem> {
     })
 }
 
+fn effective_coverage_ranges(
+    ranges: Vec<TimedRange>,
+    reset_ranges: &[TimedRange],
+) -> Vec<(u64, u64)> {
+    let mut effective = Vec::new();
+    for coverage in ranges {
+        if coverage.start_ms >= coverage.end_ms {
+            continue;
+        }
+        let mut segments = vec![(coverage.start_ms, coverage.end_ms)];
+        for reset in reset_ranges.iter().filter(|reset| {
+            coverage.created_at <= reset.created_at
+                && reset.start_ms < reset.end_ms
+                && reset.end_ms > coverage.start_ms
+                && reset.start_ms < coverage.end_ms
+        }) {
+            let mut remaining = Vec::with_capacity(segments.len() + 1);
+            for (start, end) in segments {
+                if reset.end_ms <= start || reset.start_ms >= end {
+                    remaining.push((start, end));
+                    continue;
+                }
+                if start < reset.start_ms {
+                    remaining.push((start, reset.start_ms.min(end)));
+                }
+                if reset.end_ms < end {
+                    remaining.push((reset.end_ms.max(start), end));
+                }
+            }
+            segments = remaining;
+            if segments.is_empty() {
+                break;
+            }
+        }
+        effective.extend(segments);
+    }
+    merge_ranges(effective)
+}
+
 fn merge_ranges(mut ranges: Vec<(u64, u64)>) -> Vec<(u64, u64)> {
     ranges.sort_unstable();
     let mut merged: Vec<(u64, u64)> = Vec::new();
@@ -464,6 +534,9 @@ fn nonnegative_u64(value: i64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{Db, PlansRepo};
+    use chrono::NaiveDate;
+    use lectorbit_core::planning::{DayLoad, PlanDraft, PlanningConstraints, ScheduledItem};
 
     #[test]
     fn coverage_ranges_merge_without_double_counting() {
@@ -480,10 +553,133 @@ mod tests {
     }
 
     #[test]
-    fn repeat_and_must_watch_override_historical_coverage() {
+    fn reopen_actions_can_complete_again_with_fresh_coverage() {
         assert!(completion_state(Some("complete"), false));
-        assert!(!completion_state(Some("repeat"), true));
-        assert!(!completion_state(Some("must_watch"), true));
+        assert!(!completion_state(Some("repeat"), false));
+        assert!(completion_state(Some("repeat"), true));
+        assert!(completion_state(Some("must_watch"), true));
         assert!(completion_state(None, true));
+    }
+
+    #[test]
+    fn reopen_actions_remove_only_stale_overlapping_coverage() {
+        let ranges = vec![
+            TimedRange {
+                start_ms: 0,
+                end_ms: 100,
+                created_at: "2026-08-13T10:00:00Z".into(),
+            },
+            TimedRange {
+                start_ms: 20,
+                end_ms: 40,
+                created_at: "2026-08-13T10:02:00Z".into(),
+            },
+        ];
+        let resets = vec![TimedRange {
+            start_ms: 20,
+            end_ms: 80,
+            created_at: "2026-08-13T10:01:00Z".into(),
+        }];
+
+        assert_eq!(
+            effective_coverage_ranges(ranges, &resets),
+            vec![(0, 40), (80, 100)]
+        );
+    }
+
+    #[tokio::test]
+    async fn repeat_resets_old_coverage_but_accepts_fresh_watching() {
+        let db = Db::open_in_memory().await.expect("database");
+        sqlx::query(
+            "INSERT INTO library_roots (id, display_name, canonical_path, registered_at) \
+             VALUES ('root', 'Course', 'C:/Course', '2000-01-01T00:00:00Z')",
+        )
+        .execute(db.pool())
+        .await
+        .expect("root");
+        sqlx::query(
+            "INSERT INTO media_files \
+             (id, root_id, path, size_bytes, mtime, discovered_at, display_name, \
+              media_kind, duration_ms, probe_status) \
+             VALUES ('media', 'root', 'C:/Course/lesson.mp4', 1, 'now', 'now', \
+                     'Lesson', 'video', 1000, 'ready')",
+        )
+        .execute(db.pool())
+        .await
+        .expect("media");
+        let date = NaiveDate::from_ymd_opt(2099, 1, 1).expect("date");
+        let draft = PlanDraft {
+            horizon_start: date,
+            horizon_end: date,
+            items: vec![ScheduledItem {
+                sequence: 0,
+                media_id: "media".into(),
+                chunk_id: "chunk".into(),
+                scheduled_for: date,
+                raw_start_ms: 0,
+                raw_end_ms: 1_000,
+                effective_duration_ms: 1_000,
+                break_after_ms: 0,
+            }],
+            days: vec![DayLoad {
+                date,
+                effective_content_ms: 1_000,
+                break_ms: 0,
+                item_count: 1,
+            }],
+            unscheduled: Vec::new(),
+        };
+        let committed = PlansRepo::new(db.pool().clone())
+            .commit(
+                "local",
+                "Course",
+                &PlanningConstraints::default(),
+                "[]",
+                &draft,
+            )
+            .await
+            .expect("plan");
+        let item_id: String =
+            sqlx::query_scalar("SELECT id FROM plan_version_items WHERE plan_version_id = ?")
+                .bind(&committed.plan_version_id)
+                .fetch_one(db.pool())
+                .await
+                .expect("item");
+        let item = PlaybackItem {
+            id: item_id,
+            plan_version_id: committed.plan_version_id,
+            media_id: "media".into(),
+            display_name: "Lesson".into(),
+            raw_start_ms: 0,
+            raw_end_ms: 1_000,
+            media_duration_ms: 1_000,
+        };
+        sqlx::query(
+            "INSERT INTO playback_coverage_ranges \
+             (id, media_id, start_ms, end_ms, created_at) \
+             VALUES ('old', 'media', 0, 1000, '2000-01-01T00:00:00Z')",
+        )
+        .execute(db.pool())
+        .await
+        .expect("old coverage");
+        let repo = Repo::new(db.pool().clone());
+        repo.record_action(&item, StudyActionKind::Repeat, None)
+            .await
+            .expect("repeat");
+
+        let reopened = repo.snapshot_for_item(&item).await.expect("snapshot");
+        assert_eq!(reopened.item_covered_ms, 0);
+        assert!(!reopened.completed);
+
+        let saved = repo
+            .checkpoint(&item, 900, None, Some((0, 900)))
+            .await
+            .expect("fresh checkpoint");
+        let CheckpointResult::Saved(fresh) = saved else {
+            panic!("unexpected checkpoint conflict");
+        };
+        assert_eq!(fresh.item_covered_ms, 900);
+        assert!(fresh.completed);
+        db.close().await;
     }
 }

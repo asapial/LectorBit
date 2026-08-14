@@ -18,6 +18,7 @@ use uuid::Uuid;
 use crate::{MediaError, MediaService};
 
 const CHECKPOINT_INTERVAL: Duration = Duration::from_secs(5);
+const PLAYBACK_CLOCK_TOLERANCE: Duration = Duration::from_secs(2);
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PlaybackCapability {
@@ -402,6 +403,14 @@ impl PlaybackService {
             .resolve_active_item(plan_item_id)
             .await?
             .ok_or(ProgressError::ItemUnavailable)?;
+        match (kind, at_ms) {
+            (StudyActionKind::Split, Some(position))
+                if position > item.raw_start_ms && position < item.raw_end_ms => {}
+            (StudyActionKind::Split, _) | (_, Some(_)) => {
+                return Err(ProgressError::InvalidInput);
+            }
+            _ => {}
+        }
         self.study.record_action(&item, kind, at_ms).await?;
         Ok(())
     }
@@ -498,13 +507,13 @@ impl PlaybackService {
             if !force && session.last_checkpoint.elapsed() < CHECKPOINT_INTERVAL {
                 return Ok(());
             }
-            let delta = state.position_ms.saturating_sub(session.last_position_ms);
-            let plausible_max = (10_000.0 * state.speed.max(0.5)).round() as u64;
-            let watched = (!session.last_paused
-                && state.position_ms >= session.last_position_ms
-                && delta > 0
-                && delta <= plausible_max)
-                .then_some((session.last_position_ms, state.position_ms));
+            let watched = plausible_watched_range(
+                session.last_position_ms,
+                state.position_ms,
+                session.last_paused,
+                session.last_checkpoint.elapsed(),
+                state.speed,
+            );
             (session.item.clone(), session.progress_version, watched)
         };
         let mut expected = expected_version;
@@ -533,6 +542,26 @@ impl PlaybackService {
         }
         Ok(())
     }
+}
+
+fn plausible_watched_range(
+    previous_ms: u64,
+    current_ms: u64,
+    was_paused: bool,
+    elapsed: Duration,
+    speed: f64,
+) -> Option<(u64, u64)> {
+    let delta = current_ms.checked_sub(previous_ms)?;
+    if was_paused || delta == 0 {
+        return None;
+    }
+    // Checkpoints normally arrive every five seconds, but a suspended WebView
+    // or a slow IPC round-trip can legitimately take longer. Tie the accepted
+    // playhead advance to real elapsed time instead of a fixed ten-second cap,
+    // while retaining a small allowance for independent media/timer clocks.
+    let plausible_ms = elapsed.as_secs_f64() * 1_000.0 * speed.clamp(0.5, 2.0)
+        + PLAYBACK_CLOCK_TOLERANCE.as_millis() as f64;
+    (delta <= plausible_ms.ceil() as u64).then_some((previous_ms, current_ms))
 }
 
 fn to_view(item: &PlaybackItem, state: &EngineState, progress: &ProgressSnapshot) -> PlaybackView {
@@ -589,5 +618,21 @@ mod tests {
             },
         );
         assert_eq!(view.duration_ms, 2_000);
+    }
+
+    #[test]
+    fn watched_range_uses_elapsed_time_instead_of_a_fixed_delta() {
+        assert_eq!(
+            plausible_watched_range(1_000, 31_000, false, Duration::from_secs(30), 1.0),
+            Some((1_000, 31_000))
+        );
+        assert_eq!(
+            plausible_watched_range(1_000, 31_000, false, Duration::from_secs(5), 1.0),
+            None
+        );
+        assert_eq!(
+            plausible_watched_range(1_000, 2_000, true, Duration::from_secs(30), 1.0),
+            None
+        );
     }
 }

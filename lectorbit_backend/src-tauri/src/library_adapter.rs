@@ -5,7 +5,7 @@ use lectorbit_services::{Job, JobStatus, LibraryService, MediaService, ScanJobPa
 use sqlx::SqlitePool;
 use tauri_plugin_lectorbit::{
     BoxFuture, LibraryErrorCode, LibraryErrorKind, LibraryOps, LibraryRootDto, MediaListItemDto,
-    MediaPageDto, ScanEventSink, ScanJobDto, ScanProgressDto,
+    MediaPageDto, MediaSummaryDto, ScanEventSink, ScanJobDto, ScanProgressDto,
 };
 
 use crate::media_adapter::ProbeScheduler;
@@ -305,6 +305,13 @@ fn to_media_page_dto(page: lectorbit_db::MediaPage) -> MediaPageDto {
             })
             .collect(),
         next_cursor: page.next_cursor,
+        summary: MediaSummaryDto {
+            total_items: page.summary.total_items,
+            ready_items: page.summary.ready_items,
+            attention_items: page.summary.attention_items,
+            known_duration_ms: page.summary.known_duration_ms,
+            duration_known_items: page.summary.duration_known_items,
+        },
     }
 }
 

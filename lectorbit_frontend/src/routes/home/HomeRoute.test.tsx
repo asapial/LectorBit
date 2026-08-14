@@ -72,4 +72,64 @@ describe('HomeRoute', () => {
       '/player/item',
     );
   });
+
+  it('advances focused study past an already-finished day', async () => {
+    getRoutineMock.mockResolvedValue({
+      plan_id: 'plan',
+      plan_version_id: 'version',
+      title: 'Course',
+      horizon_start: '2099-08-10',
+      horizon_end: '2099-08-11',
+      created_at: '2026-08-10T00:00:00Z',
+      days: [
+        {
+          id: 'day-1',
+          date: '2099-08-10',
+          effective_content_ms: 60_000,
+          break_ms: 0,
+          items: [
+            {
+              id: 'item-1',
+              media_id: 'media-1',
+              display_name: 'Finished lesson',
+              chunk_id: 'chunk-1',
+              sequence: 0,
+              raw_start_ms: 0,
+              raw_end_ms: 60_000,
+              effective_duration_ms: 60_000,
+              break_after_ms: 0,
+              status: 'done',
+            },
+          ],
+        },
+        {
+          id: 'day-2',
+          date: '2099-08-11',
+          effective_content_ms: 60_000,
+          break_ms: 0,
+          items: [
+            {
+              id: 'item-2',
+              media_id: 'media-2',
+              display_name: 'Next lesson',
+              chunk_id: 'chunk-2',
+              sequence: 1,
+              raw_start_ms: 0,
+              raw_end_ms: 60_000,
+              effective_duration_ms: 60_000,
+              break_after_ms: 0,
+              status: 'pending',
+            },
+          ],
+        },
+      ],
+    });
+
+    renderRoute();
+
+    expect(await screen.findByRole('link', { name: /Start focused study/ })).toHaveAttribute(
+      'href',
+      '/player/item-2',
+    );
+  });
 });

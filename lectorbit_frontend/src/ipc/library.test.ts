@@ -54,6 +54,13 @@ const mediaPage = {
     },
   ],
   next_cursor: null,
+  summary: {
+    total_items: 42,
+    ready_items: 36,
+    attention_items: 2,
+    known_duration_ms: 7_200_000,
+    duration_known_items: 40,
+  },
 };
 
 vi.mock('@tauri-apps/api/core', () => {
@@ -84,9 +91,7 @@ vi.mock('@tauri-apps/api/core', () => {
         return Promise.resolve(job);
       }
       if (command === 'plugin:lectorbit|library_revoke_root') {
-        return Promise.reject(
-          Object.assign(new Error('unknown root'), { kind: 'not_found' }),
-        );
+        return Promise.reject(Object.assign(new Error('unknown root'), { kind: 'not_found' }));
       }
       return Promise.reject(new Error(`unknown command ${command}`));
     }),
@@ -114,9 +119,7 @@ describe('ipc/library', () => {
   it('delegates folder selection and registration to one command', async () => {
     const root = await pickAndRegisterRoot();
     expect(root?.id).toBe('root-1');
-    expect(invoke).toHaveBeenCalledWith(
-      'plugin:lectorbit|library_pick_and_register_root',
-    );
+    expect(invoke).toHaveBeenCalledWith('plugin:lectorbit|library_pick_and_register_root');
   });
 
   it('parses durable scan jobs', async () => {
@@ -129,10 +132,18 @@ describe('ipc/library', () => {
 
     expect(page.items[0]?.duration_ms).toBe(90500);
     expect(page.items[0]).not.toHaveProperty('path');
-    expect(invoke).toHaveBeenCalledWith(
-      'plugin:lectorbit|library_list_media',
-      { args: { root_id: null, cursor: null, limit: 25 } },
-    );
+    expect(page.summary?.total_items).toBe(42);
+    expect(invoke).toHaveBeenCalledWith('plugin:lectorbit|library_list_media', {
+      args: { root_id: null, cursor: null, limit: 25 },
+    });
+  });
+
+  it('scopes media pagination to one folder module', async () => {
+    await listMedia({ rootId: 'root-1', cursor: 'opaque-next', limit: 20 });
+
+    expect(invoke).toHaveBeenCalledWith('plugin:lectorbit|library_list_media', {
+      args: { root_id: 'root-1', cursor: 'opaque-next', limit: 20 },
+    });
   });
 
   it('delivers typed channel progress while enqueueing', async () => {
