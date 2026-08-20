@@ -5,6 +5,7 @@ import CheckCircle2 from 'lucide-react/dist/esm/icons/circle-check-big';
 import ChevronRight from 'lucide-react/dist/esm/icons/chevron-right';
 import ListChecks from 'lucide-react/dist/esm/icons/list-checks';
 import LoaderCircle from 'lucide-react/dist/esm/icons/loader-circle';
+import Search from 'lucide-react/dist/esm/icons/search';
 import Sparkles from 'lucide-react/dist/esm/icons/sparkles';
 import TriangleAlert from 'lucide-react/dist/esm/icons/triangle-alert';
 import { Link, useSearchParams } from 'react-router';
@@ -76,6 +77,8 @@ export function PlanRoute() {
   const [planIntentText, setPlanIntentText] = useState('');
   const [planIntentMessage, setPlanIntentMessage] = useState<string | null>(null);
   const [candidatePage, setCandidatePage] = useState(0);
+  const [candidateFilter, setCandidateFilter] = useState('');
+  const [aiExpanded, setAiExpanded] = useState(false);
   const [moduleSelectionInitialized, setModuleSelectionInitialized] = useState(false);
 
   const candidatesQuery = useInfiniteQuery({
@@ -114,6 +117,7 @@ export function PlanRoute() {
     setAiError(null);
     setPlanIntentText('');
     setPlanIntentMessage(null);
+    setCandidateFilter('');
   }, [moduleFilter]);
   const loadingCompleteModule = Boolean(
     moduleFilter &&
@@ -160,6 +164,9 @@ export function PlanRoute() {
     queryKey: ['cloud-planning', 'status'],
     queryFn: getCloudPlanningStatus,
   });
+  useEffect(() => {
+    if (cloudPlanningQuery.data?.configured) setAiExpanded(true);
+  }, [cloudPlanningQuery.data?.configured]);
 
   const previewMutation = useMutation({
     mutationFn: previewPlan,
@@ -231,9 +238,7 @@ export function PlanRoute() {
         ...(intent.daily_budget_minutes === null
           ? {}
           : { daily_budget_minutes: intent.daily_budget_minutes }),
-        ...(intent.allowed_weekdays === null
-          ? {}
-          : { allowed_weekdays: intent.allowed_weekdays }),
+        ...(intent.allowed_weekdays === null ? {} : { allowed_weekdays: intent.allowed_weekdays }),
         ...(intent.preferred_session_minutes === null
           ? {}
           : { preferred_session_minutes: intent.preferred_session_minutes }),
@@ -279,6 +284,13 @@ export function PlanRoute() {
   const moduleExceedsAiLimit = Boolean(
     moduleFilter && (candidates.length > AI_CANDIDATE_LIMIT || candidatesQuery.hasNextPage),
   );
+  const visibleCandidates = useMemo(() => {
+    const query = candidateFilter.trim().toLocaleLowerCase();
+    if (!query) return currentCandidates;
+    return currentCandidates.filter((candidate) =>
+      `${candidate.display_name} ${candidate.module_name}`.toLocaleLowerCase().includes(query),
+    );
+  }, [candidateFilter, currentCandidates]);
 
   const currentRequest = useMemo<PlanRequest>(() => {
     const preferredOrder =
@@ -345,6 +357,25 @@ export function PlanRoute() {
     markEdited();
   }
 
+  function selectCurrentPage() {
+    setSelections((current) => ({
+      ...current,
+      ...Object.fromEntries(
+        visibleCandidates
+          .filter((candidate) => !current[candidate.media_id])
+          .map((candidate) => [candidate.media_id, defaultSelection(candidate.media_id)]),
+      ),
+    }));
+    setAiSuggestion(null);
+    markEdited();
+  }
+
+  function clearSelections() {
+    setSelections({});
+    setAiSuggestion(null);
+    markEdited();
+  }
+
   function requestPreview(request = currentRequest) {
     if (request.selections.length === 0) {
       setFormError('Select at least one ready media item.');
@@ -381,23 +412,36 @@ export function PlanRoute() {
     <>
       <PageHeader
         eyebrow="Plan Builder"
-        title="Build a calm, feasible routine"
-        description="Choose ready media and set the limits that matter. LectorBit owns the arithmetic and never commits a plan that breaks a hard constraint."
+        title="Design a study week you can keep"
+        description="Pick what matters, define your real availability, then preview a routine that fits before anything is committed."
       />
 
-      <div className="grid min-w-0 items-start gap-6 min-[1450px]:grid-cols-[minmax(0,1fr)_24rem]">
+      <BuilderProgress
+        selectedCount={Object.keys(selections).length}
+        dailyMinutes={constraints.daily_budget_minutes}
+        studyDayCount={constraints.allowed_weekdays.length}
+        preview={preview}
+      />
+
+      <div className="mt-6 grid min-w-0 items-start gap-6 xl:grid-cols-[minmax(0,1fr)_22rem]">
         <div className="space-y-6">
-          <Card>
-            <CardHeader className="sm:flex-row sm:items-start sm:justify-between">
-              <div>
-                <CardTitle>1. Choose study media</CardTitle>
-                <CardDescription>
-                  Only metadata-ready files appear. Selected timestamps stay backend-owned.
-                </CardDescription>
+          <Card className="overflow-hidden">
+            <CardHeader className="border-b border-border/70 bg-muted/15 sm:flex-row sm:items-start sm:justify-between">
+              <div className="flex min-w-0 items-start gap-3">
+                <StepNumber value="1" />
+                <div>
+                  <CardTitle>Choose what to study</CardTitle>
+                  <CardDescription className="mt-1">
+                    Build a focused queue from metadata-ready lessons. You can tune priority and
+                    deadlines after selecting.
+                  </CardDescription>
+                </div>
               </div>
-              <Badge tone="primary">{Object.keys(selections).length} selected</Badge>
+              <Badge tone={Object.keys(selections).length > 0 ? 'success' : 'neutral'}>
+                {Object.keys(selections).length} selected
+              </Badge>
             </CardHeader>
-            <CardContent>
+            <CardContent className="pt-5">
               {candidatesQuery.isError ? (
                 <InlineError message="Ready media could not be loaded." />
               ) : candidatesQuery.isLoading || (moduleFilter && !moduleSelectionInitialized) ? (
@@ -422,12 +466,54 @@ export function PlanRoute() {
                   </Link>
                 </div>
               ) : (
-                <CandidateList
-                  candidates={currentCandidates}
-                  selections={selections}
-                  onToggle={toggleCandidate}
-                  onUpdate={updateSelection}
-                />
+                <>
+                  <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <label className="relative min-w-0 flex-1" htmlFor="candidate-filter">
+                      <Search
+                        aria-hidden="true"
+                        className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
+                      />
+                      <input
+                        id="candidate-filter"
+                        value={candidateFilter}
+                        onChange={(event) => setCandidateFilter(event.target.value)}
+                        placeholder="Filter this page"
+                        className={cn(inputClass, 'mt-0 pl-9')}
+                      />
+                      <span className="sr-only">Filter ready media on this page</span>
+                    </label>
+                    <div className="flex shrink-0 gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={visibleCandidates.length === 0}
+                        onClick={selectCurrentPage}
+                      >
+                        Select page
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        disabled={Object.keys(selections).length === 0}
+                        onClick={clearSelections}
+                      >
+                        Clear
+                      </Button>
+                    </div>
+                  </div>
+                  {visibleCandidates.length > 0 ? (
+                    <CandidateList
+                      candidates={visibleCandidates}
+                      selections={selections}
+                      onToggle={toggleCandidate}
+                      onUpdate={updateSelection}
+                    />
+                  ) : (
+                    <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
+                      No lessons on this page match “{candidateFilter}”.
+                    </div>
+                  )}
+                </>
               )}
               {currentCandidates.length > 0 && (!moduleFilter || moduleSelectionInitialized) ? (
                 <CandidatePagination
@@ -454,259 +540,298 @@ export function PlanRoute() {
             </CardContent>
           </Card>
 
-          <Card className="ai-studio-card relative overflow-hidden border-primary/20">
-            <div className="pointer-events-none absolute -right-16 -top-20 size-56 rounded-full bg-primary/10 blur-3xl" />
-            <CardHeader>
+          <Card className="relative overflow-hidden border-primary/15 bg-primary/[0.025]">
+            <div className="pointer-events-none absolute -right-16 -top-20 size-48 rounded-full bg-primary/8 blur-3xl" />
+            <CardHeader className={cn(aiExpanded && 'border-b border-primary/10')}>
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="flex min-w-0 items-start gap-3">
-                  <span className="grid size-10 shrink-0 place-items-center rounded-xl border border-primary/15 bg-gradient-to-br from-primary to-vermillion-700 text-primary-foreground shadow-[0_8px_24px_color-mix(in_srgb,var(--primary)_24%,transparent)]">
+                  <span className="grid size-9 shrink-0 place-items-center rounded-lg border border-primary/15 bg-primary/10 text-primary">
                     <Sparkles className="size-4" />
                   </span>
                   <div>
-                    <CardTitle>2. Optional AI planning assistants</CardTitle>
-                    <CardDescription className="mt-1 max-w-2xl leading-6">
-                      Interpret a natural-language routine or suggest transcript-grounded
-                      prerequisites. The local deterministic planner owns order, priority, dates,
-                      and every hard constraint.
+                    <CardTitle>AI assist</CardTitle>
+                    <CardDescription className="mt-1 max-w-2xl">
+                      Optional help for interpreting constraints and ordering prerequisites.
                     </CardDescription>
                   </div>
                 </div>
-                <Badge tone={cloudPlanningQuery.data?.configured ? 'success' : 'primary'}>
-                  <span className="size-1.5 rounded-full bg-current" />
-                  {cloudPlanningQuery.data?.configured ? 'Ready' : 'Optional'}
-                </Badge>
+                <div className="flex items-center gap-2">
+                  <Badge tone={cloudPlanningQuery.data?.configured ? 'success' : 'neutral'}>
+                    {cloudPlanningQuery.data?.configured ? 'Connected' : 'Optional'}
+                  </Badge>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    aria-expanded={aiExpanded}
+                    onClick={() => setAiExpanded((expanded) => !expanded)}
+                  >
+                    {aiExpanded ? 'Hide' : 'Open'}
+                  </Button>
+                </div>
               </div>
             </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid gap-2 sm:grid-cols-3" aria-label="AI planning boundaries">
-                <AiFact value="Grounded summaries" label="No media or raw transcripts" />
-                <AiFact value="You approve" label="Consent every request" />
-                <AiFact value="Locally checked" label="Feasibility stays on-device" />
-              </div>
-
-              {cloudPlanningQuery.isPending ? (
-                <LoadingLine label="Checking AI planning availability" />
-              ) : cloudPlanningQuery.isError ? (
-                <div className="rounded-xl border border-warning/30 bg-warning/10 p-4 text-sm">
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                    <div>
-                      <p className="font-medium">AI service status is unavailable</p>
-                      <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                        The desktop bridge did not respond. Your local plan builder still works.
-                      </p>
-                    </div>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => void cloudPlanningQuery.refetch()}
-                    >
-                      Check again
-                    </Button>
-                  </div>
+            {aiExpanded ? (
+              <CardContent className="space-y-4 pt-5">
+                <div className="grid gap-2 sm:grid-cols-3" aria-label="AI planning boundaries">
+                  <AiFact value="Grounded summaries" label="No media or raw transcripts" />
+                  <AiFact value="You approve" label="Consent every request" />
+                  <AiFact value="Locally checked" label="Feasibility stays on-device" />
                 </div>
-              ) : cloudPlanningQuery.data?.configured ? (
-                <>
-                  <div className="rounded-xl border border-primary/15 bg-background/65 p-4 text-sm text-muted-foreground shadow-sm backdrop-blur">
-                    <p className="leading-6">
-                      LectorBit will send{' '}
-                      {Object.keys(selections).length > 0 ? 'the selected' : 'the current page of'}{' '}
-                      module names, video names, durations, the limits below, and generated
-                      transcript-grounded summaries when available to OpenRouter. It will not send
-                      media, raw transcripts, viewing history, or absolute paths.
-                    </p>
-                    <label className="mt-4 flex cursor-pointer items-start gap-3 rounded-lg border border-border/70 bg-card/75 p-3 text-foreground transition-colors hover:border-primary/25">
-                      <input
-                        type="checkbox"
-                        className="mt-0.5 size-4 shrink-0 accent-primary"
-                        checked={aiConsent}
-                        onChange={(event) => setAiConsent(event.target.checked)}
-                      />
-                      <span>
-                        I understand this request uses my OpenRouter account and free model
-                        providers may retain or use the metadata under their policies.
-                      </span>
-                    </label>
-                  </div>
-                  <div className="rounded-xl border bg-background/65 p-4">
-                    <label htmlFor="natural-plan-request" className="text-sm font-semibold">
-                      Describe your routine in plain language
-                    </label>
-                    <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                      AI only converts your words into typed fields. Rust still validates and
-                      schedules everything.
-                    </p>
-                    <textarea
-                      id="natural-plan-request"
-                      value={planIntentText}
-                      onChange={(event) => setPlanIntentText(event.target.value)}
-                      rows={3}
-                      maxLength={1000}
-                      placeholder="Study 45 minutes on weekdays and finish this module before September 30."
-                      className="mt-3 w-full rounded-lg border bg-background p-3 text-sm leading-6 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                    />
-                    <div className="mt-3 flex flex-wrap items-center gap-3">
+
+                {cloudPlanningQuery.isPending ? (
+                  <LoadingLine label="Checking AI planning availability" />
+                ) : cloudPlanningQuery.isError ? (
+                  <div className="rounded-xl border border-warning/30 bg-warning/10 p-4 text-sm">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <p className="font-medium">AI service status is unavailable</p>
+                        <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                          The desktop bridge did not respond. Your local plan builder still works.
+                        </p>
+                      </div>
                       <Button
                         variant="outline"
-                        disabled={
-                          !aiConsent ||
-                          !planIntentText.trim() ||
-                          planIntentMutation.isPending
-                        }
-                        onClick={() => planIntentMutation.mutate()}
+                        size="sm"
+                        onClick={() => void cloudPlanningQuery.refetch()}
                       >
-                        {planIntentMutation.isPending ? (
+                        Check again
+                      </Button>
+                    </div>
+                  </div>
+                ) : cloudPlanningQuery.data?.configured ? (
+                  <>
+                    <div className="rounded-xl border border-primary/15 bg-background/65 p-4 text-sm text-muted-foreground shadow-sm backdrop-blur">
+                      <p className="leading-6">
+                        LectorBit will send{' '}
+                        {Object.keys(selections).length > 0
+                          ? 'the selected'
+                          : 'the current page of'}{' '}
+                        module names, video names, durations, the limits below, and generated
+                        transcript-grounded summaries when available to OpenRouter. It will not send
+                        media, raw transcripts, viewing history, or absolute paths.
+                      </p>
+                      <label className="mt-4 flex cursor-pointer items-start gap-3 rounded-lg border border-border/70 bg-card/75 p-3 text-foreground transition-colors hover:border-primary/25">
+                        <input
+                          type="checkbox"
+                          className="mt-0.5 size-4 shrink-0 accent-primary"
+                          checked={aiConsent}
+                          onChange={(event) => setAiConsent(event.target.checked)}
+                        />
+                        <span>
+                          I understand this request uses my OpenRouter account and free model
+                          providers may retain or use the metadata under their policies.
+                        </span>
+                      </label>
+                    </div>
+                    <div className="rounded-xl border bg-background/65 p-4">
+                      <label htmlFor="natural-plan-request" className="text-sm font-semibold">
+                        Describe your routine in plain language
+                      </label>
+                      <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                        AI only converts your words into typed fields. Rust still validates and
+                        schedules everything.
+                      </p>
+                      <textarea
+                        id="natural-plan-request"
+                        value={planIntentText}
+                        onChange={(event) => setPlanIntentText(event.target.value)}
+                        rows={3}
+                        maxLength={1000}
+                        placeholder="Study 45 minutes on weekdays and finish this module before September 30."
+                        className="mt-3 w-full rounded-lg border bg-background p-3 text-sm leading-6 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      />
+                      <div className="mt-3 flex flex-wrap items-center gap-3">
+                        <Button
+                          variant="outline"
+                          disabled={
+                            !aiConsent || !planIntentText.trim() || planIntentMutation.isPending
+                          }
+                          onClick={() => planIntentMutation.mutate()}
+                        >
+                          {planIntentMutation.isPending ? (
+                            <LoaderCircle className="size-4 animate-spin" />
+                          ) : (
+                            <Sparkles className="size-4" />
+                          )}
+                          Apply interpreted constraints
+                        </Button>
+                        {planIntentMessage ? (
+                          <p className="text-xs text-success" role="status">
+                            {planIntentMessage}
+                          </p>
+                        ) : null}
+                      </div>
+                    </div>
+                    {aiError ? <InlineError message={aiError} /> : null}
+                    {moduleExceedsAiLimit ? (
+                      <div
+                        className="rounded-xl border border-warning/30 bg-warning/10 p-4 text-sm"
+                        role="alert"
+                      >
+                        This module has more than {AI_CANDIDATE_LIMIT} ready videos, so one AI
+                        request cannot cover the whole folder. AI can sequence a selected subset of
+                        at most {AI_CANDIDATE_LIMIT}
+                        {selectedCandidateCount > AI_CANDIDATE_LIMIT
+                          ? `; deselect at least ${(selectedCandidateCount - AI_CANDIDATE_LIMIT).toLocaleString()} to continue`
+                          : ''}
+                        . Local deterministic planning still supports the selected media.
+                      </div>
+                    ) : null}
+                    <Button
+                      className="w-full sm:w-auto"
+                      disabled={
+                        !aiConsent ||
+                        aiSourceCount === 0 ||
+                        aiSourceCount > AI_CANDIDATE_LIMIT ||
+                        (Boolean(moduleFilter) && !moduleSelectionInitialized) ||
+                        aiSuggestionMutation.isPending
+                      }
+                      onClick={() => aiSuggestionMutation.mutate()}
+                      leftIcon={
+                        aiSuggestionMutation.isPending ? (
                           <LoaderCircle className="size-4 animate-spin" />
                         ) : (
                           <Sparkles className="size-4" />
-                        )}
-                        Apply interpreted constraints
-                      </Button>
-                      {planIntentMessage ? (
-                        <p className="text-xs text-success" role="status">
-                          {planIntentMessage}
-                        </p>
-                      ) : null}
-                    </div>
-                  </div>
-                  {aiError ? <InlineError message={aiError} /> : null}
-                  {moduleExceedsAiLimit ? (
-                    <div
-                      className="rounded-xl border border-warning/30 bg-warning/10 p-4 text-sm"
-                      role="alert"
+                        )
+                      }
                     >
-                      This module has more than {AI_CANDIDATE_LIMIT} ready videos, so one AI request
-                      cannot cover the whole folder. AI can sequence a selected subset of at most{' '}
-                      {AI_CANDIDATE_LIMIT}
-                      {selectedCandidateCount > AI_CANDIDATE_LIMIT
-                        ? `; deselect at least ${(selectedCandidateCount - AI_CANDIDATE_LIMIT).toLocaleString()} to continue`
-                        : ''}
-                      . Local deterministic planning still supports the selected media.
-                    </div>
-                  ) : null}
-                  <Button
-                    className="w-full sm:w-auto"
-                    disabled={
-                      !aiConsent ||
-                      aiSourceCount === 0 ||
-                      aiSourceCount > AI_CANDIDATE_LIMIT ||
-                      (Boolean(moduleFilter) && !moduleSelectionInitialized) ||
-                      aiSuggestionMutation.isPending
-                    }
-                    onClick={() => aiSuggestionMutation.mutate()}
-                    leftIcon={
-                      aiSuggestionMutation.isPending ? (
-                        <LoaderCircle className="size-4 animate-spin" />
-                      ) : (
-                        <Sparkles className="size-4" />
-                      )
-                    }
-                  >
-                    {aiSuggestionMutation.isPending
-                      ? 'Checking prerequisites…'
-                      : 'Suggest grounded prerequisites'}
-                  </Button>
-                  {aiSuggestionMutation.isPending ? (
-                    <p className="text-xs text-muted-foreground" role="status" aria-live="polite">
-                      A compatible free model is being selected. Free providers can take a few
-                      minutes during busy periods.
+                      {aiSuggestionMutation.isPending
+                        ? 'Checking prerequisites…'
+                        : 'Suggest grounded prerequisites'}
+                    </Button>
+                    {aiSuggestionMutation.isPending ? (
+                      <p className="text-xs text-muted-foreground" role="status" aria-live="polite">
+                        A compatible free model is being selected. Free providers can take a few
+                        minutes during busy periods.
+                      </p>
+                    ) : null}
+                  </>
+                ) : (
+                  <div className="rounded-xl border border-dashed border-primary/25 bg-background/45 p-4 text-sm text-muted-foreground">
+                    <p className="font-medium text-foreground">Connect your private AI key</p>
+                    <p className="mt-1 leading-6">
+                      Add your OpenRouter key securely in{' '}
+                      <Link to="/settings" className="font-semibold text-primary hover:underline">
+                        Settings
+                      </Link>{' '}
+                      to enable AI suggestions.
                     </p>
-                  ) : null}
-                </>
-              ) : (
-                <div className="rounded-xl border border-dashed border-primary/25 bg-background/45 p-4 text-sm text-muted-foreground">
-                  <p className="font-medium text-foreground">Connect your private AI key</p>
-                  <p className="mt-1 leading-6">
-                    Add your OpenRouter key securely in{' '}
-                    <Link to="/settings" className="font-semibold text-primary hover:underline">
-                      Settings
-                    </Link>{' '}
-                    to enable AI suggestions.
-                  </p>
-                </div>
-              )}
-              {aiSuggestion ? (
-                <div className="rounded-xl border border-success/25 bg-success/10 p-4 shadow-[0_12px_32px_rgba(26,156,107,0.08)]">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <p className="flex items-center gap-2 font-display font-semibold">
-                      <CheckCircle2 className="size-4 text-success" /> {aiSuggestion.title}
-                    </p>
-                    <Badge tone="success">Prerequisites applied</Badge>
                   </div>
-                  <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-                    {aiSuggestion.description}
-                  </p>
-                  <ol className="mt-3 space-y-2">
-                    {aiSuggestion.items.slice(0, 6).map((item, index) => (
-                      <li
-                        key={item.media_id}
-                        className="flex gap-3 rounded-lg bg-background/55 p-2.5 text-xs text-muted-foreground"
-                      >
-                        <span className="grid size-5 shrink-0 place-items-center rounded-md bg-success/15 font-mono text-[10px] font-semibold text-success">
-                          {index + 1}
-                        </span>
-                        <span>
-                          <strong className="font-medium text-foreground">
-                            {candidateName(candidates, item.media_id)}
-                          </strong>{' '}
-                          — {item.reason}
-                        </span>
-                      </li>
-                    ))}
-                  </ol>
-                  {aiSuggestion.items.length > 6 ? (
-                    <p className="mt-2 text-xs text-muted-foreground">
-                      + {aiSuggestion.items.length - 6} more ordered videos
+                )}
+                {aiSuggestion ? (
+                  <div className="rounded-xl border border-success/25 bg-success/10 p-4 shadow-[0_12px_32px_rgba(26,156,107,0.08)]">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="flex items-center gap-2 font-display font-semibold">
+                        <CheckCircle2 className="size-4 text-success" /> {aiSuggestion.title}
+                      </p>
+                      <Badge tone="success">Prerequisites applied</Badge>
+                    </div>
+                    <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+                      {aiSuggestion.description}
                     </p>
-                  ) : null}
-                  <p className="mt-3 font-mono text-[10px] text-muted-foreground">
-                    Suggested by {aiSuggestion.model}; order and feasibility remain local
-                  </p>
-                </div>
-              ) : null}
-            </CardContent>
+                    <ol className="mt-3 space-y-2">
+                      {aiSuggestion.items.slice(0, 6).map((item, index) => (
+                        <li
+                          key={item.media_id}
+                          className="flex gap-3 rounded-lg bg-background/55 p-2.5 text-xs text-muted-foreground"
+                        >
+                          <span className="grid size-5 shrink-0 place-items-center rounded-md bg-success/15 font-mono text-[10px] font-semibold text-success">
+                            {index + 1}
+                          </span>
+                          <span>
+                            <strong className="font-medium text-foreground">
+                              {candidateName(candidates, item.media_id)}
+                            </strong>{' '}
+                            — {item.reason}
+                          </span>
+                        </li>
+                      ))}
+                    </ol>
+                    {aiSuggestion.items.length > 6 ? (
+                      <p className="mt-2 text-xs text-muted-foreground">
+                        + {aiSuggestion.items.length - 6} more ordered videos
+                      </p>
+                    ) : null}
+                    <p className="mt-3 font-mono text-[10px] text-muted-foreground">
+                      Suggested by {aiSuggestion.model}; order and feasibility remain local
+                    </p>
+                  </div>
+                ) : null}
+              </CardContent>
+            ) : null}
           </Card>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>3. Set your constraints</CardTitle>
-              <CardDescription>
-                Time budgets are hard caps. Playback speed changes effective duration, never raw
-                timestamps.
-              </CardDescription>
+          <Card className="overflow-hidden">
+            <CardHeader className="border-b border-border/70 bg-muted/15">
+              <div className="flex items-start gap-3">
+                <StepNumber value="2" />
+                <div>
+                  <CardTitle>Shape your study week</CardTitle>
+                  <CardDescription className="mt-1">
+                    Set honest availability. These limits are hard caps, so the preview stays
+                    realistic.
+                  </CardDescription>
+                </div>
+              </div>
             </CardHeader>
-            <CardContent className="space-y-5">
-              <fieldset>
-                <legend className="mb-2 text-sm font-medium">Study days</legend>
-                <div className="flex flex-wrap gap-2">
-                  {weekdays.map(([label, value], index) => {
-                    const active = constraints.allowed_weekdays.includes(value);
-                    return (
+            <CardContent className="space-y-6 pt-5">
+              <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
+                <fieldset>
+                  <legend className="mb-2 text-sm font-semibold">Days you can study</legend>
+                  <div className="grid grid-cols-7 gap-1.5 sm:max-w-md">
+                    {weekdays.map(([label, value], index) => {
+                      const active = constraints.allowed_weekdays.includes(value);
+                      return (
+                        <button
+                          key={`${label}-${index}`}
+                          type="button"
+                          aria-pressed={active}
+                          aria-label={weekdayName(value)}
+                          onClick={() => {
+                            const allowed = active
+                              ? constraints.allowed_weekdays.filter((day) => day !== value)
+                              : [...constraints.allowed_weekdays, value].sort();
+                            updateConstraints({ ...constraints, allowed_weekdays: allowed });
+                          }}
+                          className={cn(
+                            'grid h-10 min-w-0 place-items-center rounded-lg border text-sm font-semibold transition-[background-color,border-color,color,transform] active:scale-95',
+                            active
+                              ? 'border-primary/35 bg-primary text-primary-foreground shadow-sm'
+                              : 'bg-background text-muted-foreground hover:border-primary/25 hover:bg-secondary',
+                          )}
+                        >
+                          {label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </fieldset>
+                <div>
+                  <p className="mb-2 text-sm font-semibold">Quick daily budget</p>
+                  <div className="flex flex-wrap gap-2" aria-label="Daily budget presets">
+                    {[30, 45, 60, 90].map((minutes) => (
                       <button
-                        key={`${label}-${index}`}
+                        key={minutes}
                         type="button"
-                        aria-pressed={active}
-                        aria-label={weekdayName(value)}
-                        onClick={() => {
-                          const allowed = active
-                            ? constraints.allowed_weekdays.filter((day) => day !== value)
-                            : [...constraints.allowed_weekdays, value].sort();
-                          updateConstraints({ ...constraints, allowed_weekdays: allowed });
-                        }}
+                        aria-pressed={constraints.daily_budget_minutes === minutes}
+                        onClick={() =>
+                          updateConstraints({ ...constraints, daily_budget_minutes: minutes })
+                        }
                         className={cn(
-                          'grid size-9 place-items-center rounded-md border text-sm font-medium transition-colors',
-                          active
-                            ? 'border-primary bg-accent text-accent-foreground'
-                            : 'bg-background text-muted-foreground hover:bg-secondary',
+                          'rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors',
+                          constraints.daily_budget_minutes === minutes
+                            ? 'border-primary bg-primary/10 text-primary'
+                            : 'bg-background text-muted-foreground hover:border-primary/25 hover:text-foreground',
                         )}
                       >
-                        {label}
+                        {minutes} min
                       </button>
-                    );
-                  })}
+                    ))}
+                  </div>
                 </div>
-              </fieldset>
+              </div>
 
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              <div className="grid gap-4 rounded-xl border border-border/70 bg-background/55 p-4 sm:grid-cols-2 lg:grid-cols-3">
                 <NumberField
                   id="daily-budget"
                   label="Daily budget"
@@ -792,24 +917,6 @@ export function PlanRoute() {
                   className={inputClass}
                 />
               </label>
-
-              {formError ? <InlineError message={formError} /> : null}
-              <div className="flex justify-stretch sm:justify-end">
-                <Button
-                  className="w-full sm:w-auto"
-                  onClick={() => requestPreview()}
-                  disabled={previewMutation.isPending}
-                  leftIcon={
-                    previewMutation.isPending ? (
-                      <LoaderCircle className="size-4 animate-spin" />
-                    ) : (
-                      <Sparkles className="size-4" />
-                    )
-                  }
-                >
-                  {previewMutation.isPending ? 'Planning…' : 'Preview plan'}
-                </Button>
-              </div>
             </CardContent>
           </Card>
         </div>
@@ -825,9 +932,82 @@ export function PlanRoute() {
           }}
           commitPending={commitMutation.isPending}
           commitMessage={commitMessage}
+          selectionCount={Object.keys(selections).length}
+          constraints={constraints}
+          formError={formError}
+          onPreview={() => requestPreview()}
         />
       </div>
     </>
+  );
+}
+
+function BuilderProgress({
+  selectedCount,
+  dailyMinutes,
+  studyDayCount,
+  preview,
+}: {
+  selectedCount: number;
+  dailyMinutes: number;
+  studyDayCount: number;
+  preview: PlanPreview | null;
+}) {
+  const steps = [
+    {
+      number: '1',
+      label: 'Lessons',
+      value: selectedCount > 0 ? `${selectedCount} lessons queued` : 'Choose your queue',
+      complete: selectedCount > 0,
+    },
+    {
+      number: '2',
+      label: 'Availability',
+      value: `${dailyMinutes} min · ${studyDayCount} days/week`,
+      complete: studyDayCount > 0,
+    },
+    {
+      number: '3',
+      label: 'Preview',
+      value: preview ? (preview.feasible ? 'Ready to commit' : 'Adjust capacity') : 'Check the fit',
+      complete: Boolean(preview?.feasible),
+    },
+  ];
+  return (
+    <ol className="grid gap-2 sm:grid-cols-3" aria-label="Plan builder progress">
+      {steps.map((step) => (
+        <li
+          key={step.number}
+          className={cn(
+            'flex items-center gap-3 rounded-xl border px-3.5 py-3 transition-colors',
+            step.complete ? 'border-success/25 bg-success/[0.06]' : 'border-border/75 bg-card/70',
+          )}
+        >
+          <span
+            className={cn(
+              'grid size-7 shrink-0 place-items-center rounded-full text-xs font-bold',
+              step.complete ? 'bg-success text-white' : 'bg-muted text-muted-foreground',
+            )}
+          >
+            {step.complete ? <CheckCircle2 aria-hidden="true" className="size-4" /> : step.number}
+          </span>
+          <span className="min-w-0">
+            <span className="block text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+              {step.label}
+            </span>
+            <span className="mt-0.5 block truncate text-sm font-medium">{step.value}</span>
+          </span>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+function StepNumber({ value }: { value: string }) {
+  return (
+    <span className="grid size-8 shrink-0 place-items-center rounded-full bg-primary text-sm font-bold text-primary-foreground shadow-sm">
+      {value}
+    </span>
   );
 }
 
@@ -848,16 +1028,17 @@ function CandidateList({
       {modules.map((module) => (
         <section
           key={module.id}
-          className="overflow-hidden rounded-lg border"
+          className="overflow-hidden rounded-xl border border-border/80 bg-background/45"
           aria-label={`${module.name} module`}
         >
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-muted/35 px-3 py-2.5">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/70 bg-muted/30 px-4 py-3">
             <div>
               <p className="text-sm font-semibold">{module.name}</p>
-              <p className="mt-0.5 text-xs text-muted-foreground">Independent folder module</p>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                {module.items.length} lessons on this page
+              </p>
             </div>
             <div className="flex gap-2">
-              <Badge tone="neutral">{module.items.length} on this page</Badge>
               <Badge tone="neutral">{formatDuration(module.durationMs)}</Badge>
             </div>
           </div>
@@ -956,24 +1137,36 @@ function CandidateRow({
 }) {
   const checked = Boolean(selection);
   return (
-    <div className={cn('p-3', checked && 'bg-accent/35')}>
-      <label className="flex cursor-pointer items-start gap-3">
+    <div
+      className={cn(
+        'border-l-2 border-l-transparent px-4 py-3.5 transition-colors',
+        checked ? 'border-l-primary bg-primary/[0.055]' : 'hover:bg-muted/25',
+      )}
+    >
+      <label className="flex cursor-pointer items-start gap-3.5">
         <input
           type="checkbox"
           checked={checked}
           onChange={onToggle}
-          className="mt-1 size-4 accent-primary"
+          className="mt-0.5 size-5 shrink-0 accent-primary"
         />
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-sm font-medium">{candidate.display_name}</span>
-          <span className="mt-0.5 block truncate font-mono text-xs text-muted-foreground">
-            {candidate.path_redacted} · {formatDuration(candidate.duration_ms)} ·{' '}
-            {candidate.chunk_count} chunks
+          <span className="block truncate text-sm font-semibold">{candidate.display_name}</span>
+          <span className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+            <span>{formatDuration(candidate.duration_ms)}</span>
+            <span aria-hidden="true">·</span>
+            <span>
+              {candidate.chunk_count} {candidate.chunk_count === 1 ? 'study block' : 'study blocks'}
+            </span>
+            <span className="hidden truncate font-mono sm:inline" title={candidate.path_redacted}>
+              · {candidate.path_redacted}
+            </span>
           </span>
         </span>
+        {checked ? <Badge tone="primary">Included</Badge> : null}
       </label>
       {selection ? (
-        <div className="ml-7 mt-3 grid gap-3 sm:grid-cols-2">
+        <div className="ml-8 mt-3 grid gap-3 rounded-lg border border-primary/10 bg-background/65 p-3 sm:grid-cols-2">
           <label className="space-y-1 text-xs font-medium">
             Priority
             <select
@@ -1012,6 +1205,10 @@ function PreviewPanel({
   onCommit,
   commitPending,
   commitMessage,
+  selectionCount,
+  constraints,
+  formError,
+  onPreview,
 }: {
   preview: PlanPreview | null;
   isPending: boolean;
@@ -1020,12 +1217,22 @@ function PreviewPanel({
   onCommit: () => void;
   commitPending: boolean;
   commitMessage: string | null;
+  selectionCount: number;
+  constraints: PlanningConstraints;
+  formError: string | null;
+  onPreview: () => void;
 }) {
   return (
-    <Card className="min-w-0 min-[1450px]:sticky min-[1450px]:top-6">
-      <CardHeader>
+    <Card className="min-w-0 overflow-hidden xl:sticky xl:top-6">
+      <CardHeader className="border-b border-border/70 bg-muted/15">
         <div className="flex items-center justify-between gap-3">
-          <CardTitle>4. Review and commit</CardTitle>
+          <div className="flex items-center gap-3">
+            <StepNumber value="3" />
+            <div>
+              <CardTitle>Preview the fit</CardTitle>
+              <CardDescription className="mt-1">Nothing is saved until you commit.</CardDescription>
+            </div>
+          </div>
           {preview ? (
             <Badge tone={preview.feasible ? 'success' : 'warning'}>
               {preview.feasible ? (
@@ -1037,16 +1244,39 @@ function PreviewPanel({
             </Badge>
           ) : null}
         </div>
-        <CardDescription>
-          Preview is disposable. Commit creates a new immutable version.
-        </CardDescription>
       </CardHeader>
-      <CardContent className="space-y-5">
+      <CardContent className="space-y-5 pt-5">
         {isPending ? <LoadingLine label="Checking every hard constraint" /> : null}
         {!preview && !isPending ? (
-          <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
-            <ListChecks className="mx-auto mb-2 size-6 text-primary" />
-            Your day-by-day routine will appear here.
+          <div className="space-y-4">
+            <div className="rounded-xl border border-border/75 bg-background/55 p-4">
+              <div className="mb-3 flex items-center gap-2 text-sm font-semibold">
+                <ListChecks className="size-4 text-primary" /> Plan snapshot
+              </div>
+              <dl className="space-y-2.5 text-sm">
+                <SummaryRow label="Lessons" value={`${selectionCount} in queue`} />
+                <SummaryRow
+                  label="Weekly rhythm"
+                  value={`${constraints.daily_budget_minutes} min · ${constraints.allowed_weekdays.length} days`}
+                />
+                <SummaryRow label="Planning window" value={`${constraints.horizon_days} days`} />
+                <SummaryRow
+                  label="Playback"
+                  value={`${(constraints.playback_speed_milli / 1000).toFixed(2)}x`}
+                />
+              </dl>
+            </div>
+            <div className="rounded-lg border border-dashed border-primary/20 bg-primary/[0.035] p-4 text-sm leading-6 text-muted-foreground">
+              Preview checks every lesson, break, deadline, and daily cap before you can commit.
+            </div>
+            {formError ? <InlineError message={formError} /> : null}
+            <Button
+              className="w-full"
+              onClick={onPreview}
+              leftIcon={<Sparkles className="size-4" />}
+            >
+              Preview plan
+            </Button>
           </div>
         ) : null}
         {preview ? (
@@ -1107,6 +1337,7 @@ function PreviewPanel({
             )}
           </>
         ) : null}
+        {preview && formError ? <InlineError message={formError} /> : null}
         {commitMessage ? (
           <div
             className="rounded-lg border border-success/30 bg-success/10 p-3 text-sm text-success"
@@ -1121,6 +1352,15 @@ function PreviewPanel({
         ) : null}
       </CardContent>
     </Card>
+  );
+}
+
+function SummaryRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-center justify-between gap-3 border-b border-border/60 pb-2 last:border-0 last:pb-0">
+      <dt className="text-muted-foreground">{label}</dt>
+      <dd className="text-right font-medium tabular-nums">{value}</dd>
+    </div>
   );
 }
 
