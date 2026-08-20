@@ -5,9 +5,14 @@ import BookOpen from 'lucide-react/dist/esm/icons/book-open';
 import Camera from 'lucide-react/dist/esm/icons/camera';
 import Brain from 'lucide-react/dist/esm/icons/brain';
 import CheckCircle2 from 'lucide-react/dist/esm/icons/circle-check-big';
+import Captions from 'lucide-react/dist/esm/icons/captions';
 import Clock3 from 'lucide-react/dist/esm/icons/clock-3';
+import ChevronDown from 'lucide-react/dist/esm/icons/chevron-down';
 import FastForward from 'lucide-react/dist/esm/icons/fast-forward';
 import Flag from 'lucide-react/dist/esm/icons/flag';
+import Keyboard from 'lucide-react/dist/esm/icons/keyboard';
+import Maximize2 from 'lucide-react/dist/esm/icons/maximize-2';
+import Minimize2 from 'lucide-react/dist/esm/icons/minimize-2';
 import Pause from 'lucide-react/dist/esm/icons/pause';
 import Play from 'lucide-react/dist/esm/icons/play';
 import LoaderCircle from 'lucide-react/dist/esm/icons/loader-circle';
@@ -18,7 +23,7 @@ import Scissors from 'lucide-react/dist/esm/icons/scissors';
 import Square from 'lucide-react/dist/esm/icons/square';
 import Sparkles from 'lucide-react/dist/esm/icons/sparkles';
 import TriangleAlert from 'lucide-react/dist/esm/icons/triangle-alert';
-import { useNavigate, useParams, useSearchParams } from 'react-router';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import { PageHeader } from '../../components/layout/PageHeader';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
@@ -45,7 +50,13 @@ import {
   type PlaybackView,
   type StudyAction,
 } from '../../ipc/playback';
-import { replanActive } from '../../ipc/planner';
+import { getCloudPlanningStatus, replanActive } from '../../ipc/planner';
+import {
+  getTranscriptState,
+  listModels,
+  startTranscription,
+  type AnalysisProgress,
+} from '../../ipc/analysis';
 import {
   askCompanion,
   explainFrame,
@@ -59,6 +70,7 @@ import {
   type LearningProgress,
   type StudyItem,
 } from '../../ipc/learning';
+import { cn } from '../../lib/cn';
 
 type Phase = 'loading' | 'ready' | 'closed' | 'error';
 
@@ -96,14 +108,75 @@ export function PlayerRoute() {
   const [replanPending, setReplanPending] = useState(false);
   const [learningConsent, setLearningConsent] = useState(false);
   const [learningStatus, setLearningStatus] = useState<string>();
+  const [learningError, setLearningError] = useState<string>();
+  const [lectureJobActive, setLectureJobActive] = useState(false);
+  const [transcriptionProgress, setTranscriptionProgress] = useState<AnalysisProgress>();
   const [revealedStudyItem, setRevealedStudyItem] = useState<string>();
   const [reviewStartedAt, setReviewStartedAt] = useState<number>();
   const [reviewConfidence, setReviewConfidence] = useState(3);
+  const [companionResultMediaId, setCompanionResultMediaId] = useState<string>();
+  const [focusMode, setFocusMode] = useState(false);
+  const [shortcutsExpanded, setShortcutsExpanded] = useState(false);
+  const [studyToolsExpanded, setStudyToolsExpanded] = useState(false);
+  const [sessionGoal, setSessionGoal] = useState('');
   const videoRef = useRef<HTMLVideoElement>(null);
   const lastVideoRef = useRef<HTMLVideoElement>(null);
   const viewRef = useRef<PlaybackView | undefined>(undefined);
   const syncPendingRef = useRef<Promise<PlaybackView> | null>(null);
+  const closePendingRef = useRef<Promise<void> | null>(null);
   const closeRequestedRef = useRef(false);
+  const shortcutActionsRef = useRef<{
+    togglePlayback: () => void;
+    seekBy: (milliseconds: number) => void;
+    toggleFocus: () => void;
+  }>({
+    togglePlayback: () => undefined,
+    seekBy: () => undefined,
+    toggleFocus: () => undefined,
+  });
+
+  useEffect(() => {
+    setSessionGoal(loadSessionGoal(itemId));
+    setLearningConsent(false);
+    setLearningStatus(undefined);
+    setLearningError(undefined);
+    setLectureJobActive(false);
+    setTranscriptionProgress(undefined);
+    setRevealedStudyItem(undefined);
+    setReviewStartedAt(undefined);
+    setCompanionResultMediaId(undefined);
+    setStudyToolsExpanded(false);
+  }, [itemId]);
+
+  useEffect(() => {
+    const handleShortcut = (event: KeyboardEvent) => {
+      if (isEditableShortcutTarget(event.target)) return;
+      if (event.key === 'Escape') {
+        setFocusMode(false);
+        return;
+      }
+      if (event.key.toLocaleLowerCase() === 'f') {
+        event.preventDefault();
+        shortcutActionsRef.current.toggleFocus();
+        return;
+      }
+      if (event.key === ' ' || event.key.toLocaleLowerCase() === 'k') {
+        event.preventDefault();
+        shortcutActionsRef.current.togglePlayback();
+        return;
+      }
+      if (event.key === 'ArrowLeft') {
+        event.preventDefault();
+        shortcutActionsRef.current.seekBy(-10_000);
+      }
+      if (event.key === 'ArrowRight') {
+        event.preventDefault();
+        shortcutActionsRef.current.seekBy(10_000);
+      }
+    };
+    window.addEventListener('keydown', handleShortcut);
+    return () => window.removeEventListener('keydown', handleShortcut);
+  }, []);
 
   useEffect(() => {
     viewRef.current = view;
@@ -114,10 +187,31 @@ export function PlayerRoute() {
     if (video) lastVideoRef.current = video;
   }, []);
 
+  const analysisModelsQuery = useQuery({
+    queryKey: ['analysis', 'models'] as const,
+    queryFn: listModels,
+    staleTime: 5_000,
+  });
+  const readyTranscriptionModel = analysisModelsQuery.data?.find(
+    (model) => model.state === 'ready',
+  );
+  const transcriptQuery = useQuery({
+    queryKey: ['analysis', 'transcript', view?.media_id] as const,
+    queryFn: () => getTranscriptState(view!.media_id),
+    enabled: Boolean(view?.media_id),
+    refetchInterval: (query) => (isTranscriptActive(query.state.data?.status) ? 1_500 : false),
+  });
+  const cloudLearningQuery = useQuery({
+    queryKey: ['cloud-planning', 'status'] as const,
+    queryFn: getCloudPlanningStatus,
+    staleTime: 5_000,
+  });
+
   const lectureQuery = useQuery({
     queryKey: ['learning', 'lecture', view?.media_id] as const,
     queryFn: () => getLectureUnderstanding(view!.media_id),
     enabled: Boolean(view?.media_id),
+    refetchInterval: lectureJobActive ? 1_500 : false,
   });
   const notesQuery = useQuery({
     queryKey: ['learning', 'notes', view?.media_id] as const,
@@ -129,17 +223,58 @@ export function PlayerRoute() {
     queryFn: () => listStudyMaterials(view!.media_id),
     enabled: Boolean(view?.media_id),
   });
+  const transcribeLecture = useMutation({
+    mutationFn: async () => {
+      if (!view) throw new Error('Open a lecture first.');
+      if (!readyTranscriptionModel) {
+        throw new Error('Install a local transcription model in Settings first.');
+      }
+      setTranscriptionProgress(undefined);
+      setLearningError(undefined);
+      setLearningStatus('Starting local transcription…');
+      return startTranscription(view.media_id, readyTranscriptionModel.id, (event) => {
+        setTranscriptionProgress(event);
+        if (event.event === 'queued') setLearningStatus('Transcription queued locally.');
+        if (event.event === 'extracting') setLearningStatus('Extracting lecture audio locally…');
+        if (event.event === 'transcribing') setLearningStatus('Transcribing lecture locally…');
+        if (event.event === 'indexing') {
+          setLearningStatus(`Indexing ${event.data.segments} transcript segments…`);
+        }
+        if (event.event === 'completed') {
+          setLearningStatus('Transcript ready. Grounded study tools are now available.');
+          void transcriptQuery.refetch();
+          void queryClient.invalidateQueries({ queryKey: ['search'] });
+        }
+        if (event.event === 'failed') {
+          setLearningStatus(undefined);
+          setLearningError(event.data.message);
+        }
+      });
+    },
+    onSuccess: () => {
+      void transcriptQuery.refetch();
+    },
+    onError: (cause) => setLearningError(messageFrom(cause)),
+  });
   const generateLecture = useMutation({
     mutationFn: async () => {
       if (!view) throw new Error('Open a lecture first.');
+      setLearningError(undefined);
+      assertLearningReady(transcriptQuery.data?.status, cloudLearningQuery.data?.configured);
       return startLectureUnderstanding(view.media_id, learningConsent, handleLearningProgress);
     },
-    onError: (cause) => setLearningStatus(messageFrom(cause)),
+    onSuccess: () => setLectureJobActive(true),
+    onError: (cause) => {
+      setLectureJobActive(false);
+      setLearningError(messageFrom(cause));
+    },
   });
   const createFrameNote = useMutation({
     mutationFn: async () => {
       const video = videoRef.current;
       if (!view || !video) throw new Error('Wait for the video frame to become available.');
+      setLearningError(undefined);
+      assertLearningReady(transcriptQuery.data?.status, cloudLearningQuery.data?.configured);
       const atMs = Math.max(
         view.raw_start_ms,
         Math.min(view.raw_end_ms, Math.round(video.currentTime * 1_000)),
@@ -155,11 +290,13 @@ export function PlayerRoute() {
       setLearningStatus(`Saved “${note.title}” at ${formatTimestamp(note.at_ms)}.`);
       await notesQuery.refetch();
     },
-    onError: (cause) => setLearningStatus(messageFrom(cause)),
+    onError: (cause) => setLearningError(messageFrom(cause)),
   });
   const generateMaterials = useMutation({
     mutationFn: async () => {
       if (!view) throw new Error('Open a lecture first.');
+      setLearningError(undefined);
+      assertLearningReady(transcriptQuery.data?.status, cloudLearningQuery.data?.configured);
       setLearningStatus('Generating grounded study material…');
       return generateStudyMaterials(view.media_id, learningConsent);
     },
@@ -167,7 +304,7 @@ export function PlayerRoute() {
       setLearningStatus('Study material is ready. Review dates are scheduled locally.');
       await studyQuery.refetch();
     },
-    onError: (cause) => setLearningStatus(messageFrom(cause)),
+    onError: (cause) => setLearningError(messageFrom(cause)),
   });
   const submitReview = useMutation({
     mutationFn: async ({ item, quality }: { item: StudyItem; quality: number }) =>
@@ -182,11 +319,13 @@ export function PlayerRoute() {
       setReviewStartedAt(undefined);
       await studyQuery.refetch();
     },
-    onError: (cause) => setLearningStatus(messageFrom(cause)),
+    onError: (cause) => setLearningError(messageFrom(cause)),
   });
   const companion = useMutation({
     mutationFn: async (action: CompanionAction) => {
       if (!view) throw new Error('Open a lecture first.');
+      setLearningError(undefined);
+      assertLearningReady(transcriptQuery.data?.status, cloudLearningQuery.data?.configured);
       return askCompanion({
         mediaId: view.media_id,
         atMs: view.position_ms,
@@ -194,8 +333,45 @@ export function PlayerRoute() {
         consent: learningConsent,
       });
     },
-    onError: (cause) => setLearningStatus(messageFrom(cause)),
+    onSuccess: () => setCompanionResultMediaId(view?.media_id),
+    onError: (cause) => setLearningError(messageFrom(cause)),
   });
+
+  useEffect(() => {
+    if (view?.plan_item_id !== itemId) return;
+    if (
+      lectureQuery.data ||
+      notesQuery.data?.length ||
+      studyQuery.data?.length ||
+      learningStatus ||
+      learningError ||
+      (companion.data && companionResultMediaId === view.media_id)
+    ) {
+      setStudyToolsExpanded(true);
+    }
+  }, [
+    companion.data,
+    companionResultMediaId,
+    itemId,
+    learningStatus,
+    learningError,
+    lectureQuery.data,
+    notesQuery.data?.length,
+    studyQuery.data?.length,
+    view?.media_id,
+    view?.plan_item_id,
+  ]);
+
+  useEffect(() => {
+    if (lectureQuery.data) setLectureJobActive(false);
+  }, [lectureQuery.data]);
+
+  useEffect(() => {
+    if (transcriptQuery.data?.status === 'completed' && transcriptionProgress) {
+      setLearningError(undefined);
+      setLearningStatus('Transcript ready. Grounded study tools are now available.');
+    }
+  }, [transcriptQuery.data?.status, transcriptionProgress]);
 
   function revealStudyAnswer(itemId: string) {
     setRevealedStudyItem(itemId);
@@ -203,11 +379,29 @@ export function PlayerRoute() {
   }
 
   function handleLearningProgress(event: LearningProgress) {
-    if (event.event === 'queued') setLearningStatus('Lecture analysis queued.');
-    if (event.event === 'generating') setLearningStatus('Reading the grounded transcript…');
-    if (event.event === 'validating') setLearningStatus('Checking transcript citations…');
-    if (event.event === 'failed') setLearningStatus(event.data.message);
+    if (event.event === 'queued') {
+      setLearningError(undefined);
+      setLectureJobActive(true);
+      setLearningStatus('Lecture analysis queued.');
+    }
+    if (event.event === 'generating') {
+      setLearningError(undefined);
+      setLectureJobActive(true);
+      setLearningStatus('Reading the grounded transcript…');
+    }
+    if (event.event === 'validating') {
+      setLearningError(undefined);
+      setLectureJobActive(true);
+      setLearningStatus('Checking transcript citations…');
+    }
+    if (event.event === 'failed') {
+      setLectureJobActive(false);
+      setLearningStatus(undefined);
+      setLearningError(event.data.message);
+    }
     if (event.event === 'completed') {
+      setLectureJobActive(false);
+      setLearningError(undefined);
       setLearningStatus('Lecture understanding is ready.');
       void lectureQuery.refetch();
     }
@@ -232,12 +426,16 @@ export function PlayerRoute() {
 
     async function boot() {
       closeRequestedRef.current = false;
+      setPhase('loading');
+      setView(undefined);
+      setError(undefined);
       if (!itemId) {
         setError('This study block is missing an identifier.');
         setPhase('error');
         return;
       }
       try {
+        if (closePendingRef.current) await closePendingRef.current.catch(() => undefined);
         const nextCapability = await getPlaybackCapability();
         if (disposed) return;
         setCapability(nextCapability);
@@ -275,7 +473,7 @@ export function PlayerRoute() {
     void boot();
     return () => {
       disposed = true;
-      if (opened && !closeRequestedRef.current) flushAndClosePlayback();
+      if (opened && !closeRequestedRef.current) void flushAndClosePlayback();
     };
   }, [itemId, searchParams]);
 
@@ -326,6 +524,17 @@ export function PlayerRoute() {
     if (!view || view.item_duration_ms === 0) return 0;
     return Math.min(100, Math.floor((view.item_covered_ms / view.item_duration_ms) * 100));
   }, [view]);
+  const blockProgressPercent = useMemo(() => {
+    if (!view || view.item_duration_ms === 0) return 0;
+    const elapsed = clampPosition(view) - view.raw_start_ms;
+    return Math.min(100, Math.max(0, Math.round((elapsed / view.item_duration_ms) * 100)));
+  }, [view]);
+  const remainingMs = view
+    ? Math.max(0, Math.round((view.raw_end_ms - clampPosition(view)) / Math.max(view.speed, 0.5)))
+    : 0;
+  const transcriptReady = transcriptQuery.data?.status === 'completed';
+  const cloudLearningReady = cloudLearningQuery.data?.configured === true;
+  const learningReady = transcriptReady && cloudLearningReady;
   const actionsDisabled = busy || replanPending || phase !== 'ready' || Boolean(actionPending);
 
   async function runControl(operation: () => Promise<PlaybackView>) {
@@ -505,43 +714,115 @@ export function PlayerRoute() {
     }
   }
 
-  function flushAndClosePlayback() {
+  function flushAndClosePlayback(): Promise<void> {
+    if (closePendingRef.current) return closePendingRef.current;
     const video = videoRef.current ?? lastVideoRef.current;
     const currentView = viewRef.current;
-    if (!video || !currentView || !Number.isFinite(video.currentTime)) {
-      void closePlayback().catch(() => undefined);
-      return;
-    }
-    const position = Math.max(
-      currentView.raw_start_ms,
-      Math.min(currentView.raw_end_ms, Math.round(video.currentTime * 1_000)),
-    );
-    const paused = video.paused;
-    const speed = video.playbackRate;
-    void (async () => {
-      if (syncPendingRef.current) await syncPendingRef.current.catch(() => undefined);
-      await syncPlayback(position, paused, speed).catch(() => undefined);
+    const pending = (async () => {
+      if (video && currentView && Number.isFinite(video.currentTime)) {
+        const position = Math.max(
+          currentView.raw_start_ms,
+          Math.min(currentView.raw_end_ms, Math.round(video.currentTime * 1_000)),
+        );
+        if (syncPendingRef.current) await syncPendingRef.current.catch(() => undefined);
+        await syncPlayback(position, video.paused, video.playbackRate).catch(() => undefined);
+      }
       await closePlayback().catch(() => undefined);
     })();
+    closePendingRef.current = pending;
+    void pending.finally(() => {
+      if (closePendingRef.current === pending) closePendingRef.current = null;
+    });
+    return pending;
   }
 
+  function updateSessionGoal(value: string) {
+    setSessionGoal(value);
+    saveSessionGoal(itemId, value);
+  }
+
+  shortcutActionsRef.current = {
+    togglePlayback: () => {
+      if (!busy && phase === 'ready' && view) void togglePlayback();
+    },
+    seekBy: (milliseconds) => {
+      if (!busy && phase === 'ready' && view) {
+        void commitSeek(view.position_ms + milliseconds);
+      }
+    },
+    toggleFocus: () => {
+      if (phase === 'ready' && view) setFocusMode((current) => !current);
+    },
+  };
+
   return (
-    <>
-      <PageHeader
-        eyebrow="Focused study"
-        title={view?.display_name ?? 'Study player'}
-        description="Watch inside LectorBit with private, token-gated local streaming and durable watched coverage."
-        actions={
-          <button
-            type="button"
-            className={backLinkClass}
-            disabled={busy || phase === 'closed'}
-            onClick={() => void stopAndReturn()}
-          >
-            <ArrowLeft className="size-4" /> Routine
-          </button>
-        }
-      />
+    <div
+      className={cn(
+        focusMode &&
+          'fixed inset-0 z-[100] overflow-y-auto bg-background px-4 pb-10 pt-4 sm:px-6 lg:px-8',
+      )}
+    >
+      {focusMode ? (
+        <header className="mx-auto mb-4 flex max-w-[110rem] flex-wrap items-center justify-between gap-3 rounded-xl border border-primary/20 bg-card/95 px-4 py-3 shadow-lg backdrop-blur">
+          <div className="flex min-w-0 items-center gap-3">
+            <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-primary/10 text-primary">
+              <Play className="size-4" />
+            </span>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <Badge tone="primary">Focus mode</Badge>
+                {view ? (
+                  <span className="font-mono text-xs text-muted-foreground">
+                    {formatDuration(remainingMs)} left
+                  </span>
+                ) : null}
+              </div>
+              <p className="mt-1 truncate text-sm font-semibold">
+                {view?.display_name ?? 'Study player'}
+              </p>
+            </div>
+          </div>
+          <Button variant="outline" size="sm" onClick={() => setFocusMode(false)}>
+            <Minimize2 className="size-4" /> Exit focus
+          </Button>
+        </header>
+      ) : (
+        <PageHeader
+          eyebrow="Focused study"
+          title={view?.display_name ?? 'Study player'}
+          description="One focused block at a time, with private playback, durable progress, and study tools when you need them."
+          actions={
+            <>
+              <Button
+                variant="outline"
+                size="sm"
+                aria-expanded={shortcutsExpanded}
+                onClick={() => setShortcutsExpanded((current) => !current)}
+              >
+                <Keyboard className="size-4" /> Shortcuts
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={phase !== 'ready'}
+                onClick={() => setFocusMode(true)}
+              >
+                <Maximize2 className="size-4" /> Focus mode
+              </Button>
+              <button
+                type="button"
+                className={backLinkClass}
+                disabled={busy || phase === 'closed'}
+                onClick={() => void stopAndReturn()}
+              >
+                <ArrowLeft className="size-4" /> Routine
+              </button>
+            </>
+          }
+        />
+      )}
+
+      {!focusMode && shortcutsExpanded ? <ShortcutGuide /> : null}
 
       {phase === 'loading' ? <PlayerSkeleton /> : null}
 
@@ -564,7 +845,7 @@ export function PlayerRoute() {
       ) : null}
 
       {view ? (
-        <div className="space-y-6">
+        <div className={cn('space-y-6', focusMode && 'mx-auto max-w-[110rem]')}>
           {error ? (
             <div
               className="flex flex-wrap items-start justify-between gap-3 rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive"
@@ -638,13 +919,13 @@ export function PlayerRoute() {
               <CardHeader>
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
-                    <CardTitle>In-app video player</CardTitle>
+                    <CardTitle>Now studying</CardTitle>
                     <CardDescription className="mt-1">
-                      Native volume, fullscreen, captions, and picture-in-picture controls stay in
-                      this window.
+                      Scheduled segment {formatTimestamp(view.raw_start_ms)}–
+                      {formatTimestamp(view.raw_end_ms)} · captions and picture-in-picture stay
+                      available in the player.
                     </CardDescription>
                   </div>
-                  <PlaybackBadge view={view} phase={phase} />
                 </div>
               </CardHeader>
               <CardContent className="space-y-5">
@@ -730,495 +1011,939 @@ export function PlayerRoute() {
                   >
                     <Square className="size-3.5" /> Close
                   </Button>
+                  {!focusMode ? (
+                    <Button variant="ghost" onClick={() => setFocusMode(true)}>
+                      <Maximize2 className="size-3.5" /> Focus
+                    </Button>
+                  ) : null}
                 </div>
               </CardContent>
             </Card>
 
-            <Card>
-              <CardHeader>
-                <CardTitle>Watched coverage</CardTitle>
-                <CardDescription>Completion is based on viewing, not the playhead.</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="flex items-end justify-between gap-3">
-                  <span className="font-display text-3xl font-semibold tracking-tight">
-                    {watchedPercent}%
-                  </span>
-                  <span className="font-mono text-xs text-muted-foreground">
-                    {formatDuration(view.item_covered_ms)} / {formatDuration(view.item_duration_ms)}
-                  </span>
-                </div>
-                <div
-                  aria-label="Watched coverage"
-                  aria-valuemax={100}
-                  aria-valuemin={0}
-                  aria-valuenow={watchedPercent}
-                  className="h-2 overflow-hidden rounded-full bg-secondary"
-                  role="progressbar"
-                >
-                  <div
-                    className="h-full rounded-full bg-primary transition-[width] duration-200 motion-reduce:transition-none"
-                    style={{ width: `${watchedPercent}%` }}
-                  />
-                </div>
-                <p className="text-xs leading-relaxed text-muted-foreground">
-                  LectorBit completes the block automatically at 90% watched coverage, or when you
-                  explicitly mark it complete.
-                </p>
-              </CardContent>
-            </Card>
+            <aside className="space-y-4 min-[1320px]:sticky min-[1320px]:top-6">
+              <Card className="overflow-hidden">
+                <CardHeader className="border-b border-border/70 bg-muted/15">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <CardTitle>Session progress</CardTitle>
+                      <CardDescription className="mt-1">
+                        Playhead progress and verified watching are tracked separately.
+                      </CardDescription>
+                    </div>
+                    <PlaybackBadge view={view} phase={phase} />
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-5 pt-5">
+                  <div className="grid grid-cols-2 gap-3">
+                    <SessionMetric label="Time left" value={formatDuration(remainingMs)} />
+                    <SessionMetric label="Block position" value={`${blockProgressPercent}%`} />
+                  </div>
+                  <div>
+                    <div className="mb-2 flex items-end justify-between gap-3">
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                          Watched coverage
+                        </p>
+                        <p className="mt-1 font-display text-2xl font-semibold tracking-tight">
+                          {watchedPercent}%
+                        </p>
+                      </div>
+                      <span className="font-mono text-[11px] text-muted-foreground">
+                        {formatDuration(view.item_covered_ms)} /{' '}
+                        {formatDuration(view.item_duration_ms)}
+                      </span>
+                    </div>
+                    <div
+                      aria-label="Watched coverage"
+                      aria-valuemax={100}
+                      aria-valuemin={0}
+                      aria-valuenow={watchedPercent}
+                      className="h-2.5 overflow-hidden rounded-full bg-secondary"
+                      role="progressbar"
+                    >
+                      <div
+                        className="h-full rounded-full bg-primary transition-[width] duration-200 motion-reduce:transition-none"
+                        style={{ width: `${watchedPercent}%` }}
+                      />
+                    </div>
+                    <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+                      Completion happens at 90% verified coverage or when you mark the block done.
+                    </p>
+                  </div>
+                  {!focusMode ? (
+                    <div>
+                      <label className="text-sm font-semibold" htmlFor="session-intention">
+                        Session intention
+                      </label>
+                      <textarea
+                        id="session-intention"
+                        aria-describedby="session-intention-help"
+                        rows={2}
+                        maxLength={160}
+                        value={sessionGoal}
+                        onChange={(event) => updateSessionGoal(event.target.value)}
+                        placeholder="What should you understand by the end?"
+                        className="mt-2 w-full resize-none rounded-lg border border-input bg-background px-3 py-2 text-sm font-normal leading-5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      />
+                      <p
+                        id="session-intention-help"
+                        className="mt-1 text-[11px] text-muted-foreground"
+                      >
+                        Saved privately on this device for this study block.
+                      </p>
+                    </div>
+                  ) : null}
+                </CardContent>
+              </Card>
+
+              <StudyActions
+                actionsDisabled={actionsDisabled}
+                view={view}
+                confirmSkip={confirmSkip}
+                setConfirmSkip={setConfirmSkip}
+                performAction={performAction}
+                busy={busy}
+                actionPending={actionPending}
+                replanPending={replanPending}
+                replanRemaining={replanRemaining}
+                actionMessage={actionMessage}
+              />
+            </aside>
           </section>
 
-          <Card className="overflow-hidden border-primary/20">
-            <div className="h-1 bg-gradient-to-r from-primary via-vermillion-400 to-amber-400" />
-            <CardHeader>
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <CardTitle className="flex items-center gap-2">
-                    <Sparkles className="size-4 text-primary" /> Lecture intelligence
-                  </CardTitle>
-                  <CardDescription className="mt-1 max-w-3xl">
-                    Generate transcript-cited chapters and concepts, or capture the current frame
-                    and save a detailed explanation note.
-                  </CardDescription>
-                </div>
-                {lectureQuery.data ? (
-                  <Badge tone="success">Grounded · {lectureQuery.data.model}</Badge>
-                ) : (
-                  <Badge tone="primary">Optional AI</Badge>
-                )}
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-5">
-              <label className="flex cursor-pointer items-start gap-3 rounded-xl border bg-secondary/35 p-3 text-sm">
-                <input
-                  type="checkbox"
-                  checked={learningConsent}
-                  onChange={(event) => setLearningConsent(event.target.checked)}
-                  className="mt-0.5 size-4 accent-primary"
-                />
-                <span>
-                  Send the transcript needed for this request and, for frame notes, the captured
-                  frame to my configured OpenRouter free-model provider. Nothing is committed to a
-                  plan automatically.
-                </span>
-              </label>
-
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  disabled={!learningConsent || generateLecture.isPending}
-                  onClick={() => generateLecture.mutate()}
-                >
-                  {generateLecture.isPending ? (
-                    <LoaderCircle className="size-4 animate-spin" />
-                  ) : (
-                    <BookOpen className="size-4" />
-                  )}
-                  {lectureQuery.data ? 'Regenerate lecture analysis' : 'Analyze this lecture'}
-                </Button>
-                <Button
-                  variant="outline"
-                  disabled={!learningConsent || createFrameNote.isPending || phase !== 'ready'}
-                  onClick={() => createFrameNote.mutate()}
-                >
-                  {createFrameNote.isPending ? (
-                    <LoaderCircle className="size-4 animate-spin" />
-                  ) : (
-                    <Camera className="size-4" />
-                  )}
-                  Explain this frame and save note
-                </Button>
-                <Button
-                  variant="outline"
-                  disabled={!learningConsent || generateMaterials.isPending}
-                  onClick={() => generateMaterials.mutate()}
-                >
-                  {generateMaterials.isPending ? (
-                    <LoaderCircle className="size-4 animate-spin" />
-                  ) : (
-                    <Brain className="size-4" />
-                  )}
-                  {studyQuery.data?.length ? 'Regenerate study set' : 'Generate study set'}
-                </Button>
-              </div>
-
-              <section className="rounded-xl border bg-background p-4" aria-labelledby="companion-heading">
-                <div className="flex items-start gap-3">
-                  <MessageCircle className="mt-0.5 size-4 shrink-0 text-primary" />
+          {!focusMode ? (
+            <Card className="overflow-hidden border-primary/20">
+              <div className="h-1 bg-gradient-to-r from-primary via-vermillion-400 to-amber-400" />
+              <CardHeader className={cn(studyToolsExpanded && 'border-b border-primary/10')}>
+                <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
-                    <h3 id="companion-heading" className="text-sm font-semibold">
-                      Grounded study companion
-                    </h3>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      Only a narrow transcript window around {formatTimestamp(view.position_ms)} is
-                      sent for each action.
-                    </p>
+                    <CardTitle className="flex items-center gap-2">
+                      <Sparkles className="size-4 text-primary" /> Study toolkit
+                    </CardTitle>
+                    <CardDescription className="mt-1 max-w-3xl">
+                      Open transcript-grounded explanations, frame notes, chapter navigation, and
+                      review cards only when they help.
+                    </CardDescription>
                   </div>
-                </div>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {companionActions.map((item) => (
+                  <div className="flex items-center gap-2">
+                    {lectureQuery.data ? (
+                      <Badge tone="success">Grounded · {lectureQuery.data.model}</Badge>
+                    ) : learningReady ? (
+                      <Badge tone="success">Ready</Badge>
+                    ) : isTranscriptActive(transcriptQuery.data?.status) ? (
+                      <Badge tone="primary">Preparing transcript</Badge>
+                    ) : (
+                      <Badge tone="warning">Setup needed</Badge>
+                    )}
                     <Button
-                      key={item.action}
+                      variant="ghost"
                       size="sm"
-                      variant="secondary"
-                      disabled={!learningConsent || companion.isPending}
-                      onClick={() => companion.mutate(item.action)}
+                      aria-expanded={studyToolsExpanded}
+                      onClick={() => setStudyToolsExpanded((current) => !current)}
                     >
-                      {item.label}
+                      {studyToolsExpanded ? 'Hide tools' : 'Open tools'}
+                      <ChevronDown
+                        className={cn(
+                          'size-4 transition-transform',
+                          studyToolsExpanded && 'rotate-180',
+                        )}
+                      />
                     </Button>
-                  ))}
-                </div>
-                {companion.isPending ? (
-                  <p className="mt-3 flex items-center gap-2 text-sm text-muted-foreground" role="status">
-                    <LoaderCircle className="size-4 animate-spin" /> Reading the nearby transcript…
-                  </p>
-                ) : null}
-                {companion.data ? (
-                  <div className="mt-4 rounded-lg bg-secondary/45 p-4">
-                    <p className="whitespace-pre-wrap text-sm leading-7">
-                      {companion.data.answer_markdown}
-                    </p>
-                    <EvidenceButtons
-                      label="Companion evidence"
-                      evidence={companion.data.evidence}
-                      onSeek={(atMs) => void commitSeek(atMs)}
-                    />
                   </div>
-                ) : null}
-              </section>
+                </div>
+              </CardHeader>
+              {studyToolsExpanded ? (
+                <CardContent className="space-y-5 pt-5">
+                  <LearningSetup
+                    transcriptStatus={transcriptQuery.data?.status}
+                    transcriptSegments={transcriptQuery.data?.segment_count ?? 0}
+                    transcriptPending={transcriptQuery.isPending}
+                    transcriptError={transcriptQuery.isError}
+                    retryTranscript={() => void transcriptQuery.refetch()}
+                    modelPending={analysisModelsQuery.isPending}
+                    modelError={analysisModelsQuery.isError}
+                    hasReadyModel={Boolean(readyTranscriptionModel)}
+                    retryModels={() => void analysisModelsQuery.refetch()}
+                    cloudConfigured={cloudLearningReady}
+                    cloudPending={cloudLearningQuery.isPending}
+                    cloudError={cloudLearningQuery.isError}
+                    retryCloud={() => void cloudLearningQuery.refetch()}
+                    transcriptionProgress={transcriptionProgress}
+                    transcriptionPending={transcribeLecture.isPending}
+                    startTranscript={() => transcribeLecture.mutate()}
+                    consent={learningConsent}
+                  />
 
-              {learningStatus ? (
-                <p className="rounded-lg border bg-background p-3 text-sm" role="status">
-                  {learningStatus}
-                </p>
-              ) : null}
-              {lectureQuery.isError ? (
-                <p className="text-sm text-destructive" role="alert">
-                  {messageFrom(lectureQuery.error)}
-                </p>
-              ) : null}
-
-              {lectureQuery.data ? (
-                <div className="grid gap-5 lg:grid-cols-2">
-                  <section className="space-y-3" aria-labelledby="lecture-summary-heading">
-                    <h3 id="lecture-summary-heading" className="font-display font-semibold">
-                      Summary
-                    </h3>
-                    <p className="text-sm leading-7 text-muted-foreground">
-                      {lectureQuery.data.summary.text}
-                    </p>
-                    <EvidenceButtons
-                      label="Summary evidence"
-                      evidence={lectureQuery.data.summary.evidence}
-                      onSeek={(atMs) => void commitSeek(atMs)}
+                  <label
+                    className={cn(
+                      'flex items-start gap-3 rounded-xl border bg-secondary/35 p-3 text-sm',
+                      learningReady ? 'cursor-pointer' : 'cursor-not-allowed opacity-60',
+                    )}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={learningConsent}
+                      disabled={!learningReady}
+                      onChange={(event) => setLearningConsent(event.target.checked)}
+                      className="mt-0.5 size-4 accent-primary"
                     />
-                    {lectureQuery.data.learning_objectives.length > 0 ? (
+                    <span>
+                      Allow grounded AI requests for this lecture during this open study session.
+                      Requests send only the transcript context they need and, for frame notes, the
+                      captured frame. Nothing is committed to a plan automatically.
+                    </span>
+                  </label>
+
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      disabled={!learningReady || !learningConsent || generateLecture.isPending}
+                      onClick={() => generateLecture.mutate()}
+                    >
+                      {generateLecture.isPending ? (
+                        <LoaderCircle className="size-4 animate-spin" />
+                      ) : (
+                        <BookOpen className="size-4" />
+                      )}
+                      {lectureQuery.data ? 'Regenerate lecture analysis' : 'Analyze this lecture'}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      disabled={
+                        !learningReady ||
+                        !learningConsent ||
+                        createFrameNote.isPending ||
+                        phase !== 'ready'
+                      }
+                      onClick={() => createFrameNote.mutate()}
+                    >
+                      {createFrameNote.isPending ? (
+                        <LoaderCircle className="size-4 animate-spin" />
+                      ) : (
+                        <Camera className="size-4" />
+                      )}
+                      Explain this frame and save note
+                    </Button>
+                    <Button
+                      variant="outline"
+                      disabled={!learningReady || !learningConsent || generateMaterials.isPending}
+                      onClick={() => generateMaterials.mutate()}
+                    >
+                      {generateMaterials.isPending ? (
+                        <LoaderCircle className="size-4 animate-spin" />
+                      ) : (
+                        <Brain className="size-4" />
+                      )}
+                      {studyQuery.data?.length ? 'Regenerate study set' : 'Generate study set'}
+                    </Button>
+                  </div>
+
+                  <section
+                    className="rounded-xl border bg-background p-4"
+                    aria-labelledby="companion-heading"
+                  >
+                    <div className="flex items-start gap-3">
+                      <MessageCircle className="mt-0.5 size-4 shrink-0 text-primary" />
                       <div>
-                        <h4 className="text-sm font-semibold">Learning objectives</h4>
-                        <ul className="mt-2 space-y-2 text-sm text-muted-foreground">
-                          {lectureQuery.data.learning_objectives.map((objective, index) => (
-                            <li key={`${objective.text}-${index}`} className="flex gap-2">
-                              <span aria-hidden="true">•</span>
-                              <button
-                                type="button"
-                                className="text-left leading-6 hover:text-foreground hover:underline"
-                                onClick={() => void commitSeek(objective.evidence[0].start_ms)}
-                              >
-                                {objective.text}
-                              </button>
-                            </li>
-                          ))}
-                        </ul>
+                        <h3 id="companion-heading" className="text-sm font-semibold">
+                          Grounded study companion
+                        </h3>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          Only a narrow transcript window around {formatTimestamp(view.position_ms)}{' '}
+                          is sent for each action.
+                        </p>
+                      </div>
+                    </div>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {companionActions.map((item) => (
+                        <Button
+                          key={item.action}
+                          size="sm"
+                          variant="secondary"
+                          disabled={!learningReady || !learningConsent || companion.isPending}
+                          onClick={() => companion.mutate(item.action)}
+                        >
+                          {item.label}
+                        </Button>
+                      ))}
+                    </div>
+                    {companion.isPending ? (
+                      <p
+                        className="mt-3 flex items-center gap-2 text-sm text-muted-foreground"
+                        role="status"
+                      >
+                        <LoaderCircle className="size-4 animate-spin" /> Reading the nearby
+                        transcript…
+                      </p>
+                    ) : null}
+                    {companion.data && companionResultMediaId === view.media_id ? (
+                      <div className="mt-4 rounded-lg bg-secondary/45 p-4">
+                        <p className="whitespace-pre-wrap text-sm leading-7">
+                          {companion.data.answer_markdown}
+                        </p>
+                        <EvidenceButtons
+                          label="Companion evidence"
+                          evidence={companion.data.evidence}
+                          onSeek={(atMs) => void commitSeek(atMs)}
+                        />
                       </div>
                     ) : null}
                   </section>
 
-                  <section className="space-y-3" aria-labelledby="lecture-chapters-heading">
-                    <div className="flex items-center justify-between gap-3">
-                      <h3 id="lecture-chapters-heading" className="font-display font-semibold">
-                        Timestamped chapters
-                      </h3>
-                      <Badge tone="neutral">
-                        {lectureQuery.data.difficulty.level} difficulty ·{' '}
-                        {lectureQuery.data.difficulty.confidence} confidence
-                      </Badge>
+                  {learningStatus ? (
+                    <p className="rounded-lg border bg-background p-3 text-sm" role="status">
+                      {learningStatus}
+                    </p>
+                  ) : null}
+                  {learningError ? (
+                    <div
+                      className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive"
+                      role="alert"
+                    >
+                      <TriangleAlert className="mt-0.5 size-4 shrink-0" />
+                      <span>{learningError}</span>
                     </div>
-                    <div className="max-h-72 space-y-2 overflow-auto pr-1">
-                      {lectureQuery.data.chapters.map((chapter) => (
-                        <button
-                          key={`${chapter.start_ms}-${chapter.title}`}
-                          type="button"
-                          className="block w-full rounded-lg border bg-background p-3 text-left transition-colors hover:border-primary/35 hover:bg-accent/30"
-                          onClick={() => void commitSeek(chapter.start_ms)}
-                        >
-                          <span className="font-mono text-xs text-primary">
-                            {formatTimestamp(chapter.start_ms)}
-                          </span>
-                          <span className="ml-2 text-sm font-semibold">{chapter.title}</span>
-                          <span className="mt-1 block text-xs leading-5 text-muted-foreground">
-                            {chapter.summary}
-                          </span>
-                        </button>
-                      ))}
+                  ) : null}
+                  {lectureQuery.isError ? (
+                    <div
+                      className="flex flex-wrap items-center justify-between gap-3 text-sm text-destructive"
+                      role="alert"
+                    >
+                      <span>{messageFrom(lectureQuery.error)}</span>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => void lectureQuery.refetch()}
+                      >
+                        Reload analysis
+                      </Button>
                     </div>
-                  </section>
+                  ) : null}
+                  {notesQuery.isError || studyQuery.isError ? (
+                    <div
+                      className="flex flex-wrap items-center justify-between gap-3 text-sm text-destructive"
+                      role="alert"
+                    >
+                      <span>Saved learning materials could not be loaded.</span>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          if (notesQuery.isError) void notesQuery.refetch();
+                          if (studyQuery.isError) void studyQuery.refetch();
+                        }}
+                      >
+                        Reload materials
+                      </Button>
+                    </div>
+                  ) : null}
 
-                  {lectureQuery.data.concepts.length > 0 ? (
-                    <section className="space-y-3 lg:col-span-2" aria-labelledby="concepts-heading">
-                      <h3 id="concepts-heading" className="font-display font-semibold">
-                        Concepts and definitions
+                  {lectureQuery.data ? (
+                    <div className="grid gap-5 lg:grid-cols-2">
+                      <section className="space-y-3" aria-labelledby="lecture-summary-heading">
+                        <h3 id="lecture-summary-heading" className="font-display font-semibold">
+                          Summary
+                        </h3>
+                        <p className="text-sm leading-7 text-muted-foreground">
+                          {lectureQuery.data.summary.text}
+                        </p>
+                        <EvidenceButtons
+                          label="Summary evidence"
+                          evidence={lectureQuery.data.summary.evidence}
+                          onSeek={(atMs) => void commitSeek(atMs)}
+                        />
+                        {lectureQuery.data.learning_objectives.length > 0 ? (
+                          <div>
+                            <h4 className="text-sm font-semibold">Learning objectives</h4>
+                            <ul className="mt-2 space-y-2 text-sm text-muted-foreground">
+                              {lectureQuery.data.learning_objectives.map((objective, index) => (
+                                <li key={`${objective.text}-${index}`} className="flex gap-2">
+                                  <span aria-hidden="true">•</span>
+                                  <button
+                                    type="button"
+                                    className="text-left leading-6 hover:text-foreground hover:underline"
+                                    onClick={() => void commitSeek(objective.evidence[0].start_ms)}
+                                  >
+                                    {objective.text}
+                                  </button>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        ) : null}
+                      </section>
+
+                      <section className="space-y-3" aria-labelledby="lecture-chapters-heading">
+                        <div className="flex items-center justify-between gap-3">
+                          <h3 id="lecture-chapters-heading" className="font-display font-semibold">
+                            Timestamped chapters
+                          </h3>
+                          <Badge tone="neutral">
+                            {lectureQuery.data.difficulty.level} difficulty ·{' '}
+                            {lectureQuery.data.difficulty.confidence} confidence
+                          </Badge>
+                        </div>
+                        <div className="max-h-72 space-y-2 overflow-auto pr-1">
+                          {lectureQuery.data.chapters.map((chapter) => (
+                            <button
+                              key={`${chapter.start_ms}-${chapter.title}`}
+                              type="button"
+                              className="block w-full rounded-lg border bg-background p-3 text-left transition-colors hover:border-primary/35 hover:bg-accent/30"
+                              onClick={() => void commitSeek(chapter.start_ms)}
+                            >
+                              <span className="font-mono text-xs text-primary">
+                                {formatTimestamp(chapter.start_ms)}
+                              </span>
+                              <span className="ml-2 text-sm font-semibold">{chapter.title}</span>
+                              <span className="mt-1 block text-xs leading-5 text-muted-foreground">
+                                {chapter.summary}
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                      </section>
+
+                      {lectureQuery.data.concepts.length > 0 ? (
+                        <section
+                          className="space-y-3 lg:col-span-2"
+                          aria-labelledby="concepts-heading"
+                        >
+                          <h3 id="concepts-heading" className="font-display font-semibold">
+                            Concepts and definitions
+                          </h3>
+                          <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                            {lectureQuery.data.concepts.map((concept) => (
+                              <button
+                                key={concept.name}
+                                type="button"
+                                className="rounded-lg border bg-background p-3 text-left hover:border-primary/35"
+                                onClick={() => void commitSeek(concept.evidence[0].start_ms)}
+                              >
+                                <span className="text-sm font-semibold">{concept.name}</span>
+                                <span className="mt-1 block text-xs leading-5 text-muted-foreground">
+                                  {concept.definition}
+                                </span>
+                                <span className="mt-2 block font-mono text-[11px] text-primary">
+                                  Open at {formatTimestamp(concept.evidence[0].start_ms)}
+                                </span>
+                              </button>
+                            ))}
+                          </div>
+                        </section>
+                      ) : null}
+                    </div>
+                  ) : null}
+
+                  {notesQuery.data && notesQuery.data.length > 0 ? (
+                    <section
+                      className="space-y-3 border-t pt-5"
+                      aria-labelledby="frame-notes-heading"
+                    >
+                      <h3 id="frame-notes-heading" className="font-display font-semibold">
+                        Saved frame explanations
                       </h3>
-                      <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-                        {lectureQuery.data.concepts.map((concept) => (
-                          <button
-                            key={concept.name}
-                            type="button"
-                            className="rounded-lg border bg-background p-3 text-left hover:border-primary/35"
-                            onClick={() => void commitSeek(concept.evidence[0].start_ms)}
-                          >
-                            <span className="text-sm font-semibold">{concept.name}</span>
-                            <span className="mt-1 block text-xs leading-5 text-muted-foreground">
-                              {concept.definition}
-                            </span>
-                            <span className="mt-2 block font-mono text-[11px] text-primary">
-                              Open at {formatTimestamp(concept.evidence[0].start_ms)}
-                            </span>
-                          </button>
+                      <div className="grid gap-3 lg:grid-cols-2">
+                        {notesQuery.data.map((note) => (
+                          <article key={note.id} className="rounded-xl border bg-background p-4">
+                            <button
+                              type="button"
+                              className="font-semibold hover:text-primary hover:underline"
+                              onClick={() => void commitSeek(note.at_ms)}
+                            >
+                              {formatTimestamp(note.at_ms)} · {note.title}
+                            </button>
+                            <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-muted-foreground">
+                              {note.body_markdown}
+                            </p>
+                            <p className="mt-3 font-mono text-[11px] text-muted-foreground">
+                              {note.frame_grounded
+                                ? 'Frame + transcript grounded'
+                                : 'Transcript grounded'}
+                              {' · '}
+                              {note.model}
+                            </p>
+                          </article>
                         ))}
                       </div>
                     </section>
                   ) : null}
-                </div>
-              ) : null}
 
-              {notesQuery.data && notesQuery.data.length > 0 ? (
-                <section className="space-y-3 border-t pt-5" aria-labelledby="frame-notes-heading">
-                  <h3 id="frame-notes-heading" className="font-display font-semibold">
-                    Saved frame explanations
-                  </h3>
-                  <div className="grid gap-3 lg:grid-cols-2">
-                    {notesQuery.data.map((note) => (
-                      <article key={note.id} className="rounded-xl border bg-background p-4">
-                        <button
-                          type="button"
-                          className="font-semibold hover:text-primary hover:underline"
-                          onClick={() => void commitSeek(note.at_ms)}
-                        >
-                          {formatTimestamp(note.at_ms)} · {note.title}
-                        </button>
-                        <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-muted-foreground">
-                          {note.body_markdown}
-                        </p>
-                        <p className="mt-3 font-mono text-[11px] text-muted-foreground">
-                          {note.frame_grounded ? 'Frame + transcript grounded' : 'Transcript grounded'}
-                          {' · '}
-                          {note.model}
-                        </p>
-                      </article>
-                    ))}
-                  </div>
-                </section>
-              ) : null}
-
-              {studyQuery.data && studyQuery.data.length > 0 ? (
-                <section className="space-y-3 border-t pt-5" aria-labelledby="study-materials-heading">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div>
-                      <h3 id="study-materials-heading" className="font-display font-semibold">
-                        Study materials
-                      </h3>
-                      <p className="mt-1 text-xs text-muted-foreground">
-                        AI creates the questions; deterministic SM-2 schedules every review.
-                      </p>
-                    </div>
-                    <Badge tone="neutral">{studyQuery.data.length} items</Badge>
-                  </div>
-                  <div className="grid gap-3 lg:grid-cols-2">
-                    {studyQuery.data.map((item) => {
-                      const revealed = revealedStudyItem === item.id;
-                      return (
-                        <article key={item.id} className="rounded-xl border bg-background p-4">
-                          <div className="flex items-center justify-between gap-3">
-                            <Badge tone="primary">{studyKindLabel(item.kind)}</Badge>
-                            <button
-                              type="button"
-                              className="font-mono text-[11px] text-primary hover:underline"
-                              onClick={() => void commitSeek(item.evidence[0].start_ms)}
-                            >
-                              Evidence {formatTimestamp(item.evidence[0].start_ms)}
-                            </button>
-                          </div>
-                          <p className="mt-3 text-sm font-medium leading-6">{item.prompt}</p>
-                          {item.options.length > 0 ? (
-                            <ol className="mt-2 list-inside list-[upper-alpha] space-y-1 text-sm text-muted-foreground">
-                              {item.options.map((option) => (
-                                <li key={option}>{option}</li>
-                              ))}
-                            </ol>
-                          ) : null}
-                          {item.hint ? (
-                            <p className="mt-2 text-xs text-muted-foreground">Hint: {item.hint}</p>
-                          ) : null}
-                          {!revealed ? (
-                            <Button
-                              className="mt-3"
-                              size="sm"
-                              variant="outline"
-                              onClick={() => revealStudyAnswer(item.id)}
-                            >
-                              Reveal answer
-                            </Button>
-                          ) : (
-                            <div className="mt-3 rounded-lg bg-secondary/55 p-3">
-                              <p className="text-sm leading-6">{item.answer}</p>
-                              <div className="mt-3 flex flex-wrap items-end gap-2">
-                                <label className="text-xs font-medium">
-                                  Confidence
-                                  <select
-                                    className="ml-2 h-8 rounded-md border bg-background px-2"
-                                    value={reviewConfidence}
-                                    onChange={(event) => setReviewConfidence(Number(event.target.value))}
-                                  >
-                                    {[1, 2, 3, 4, 5].map((value) => (
-                                      <option key={value} value={value}>
-                                        {value}
-                                      </option>
-                                    ))}
-                                  </select>
-                                </label>
+                  {studyQuery.data && studyQuery.data.length > 0 ? (
+                    <section
+                      className="space-y-3 border-t pt-5"
+                      aria-labelledby="study-materials-heading"
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                          <h3 id="study-materials-heading" className="font-display font-semibold">
+                            Study materials
+                          </h3>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            AI creates the questions; deterministic SM-2 schedules every review.
+                          </p>
+                        </div>
+                        <Badge tone="neutral">{studyQuery.data.length} items</Badge>
+                      </div>
+                      <div className="grid gap-3 lg:grid-cols-2">
+                        {studyQuery.data.map((item) => {
+                          const revealed = revealedStudyItem === item.id;
+                          return (
+                            <article key={item.id} className="rounded-xl border bg-background p-4">
+                              <div className="flex items-center justify-between gap-3">
+                                <Badge tone="primary">{studyKindLabel(item.kind)}</Badge>
+                                <button
+                                  type="button"
+                                  className="font-mono text-[11px] text-primary hover:underline"
+                                  onClick={() => void commitSeek(item.evidence[0].start_ms)}
+                                >
+                                  Evidence {formatTimestamp(item.evidence[0].start_ms)}
+                                </button>
+                              </div>
+                              <p className="mt-3 text-sm font-medium leading-6">{item.prompt}</p>
+                              {item.options.length > 0 ? (
+                                <ol className="mt-2 list-inside list-[upper-alpha] space-y-1 text-sm text-muted-foreground">
+                                  {item.options.map((option) => (
+                                    <li key={option}>{option}</li>
+                                  ))}
+                                </ol>
+                              ) : null}
+                              {item.hint ? (
+                                <p className="mt-2 text-xs text-muted-foreground">
+                                  Hint: {item.hint}
+                                </p>
+                              ) : null}
+                              {!revealed ? (
                                 <Button
+                                  className="mt-3"
                                   size="sm"
                                   variant="outline"
-                                  disabled={submitReview.isPending}
-                                  onClick={() => submitReview.mutate({ item, quality: 1 })}
+                                  onClick={() => revealStudyAnswer(item.id)}
                                 >
-                                  Again
+                                  Reveal answer
                                 </Button>
-                                <Button
-                                  size="sm"
-                                  variant="secondary"
-                                  disabled={submitReview.isPending}
-                                  onClick={() => submitReview.mutate({ item, quality: 3 })}
-                                >
-                                  Hard
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  disabled={submitReview.isPending}
-                                  onClick={() => submitReview.mutate({ item, quality: 5 })}
-                                >
-                                  Easy
-                                </Button>
-                              </div>
-                            </div>
-                          )}
-                          <p className="mt-3 font-mono text-[11px] text-muted-foreground">
-                            Due {formatReviewDate(item.due_at)} · interval {item.interval_days}d ·{' '}
-                            {item.repetitions} successful reviews
-                          </p>
-                        </article>
-                      );
-                    })}
-                  </div>
-                </section>
+                              ) : (
+                                <div className="mt-3 rounded-lg bg-secondary/55 p-3">
+                                  <p className="text-sm leading-6">{item.answer}</p>
+                                  <div className="mt-3 flex flex-wrap items-end gap-2">
+                                    <label className="text-xs font-medium">
+                                      Confidence
+                                      <select
+                                        className="ml-2 h-8 rounded-md border bg-background px-2"
+                                        value={reviewConfidence}
+                                        onChange={(event) =>
+                                          setReviewConfidence(Number(event.target.value))
+                                        }
+                                      >
+                                        {[1, 2, 3, 4, 5].map((value) => (
+                                          <option key={value} value={value}>
+                                            {value}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </label>
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      disabled={submitReview.isPending}
+                                      onClick={() => submitReview.mutate({ item, quality: 1 })}
+                                    >
+                                      Again
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      variant="secondary"
+                                      disabled={submitReview.isPending}
+                                      onClick={() => submitReview.mutate({ item, quality: 3 })}
+                                    >
+                                      Hard
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      disabled={submitReview.isPending}
+                                      onClick={() => submitReview.mutate({ item, quality: 5 })}
+                                    >
+                                      Easy
+                                    </Button>
+                                  </div>
+                                </div>
+                              )}
+                              <p className="mt-3 font-mono text-[11px] text-muted-foreground">
+                                Due {formatReviewDate(item.due_at)} · interval {item.interval_days}d
+                                · {item.repetitions} successful reviews
+                              </p>
+                            </article>
+                          );
+                        })}
+                      </div>
+                    </section>
+                  ) : null}
+                </CardContent>
               ) : null}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Study actions</CardTitle>
-              <CardDescription>
-                Actions are append-only and will shape the next replan without rewriting completed
-                history.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
-                <Button
-                  disabled={actionsDisabled || view.completed}
-                  onClick={() => void performAction('complete')}
-                >
-                  <CheckCircle2 className="size-4" /> Mark complete
-                </Button>
-                <Button
-                  variant="outline"
-                  disabled={actionsDisabled}
-                  onClick={() => void performAction('postpone')}
-                >
-                  <Clock3 className="size-4" /> Postpone
-                </Button>
-                <Button
-                  variant="outline"
-                  disabled={
-                    actionsDisabled ||
-                    view.position_ms <= view.raw_start_ms ||
-                    view.position_ms >= view.raw_end_ms
-                  }
-                  onClick={() => void performAction('split')}
-                >
-                  <Scissors className="size-4" /> Split here
-                </Button>
-                <Button
-                  variant="outline"
-                  disabled={actionsDisabled}
-                  onClick={() => void performAction('repeat')}
-                >
-                  <RefreshCcw className="size-4" /> Repeat
-                </Button>
-                <Button
-                  variant="outline"
-                  disabled={actionsDisabled}
-                  onClick={() => void performAction('must_watch')}
-                >
-                  <Flag className="size-4" /> Must watch
-                </Button>
-                {confirmSkip ? (
-                  <>
-                    <Button
-                      variant="destructive"
-                      disabled={actionsDisabled}
-                      onClick={() => void performAction('skip')}
-                    >
-                      Confirm skip
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      onClick={() => setConfirmSkip(false)}
-                      disabled={actionsDisabled}
-                    >
-                      Cancel
-                    </Button>
-                  </>
-                ) : (
-                  <Button
-                    variant="ghost"
-                    disabled={actionsDisabled}
-                    onClick={() => setConfirmSkip(true)}
-                  >
-                    Skip
-                  </Button>
-                )}
-                <Button
-                  className="col-span-2 sm:ml-auto"
-                  variant="secondary"
-                  disabled={busy || Boolean(actionPending) || replanPending}
-                  onClick={() => void replanRemaining()}
-                >
-                  <RefreshCcw className="size-4" />
-                  {replanPending ? 'Replanning…' : 'Replan remaining'}
-                </Button>
-              </div>
-              {actionMessage ? (
-                <p className="mt-4 flex items-center gap-2 text-sm text-success" role="status">
-                  <CheckCircle2 className="size-4" /> {actionMessage}
-                </p>
-              ) : null}
-            </CardContent>
-          </Card>
+            </Card>
+          ) : null}
         </div>
       ) : null}
-    </>
+    </div>
+  );
+}
+
+function LearningSetup({
+  transcriptStatus,
+  transcriptSegments,
+  transcriptPending,
+  transcriptError,
+  retryTranscript,
+  modelPending,
+  modelError,
+  hasReadyModel,
+  retryModels,
+  cloudConfigured,
+  cloudPending,
+  cloudError,
+  retryCloud,
+  transcriptionProgress,
+  transcriptionPending,
+  startTranscript,
+  consent,
+}: {
+  transcriptStatus?: 'not_started' | 'queued' | 'processing' | 'attention' | 'completed' | 'failed';
+  transcriptSegments: number;
+  transcriptPending: boolean;
+  transcriptError: boolean;
+  retryTranscript: () => void;
+  modelPending: boolean;
+  modelError: boolean;
+  hasReadyModel: boolean;
+  retryModels: () => void;
+  cloudConfigured: boolean;
+  cloudPending: boolean;
+  cloudError: boolean;
+  retryCloud: () => void;
+  transcriptionProgress?: AnalysisProgress;
+  transcriptionPending: boolean;
+  startTranscript: () => void;
+  consent: boolean;
+}) {
+  const transcriptReady = transcriptStatus === 'completed';
+  const transcriptActive = isTranscriptActive(transcriptStatus);
+  return (
+    <section className="space-y-3" aria-labelledby="toolkit-readiness-heading">
+      <div>
+        <h3 id="toolkit-readiness-heading" className="text-sm font-semibold">
+          Toolkit readiness
+        </h3>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Grounded answers require these local and cloud prerequisites.
+        </p>
+      </div>
+      <div className="grid gap-2 sm:grid-cols-3">
+        <ReadinessItem
+          label="Local transcript"
+          value={transcriptReadinessLabel(
+            transcriptStatus,
+            transcriptSegments,
+            transcriptPending,
+            transcriptError,
+          )}
+          ready={transcriptReady}
+          pending={transcriptPending || transcriptActive}
+        />
+        <ReadinessItem
+          label="OpenRouter"
+          value={
+            cloudPending
+              ? 'Checking…'
+              : cloudError
+                ? 'Unavailable'
+                : cloudConfigured
+                  ? 'Connected'
+                  : 'Not configured'
+          }
+          ready={cloudConfigured}
+          pending={cloudPending}
+        />
+        <ReadinessItem
+          label="Session consent"
+          value={consent ? 'Approved' : 'Waiting for you'}
+          ready={consent}
+          pending={false}
+        />
+      </div>
+
+      {!transcriptReady ? (
+        <div className="rounded-xl border border-warning/25 bg-warning/[0.07] p-4">
+          <div className="flex items-start gap-3">
+            <Captions className="mt-0.5 size-5 shrink-0 text-warning" />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold">Prepare a local transcript first</p>
+              <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                LectorBit transcribes this lecture on-device. The transcript unlocks cited
+                explanations, frame notes, chapter navigation, and review cards.
+              </p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {transcriptError ? (
+                  <Button size="sm" variant="outline" onClick={retryTranscript}>
+                    <RefreshCcw className="size-3.5" /> Check transcript again
+                  </Button>
+                ) : modelError ? (
+                  <Button size="sm" variant="outline" onClick={retryModels}>
+                    <RefreshCcw className="size-3.5" /> Check models again
+                  </Button>
+                ) : modelPending || transcriptPending ? (
+                  <Button size="sm" variant="outline" disabled>
+                    <LoaderCircle className="size-3.5 animate-spin" /> Checking local setup…
+                  </Button>
+                ) : hasReadyModel ? (
+                  <Button
+                    size="sm"
+                    disabled={transcriptionPending || transcriptActive}
+                    onClick={startTranscript}
+                  >
+                    {transcriptionPending || transcriptActive ? (
+                      <LoaderCircle className="size-3.5 animate-spin" />
+                    ) : (
+                      <Captions className="size-3.5" />
+                    )}
+                    {transcriptionActionLabel(
+                      transcriptionProgress,
+                      transcriptStatus,
+                      transcriptionPending,
+                    )}
+                  </Button>
+                ) : (
+                  <Link className={settingsLinkClass} to="/settings">
+                    Install transcription model
+                  </Link>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {!cloudPending && !cloudConfigured ? (
+        <div className="flex flex-col gap-3 rounded-xl border border-primary/15 bg-primary/[0.04] p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="text-sm font-semibold">
+              {cloudError ? 'OpenRouter status is unavailable' : 'Connect OpenRouter'}
+            </p>
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">
+              Your protected API key powers the optional grounded learning requests.
+            </p>
+          </div>
+          {cloudError ? (
+            <Button className="shrink-0" size="sm" variant="outline" onClick={retryCloud}>
+              Check again
+            </Button>
+          ) : (
+            <Link className={cn(settingsLinkClass, 'shrink-0')} to="/settings">
+              Open AI settings
+            </Link>
+          )}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function ReadinessItem({
+  label,
+  value,
+  ready,
+  pending,
+}: {
+  label: string;
+  value: string;
+  ready: boolean;
+  pending: boolean;
+}) {
+  return (
+    <div className="flex items-center gap-2.5 rounded-lg border border-border/70 bg-background/60 p-3">
+      <span
+        className={cn(
+          'grid size-7 shrink-0 place-items-center rounded-full',
+          ready
+            ? 'bg-success/15 text-success'
+            : pending
+              ? 'bg-primary/10 text-primary'
+              : 'bg-muted text-muted-foreground',
+        )}
+      >
+        {ready ? (
+          <CheckCircle2 className="size-4" />
+        ) : pending ? (
+          <LoaderCircle className="size-4 animate-spin" />
+        ) : (
+          <span className="size-2 rounded-full bg-current" />
+        )}
+      </span>
+      <span className="min-w-0">
+        <span className="block text-[11px] font-semibold uppercase tracking-[0.07em] text-muted-foreground">
+          {label}
+        </span>
+        <span className="mt-0.5 block truncate text-sm font-medium">{value}</span>
+      </span>
+    </div>
+  );
+}
+
+function ShortcutGuide() {
+  const shortcuts = [
+    ['Space / K', 'Play or pause'],
+    ['← / →', 'Seek 10 seconds'],
+    ['F', 'Toggle focus mode'],
+    ['Esc', 'Exit focus mode'],
+  ];
+  return (
+    <div
+      className="mb-5 flex flex-wrap items-center gap-x-5 gap-y-2 rounded-xl border border-primary/15 bg-primary/[0.04] px-4 py-3 text-xs"
+      role="region"
+      aria-label="Keyboard shortcuts"
+    >
+      <span className="flex items-center gap-2 font-semibold">
+        <Keyboard className="size-4 text-primary" /> Keyboard controls
+      </span>
+      {shortcuts.map(([keys, label]) => (
+        <span key={keys} className="flex items-center gap-2 text-muted-foreground">
+          <kbd className="rounded-md border bg-background px-2 py-1 font-mono text-[11px] text-foreground shadow-sm">
+            {keys}
+          </kbd>
+          {label}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function SessionMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg border border-border/70 bg-background/60 p-3">
+      <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+        {label}
+      </p>
+      <p className="mt-1 font-display text-xl font-semibold tabular-nums">{value}</p>
+    </div>
+  );
+}
+
+function StudyActions({
+  actionsDisabled,
+  view,
+  confirmSkip,
+  setConfirmSkip,
+  performAction,
+  busy,
+  actionPending,
+  replanPending,
+  replanRemaining,
+  actionMessage,
+}: {
+  actionsDisabled: boolean;
+  view: PlaybackView;
+  confirmSkip: boolean;
+  setConfirmSkip: (value: boolean) => void;
+  performAction: (kind: StudyAction) => Promise<void>;
+  busy: boolean;
+  actionPending: StudyAction | undefined;
+  replanPending: boolean;
+  replanRemaining: () => Promise<void>;
+  actionMessage: string | undefined;
+}) {
+  return (
+    <Card className="overflow-hidden">
+      <CardHeader className="border-b border-border/70 bg-muted/15">
+        <CardTitle>Finish the session</CardTitle>
+        <CardDescription>
+          Save an outcome now. Your next routine will adapt without rewriting history.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3 pt-5">
+        <Button
+          className="w-full"
+          disabled={actionsDisabled || view.completed}
+          onClick={() => void performAction('complete')}
+        >
+          <CheckCircle2 className="size-4" /> Mark complete
+        </Button>
+        <div className="grid grid-cols-2 gap-2">
+          <Button
+            variant="outline"
+            disabled={actionsDisabled}
+            onClick={() => void performAction('postpone')}
+          >
+            <Clock3 className="size-4" /> Postpone
+          </Button>
+          <Button
+            variant="outline"
+            disabled={
+              actionsDisabled ||
+              view.position_ms <= view.raw_start_ms ||
+              view.position_ms >= view.raw_end_ms
+            }
+            onClick={() => void performAction('split')}
+          >
+            <Scissors className="size-4" /> Split here
+          </Button>
+          <Button
+            variant="outline"
+            disabled={actionsDisabled}
+            onClick={() => void performAction('repeat')}
+          >
+            <RefreshCcw className="size-4" /> Repeat
+          </Button>
+          <Button
+            variant="outline"
+            disabled={actionsDisabled}
+            onClick={() => void performAction('must_watch')}
+          >
+            <Flag className="size-4" /> Must watch
+          </Button>
+        </div>
+        <div className="border-t border-border/70 pt-3">
+          {confirmSkip ? (
+            <div className="grid grid-cols-2 gap-2 rounded-lg border border-destructive/20 bg-destructive/[0.04] p-2">
+              <Button
+                variant="destructive"
+                disabled={actionsDisabled}
+                onClick={() => void performAction('skip')}
+              >
+                Confirm skip
+              </Button>
+              <Button
+                variant="ghost"
+                onClick={() => setConfirmSkip(false)}
+                disabled={actionsDisabled}
+              >
+                Cancel
+              </Button>
+            </div>
+          ) : (
+            <Button
+              className="w-full"
+              variant="ghost"
+              aria-label="Skip"
+              disabled={actionsDisabled}
+              onClick={() => setConfirmSkip(true)}
+            >
+              Skip this block
+            </Button>
+          )}
+          <Button
+            className="mt-2 w-full"
+            variant="secondary"
+            disabled={busy || Boolean(actionPending) || replanPending}
+            onClick={() => void replanRemaining()}
+          >
+            <RefreshCcw className="size-4" />
+            {replanPending ? 'Replanning…' : 'Replan remaining'}
+          </Button>
+        </div>
+        {actionMessage ? (
+          <p className="flex items-center gap-2 text-sm text-success" role="status">
+            <CheckCircle2 className="size-4" /> {actionMessage}
+          </p>
+        ) : null}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -1248,7 +1973,11 @@ function EvidenceButtons({
 }
 
 function captureVideoFrame(video: HTMLVideoElement): string {
-  if (!video.videoWidth || !video.videoHeight || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
+  if (
+    !video.videoWidth ||
+    !video.videoHeight ||
+    video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA
+  ) {
     throw new Error('Wait until the current video frame is visible.');
   }
   const maxWidth = 960;
@@ -1346,6 +2075,60 @@ function formatDuration(milliseconds: number): string {
   return minutes < 60 ? `${minutes}m` : `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }
 
+function isTranscriptActive(status?: string): boolean {
+  return status === 'queued' || status === 'processing' || status === 'attention';
+}
+
+function transcriptReadinessLabel(
+  status: string | undefined,
+  segmentCount: number,
+  pending: boolean,
+  error: boolean,
+): string {
+  if (pending) return 'Checking…';
+  if (error) return 'Unavailable';
+  switch (status) {
+    case 'completed':
+      return segmentCount > 0 ? `${segmentCount} cited segments` : 'Ready';
+    case 'queued':
+      return 'Queued locally';
+    case 'processing':
+      return 'Transcribing…';
+    case 'attention':
+      return 'Waiting to retry';
+    case 'failed':
+      return 'Needs another attempt';
+    default:
+      return 'Not prepared';
+  }
+}
+
+function transcriptionActionLabel(
+  progress: AnalysisProgress | undefined,
+  transcriptStatus: string | undefined,
+  pending: boolean,
+): string {
+  if (pending || progress?.event === 'queued') return 'Queuing transcript…';
+  if (progress?.event === 'extracting') return 'Extracting audio…';
+  if (progress?.event === 'transcribing') return 'Transcribing…';
+  if (progress?.event === 'indexing') return 'Indexing transcript…';
+  if (progress?.event === 'completed') return 'Finishing transcript…';
+  if (transcriptStatus === 'queued') return 'Transcript queued';
+  if (transcriptStatus === 'processing') return 'Transcribing…';
+  if (transcriptStatus === 'attention') return 'Waiting to retry…';
+  if (progress?.event === 'failed' || transcriptStatus === 'failed') return 'Retry transcription';
+  return 'Transcribe this lecture';
+}
+
+function assertLearningReady(transcriptStatus?: string, cloudConfigured?: boolean) {
+  if (transcriptStatus !== 'completed') {
+    throw new Error('Finish the local transcript before using grounded study tools.');
+  }
+  if (!cloudConfigured) {
+    throw new Error('Add an OpenRouter API key in Settings before using grounded study tools.');
+  }
+}
+
 function messageFrom(cause: unknown): string {
   return cause instanceof Error ? cause.message : 'Playback could not continue.';
 }
@@ -1365,6 +2148,37 @@ function mediaErrorMessage(error: MediaError | null): string {
   }
 }
 
+function isEditableShortcutTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  return (
+    target.isContentEditable ||
+    ['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON', 'A', 'VIDEO'].includes(target.tagName)
+  );
+}
+
+function sessionGoalKey(itemId: string): string {
+  return `lectorbit.session-goal.${itemId}`;
+}
+
+function loadSessionGoal(itemId: string): string {
+  if (!itemId) return '';
+  try {
+    return window.localStorage.getItem(sessionGoalKey(itemId)) ?? '';
+  } catch {
+    return '';
+  }
+}
+
+function saveSessionGoal(itemId: string, value: string) {
+  if (!itemId) return;
+  try {
+    if (value.trim()) window.localStorage.setItem(sessionGoalKey(itemId), value);
+    else window.localStorage.removeItem(sessionGoalKey(itemId));
+  } catch {
+    // Private storage may be unavailable in a hardened WebView; the in-memory goal still works.
+  }
+}
+
 function localIsoDate(): string {
   const now = new Date();
   now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
@@ -1373,3 +2187,6 @@ function localIsoDate(): string {
 
 const backLinkClass =
   'inline-flex h-10 items-center justify-center gap-2 rounded-lg border bg-background px-4 text-sm font-semibold transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50';
+
+const settingsLinkClass =
+  'inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-input bg-background px-3 text-sm font-semibold transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2';

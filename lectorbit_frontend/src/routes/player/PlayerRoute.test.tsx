@@ -3,6 +3,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { PlayerRoute } from './PlayerRoute';
+import type { AnalysisProgress } from '../../ipc/analysis';
+import type { LearningProgress } from '../../ipc/learning';
 
 const mocks = vi.hoisted(() => ({
   capability: vi.fn(),
@@ -16,6 +18,10 @@ const mocks = vi.hoisted(() => ({
   state: vi.fn(),
   action: vi.fn(),
   replan: vi.fn(),
+  cloudStatus: vi.fn(),
+  models: vi.fn(),
+  transcriptState: vi.fn(),
+  transcribe: vi.fn(),
   getLecture: vi.fn(),
   startLecture: vi.fn(),
   explainFrame: vi.fn(),
@@ -38,7 +44,15 @@ vi.mock('../../ipc/playback', () => ({
   getPlaybackState: mocks.state,
   recordStudyAction: mocks.action,
 }));
-vi.mock('../../ipc/planner', () => ({ replanActive: mocks.replan }));
+vi.mock('../../ipc/planner', () => ({
+  replanActive: mocks.replan,
+  getCloudPlanningStatus: mocks.cloudStatus,
+}));
+vi.mock('../../ipc/analysis', () => ({
+  listModels: mocks.models,
+  getTranscriptState: mocks.transcriptState,
+  startTranscription: mocks.transcribe,
+}));
 vi.mock('../../ipc/learning', () => ({
   getLectureUnderstanding: mocks.getLecture,
   startLectureUnderstanding: mocks.startLecture,
@@ -74,6 +88,66 @@ const view = {
   ],
 };
 
+const evidence = [{ segment_id: 1, start_ms: 120_000, end_ms: 132_000 }];
+
+const lectureUnderstanding = {
+  artifact_id: 'artifact-1',
+  media_id: 'media-1',
+  transcript_id: 'transcript-1',
+  summary: { text: 'A grounded summary of graph traversal.', evidence },
+  learning_objectives: [{ text: 'Compare breadth-first and depth-first search.', evidence }],
+  chapters: [
+    {
+      title: 'Graph traversal',
+      summary: 'Introduces traversal strategies.',
+      start_ms: 120_000,
+      end_ms: 300_000,
+      evidence,
+    },
+  ],
+  concepts: [{ name: 'Frontier', definition: 'The next nodes available to visit.', evidence }],
+  prerequisites: [],
+  key_examples: [],
+  difficulty: {
+    level: 'medium',
+    confidence: 'high',
+    reason: 'Uses prior data structures.',
+    evidence,
+  },
+  model: 'openrouter/free',
+  created_at: '2026-08-14T00:00:00Z',
+};
+
+const frameNote = {
+  id: 'note-1',
+  media_id: 'media-1',
+  transcript_id: 'transcript-1',
+  at_ms: 321_000,
+  title: 'Traversal diagram',
+  body_markdown: 'The highlighted edge is the next traversal step.',
+  evidence,
+  model: 'openrouter/free',
+  frame_grounded: true,
+  created_at: '2026-08-14T00:00:00Z',
+};
+
+const studyItem = {
+  id: 'study-1',
+  media_id: 'media-1',
+  chapter_start_ms: 120_000,
+  kind: 'flashcard',
+  prompt: 'What is a traversal frontier?',
+  answer: 'The collection of nodes available to visit next.',
+  hint: 'Think about the boundary between visited and unvisited nodes.',
+  options: [],
+  evidence,
+  due_at: '2026-08-15T00:00:00Z',
+  interval_days: 0,
+  repetitions: 0,
+  ease_milli: 2500,
+  last_quality: null,
+};
+
 function renderRoute(initialEntry = '/player/item-1') {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const rendered = render(
@@ -92,6 +166,7 @@ function renderRoute(initialEntry = '/player/item-1') {
 describe('PlayerRoute', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    window.localStorage.clear();
     vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => undefined);
     mocks.capability.mockResolvedValue({
       available: true,
@@ -108,6 +183,42 @@ describe('PlayerRoute', () => {
     mocks.sync.mockResolvedValue(view);
     mocks.state.mockResolvedValue(view);
     mocks.action.mockResolvedValue(undefined);
+    mocks.cloudStatus.mockResolvedValue({
+      configured: true,
+      provider: 'OpenRouter',
+      model: 'openrouter/free',
+    });
+    mocks.models.mockResolvedValue([
+      {
+        id: 'whisper-small',
+        version: '1',
+        provider: 'local',
+        expected_size_bytes: 1,
+        architecture: 'whisper',
+        analyzer_compatibility: '1',
+        license: 'MIT',
+        state: 'ready',
+        bytes_downloaded: 1,
+        verified_at: '2026-08-14T00:00:00Z',
+        last_error: null,
+      },
+    ]);
+    mocks.transcriptState.mockResolvedValue({
+      media_id: 'media-1',
+      status: 'completed',
+      segment_count: 42,
+      updated_at: '2026-08-14T00:00:00Z',
+      job: null,
+    });
+    mocks.transcribe.mockResolvedValue({
+      id: 'transcription-job',
+      kind: 'transcribe',
+      status: 'queued',
+      attempt: 0,
+      last_error: null,
+      created_at: '2026-08-14T00:00:00Z',
+      updated_at: '2026-08-14T00:00:00Z',
+    });
     mocks.getLecture.mockResolvedValue(null);
     mocks.listNotes.mockResolvedValue([]);
     mocks.listMaterials.mockResolvedValue([]);
@@ -119,6 +230,23 @@ describe('PlayerRoute', () => {
       last_error: null,
       created_at: '2026-08-14T00:00:00Z',
       updated_at: '2026-08-14T00:00:00Z',
+    });
+    mocks.explainFrame.mockResolvedValue(frameNote);
+    mocks.generateMaterials.mockResolvedValue([studyItem]);
+    mocks.recordReview.mockResolvedValue({
+      study_item_id: 'study-1',
+      due_at: '2026-08-16T00:00:00Z',
+      interval_days: 1,
+      repetitions: 1,
+      ease_milli: 2500,
+      last_quality: 5,
+      updated_at: '2026-08-14T00:00:00Z',
+    });
+    mocks.companion.mockResolvedValue({
+      action: 'explain_section',
+      answer_markdown: 'This section compares two traversal frontiers.',
+      evidence,
+      model: 'openrouter/free',
     });
     mocks.replan.mockResolvedValue({
       plan_id: 'plan',
@@ -146,6 +274,273 @@ describe('PlayerRoute', () => {
     );
     fireEvent.click(screen.getByRole('button', { name: 'Play' }));
     await waitFor(() => expect(mocks.play).toHaveBeenCalled());
+  });
+
+  it('offers a distraction-free focus mode that Escape can close', async () => {
+    renderRoute();
+    await screen.findByRole('heading', { name: 'Graph theory' });
+    fireEvent.click(screen.getByRole('button', { name: 'Focus mode' }));
+    expect(screen.getByRole('button', { name: 'Exit focus' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Routine' })).not.toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(screen.getByRole('button', { name: 'Focus mode' })).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: 'f' });
+    expect(screen.getByRole('button', { name: 'Exit focus' })).toBeInTheDocument();
+  });
+
+  it('supports keyboard playback and seeking shortcuts outside form controls', async () => {
+    vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined);
+    renderRoute();
+    await screen.findByRole('heading', { name: 'Graph theory' });
+
+    fireEvent.keyDown(window, { key: ' ' });
+    await waitFor(() => expect(mocks.play).toHaveBeenCalled());
+    fireEvent.keyDown(window, { key: 'ArrowRight' });
+    await waitFor(() => expect(mocks.seek).toHaveBeenCalledWith(130_000));
+
+    mocks.pause.mockClear();
+    fireEvent.keyDown(screen.getByRole('textbox', { name: 'Session intention' }), { key: ' ' });
+    expect(mocks.pause).not.toHaveBeenCalled();
+  });
+
+  it('keeps a private session intention for the study block', async () => {
+    const firstRender = renderRoute();
+    const goal = await screen.findByRole('textbox', { name: 'Session intention' });
+    fireEvent.change(goal, { target: { value: 'Understand shortest-path tradeoffs' } });
+    firstRender.unmount();
+
+    renderRoute();
+    expect(await screen.findByRole('textbox', { name: 'Session intention' })).toHaveValue(
+      'Understand shortest-path tradeoffs',
+    );
+  });
+
+  it('keeps optional study tools collapsed until requested', async () => {
+    renderRoute();
+    await screen.findByRole('heading', { name: 'Graph theory' });
+    expect(screen.queryByRole('button', { name: 'Analyze this lecture' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Open tools' }));
+    expect(screen.getByRole('button', { name: 'Analyze this lecture' })).toBeInTheDocument();
+  });
+
+  it('turns a missing transcript into an actionable local transcription workflow', async () => {
+    mocks.transcriptState.mockResolvedValue({
+      media_id: 'media-1',
+      status: 'not_started',
+      segment_count: 0,
+      updated_at: null,
+      job: null,
+    });
+    mocks.transcribe.mockImplementation(
+      (_mediaId: string, _modelId: string, onEvent: (event: AnalysisProgress) => void) => {
+        onEvent({ event: 'queued', data: { jobId: 'transcription-job' } });
+        return Promise.resolve({
+          id: 'transcription-job',
+          kind: 'transcribe',
+          status: 'queued',
+          attempt: 0,
+          last_error: null,
+          created_at: '2026-08-14T00:00:00Z',
+          updated_at: '2026-08-14T00:00:00Z',
+        });
+      },
+    );
+    renderRoute();
+    await screen.findByRole('heading', { name: 'Graph theory' });
+    fireEvent.click(screen.getByRole('button', { name: 'Open tools' }));
+
+    const consent = await screen.findByRole('checkbox');
+    expect(consent).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Analyze this lecture' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Transcribe this lecture' }));
+    await waitFor(() =>
+      expect(mocks.transcribe).toHaveBeenCalledWith(
+        'media-1',
+        'whisper-small',
+        expect.any(Function),
+      ),
+    );
+    expect(await screen.findByText('Transcription queued locally.')).toBeInTheDocument();
+  });
+
+  it('unlocks grounded actions as soon as local transcription completes', async () => {
+    mocks.transcriptState
+      .mockResolvedValueOnce({
+        media_id: 'media-1',
+        status: 'not_started',
+        segment_count: 0,
+        updated_at: null,
+        job: null,
+      })
+      .mockResolvedValue({
+        media_id: 'media-1',
+        status: 'completed',
+        segment_count: 42,
+        updated_at: '2026-08-14T00:00:00Z',
+        job: null,
+      });
+    mocks.transcribe.mockImplementation(
+      (_mediaId: string, _modelId: string, onEvent: (event: AnalysisProgress) => void) => {
+        onEvent({ event: 'completed', data: { jobId: 'transcription-job' } });
+        return Promise.resolve({
+          id: 'transcription-job',
+          kind: 'transcribe',
+          status: 'completed',
+          attempt: 0,
+          last_error: null,
+          created_at: '2026-08-14T00:00:00Z',
+          updated_at: '2026-08-14T00:00:00Z',
+        });
+      },
+    );
+    renderRoute();
+    await screen.findByRole('heading', { name: 'Graph theory' });
+    fireEvent.click(screen.getByRole('button', { name: 'Open tools' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Transcribe this lecture' }));
+
+    const consent = screen.getByRole('checkbox');
+    await waitFor(() => expect(consent).not.toBeDisabled());
+    expect(screen.getByText('42 cited segments')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Analyze this lecture' })).toBeDisabled();
+    fireEvent.click(consent);
+    expect(screen.getByRole('button', { name: 'Analyze this lecture' })).toBeEnabled();
+  });
+
+  it('points to model setup when local transcription is not installed', async () => {
+    mocks.transcriptState.mockResolvedValue({
+      media_id: 'media-1',
+      status: 'not_started',
+      segment_count: 0,
+      updated_at: null,
+      job: null,
+    });
+    mocks.models.mockResolvedValue([]);
+    renderRoute();
+    await screen.findByRole('heading', { name: 'Graph theory' });
+    fireEvent.click(screen.getByRole('button', { name: 'Open tools' }));
+    expect(
+      await screen.findByRole('link', { name: 'Install transcription model' }),
+    ).toHaveAttribute('href', '/settings');
+  });
+
+  it('blocks cloud learning actions until OpenRouter is configured', async () => {
+    mocks.cloudStatus.mockResolvedValue({
+      configured: false,
+      provider: 'OpenRouter',
+      model: 'openrouter/free',
+    });
+    renderRoute();
+    await screen.findByRole('heading', { name: 'Graph theory' });
+    fireEvent.click(screen.getByRole('button', { name: 'Open tools' }));
+    expect(await screen.findByRole('link', { name: 'Open AI settings' })).toHaveAttribute(
+      'href',
+      '/settings',
+    );
+    expect(screen.getByRole('checkbox')).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Analyze this lecture' })).toBeDisabled();
+  });
+
+  it('generates lecture understanding and refreshes cited content', async () => {
+    mocks.getLecture.mockResolvedValueOnce(null).mockResolvedValue(lectureUnderstanding);
+    mocks.startLecture.mockImplementation(
+      (_mediaId: string, _consent: boolean, onEvent: (event: LearningProgress) => void) => {
+        onEvent({ event: 'completed', data: { jobId: 'learning-job' } });
+        return Promise.resolve({
+          id: 'learning-job',
+          kind: 'lecture_understanding',
+          status: 'completed',
+          attempt: 0,
+          last_error: null,
+          created_at: '2026-08-14T00:00:00Z',
+          updated_at: '2026-08-14T00:00:00Z',
+        });
+      },
+    );
+    renderRoute();
+    await screen.findByRole('heading', { name: 'Graph theory' });
+    fireEvent.click(screen.getByRole('button', { name: 'Open tools' }));
+    const consent = await screen.findByRole('checkbox');
+    await waitFor(() => expect(consent).not.toBeDisabled());
+    fireEvent.click(consent);
+    fireEvent.click(screen.getByRole('button', { name: 'Analyze this lecture' }));
+
+    expect(await screen.findByText('A grounded summary of graph traversal.')).toBeInTheDocument();
+    expect(mocks.startLecture).toHaveBeenCalledWith('media-1', true, expect.any(Function));
+  });
+
+  it('runs companion actions against the current grounded timestamp', async () => {
+    renderRoute();
+    await screen.findByRole('heading', { name: 'Graph theory' });
+    fireEvent.click(screen.getByRole('button', { name: 'Open tools' }));
+    const consent = await screen.findByRole('checkbox');
+    await waitFor(() => expect(consent).not.toBeDisabled());
+    fireEvent.click(consent);
+    fireEvent.click(screen.getByRole('button', { name: 'Explain this section' }));
+
+    expect(
+      await screen.findByText('This section compares two traversal frontiers.'),
+    ).toBeInTheDocument();
+    expect(mocks.companion).toHaveBeenCalledWith({
+      mediaId: 'media-1',
+      atMs: 120_000,
+      action: 'explain_section',
+      consent: true,
+    });
+  });
+
+  it('captures the live frame and saves a grounded explanation note', async () => {
+    mocks.listNotes.mockResolvedValueOnce([]).mockResolvedValue([frameNote]);
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
+      drawImage: vi.fn(),
+    } as unknown as CanvasRenderingContext2D);
+    vi.spyOn(HTMLCanvasElement.prototype, 'toDataURL').mockReturnValue(
+      'data:image/jpeg;base64,cWEtZnJhbWU=',
+    );
+    renderRoute();
+    const video = await screen.findByLabelText('Playing Graph theory');
+    Object.defineProperties(video, {
+      currentTime: { configurable: true, value: 321 },
+      videoWidth: { configurable: true, value: 1280 },
+      videoHeight: { configurable: true, value: 720 },
+      readyState: { configurable: true, value: HTMLMediaElement.HAVE_CURRENT_DATA },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Open tools' }));
+    const consent = await screen.findByRole('checkbox');
+    await waitFor(() => expect(consent).not.toBeDisabled());
+    fireEvent.click(consent);
+    fireEvent.click(screen.getByRole('button', { name: 'Explain this frame and save note' }));
+
+    await waitFor(() =>
+      expect(mocks.explainFrame).toHaveBeenCalledWith({
+        mediaId: 'media-1',
+        atMs: 321_000,
+        imageDataUrl: 'data:image/jpeg;base64,cWEtZnJhbWU=',
+        consent: true,
+      }),
+    );
+    expect(await screen.findByText(/Saved “Traversal diagram”/)).toBeInTheDocument();
+  });
+
+  it('generates review cards and records spaced-repetition feedback', async () => {
+    mocks.listMaterials.mockResolvedValueOnce([]).mockResolvedValue([studyItem]);
+    renderRoute();
+    await screen.findByRole('heading', { name: 'Graph theory' });
+    fireEvent.click(screen.getByRole('button', { name: 'Open tools' }));
+    const consent = await screen.findByRole('checkbox');
+    await waitFor(() => expect(consent).not.toBeDisabled());
+    fireEvent.click(consent);
+    fireEvent.click(screen.getByRole('button', { name: 'Generate study set' }));
+
+    expect(await screen.findByText('What is a traversal frontier?')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Reveal answer' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Easy' }));
+    await waitFor(() =>
+      expect(mocks.recordReview).toHaveBeenCalledWith(
+        expect.objectContaining({ studyItemId: 'study-1', quality: 5, confidence: 3 }),
+      ),
+    );
   });
 
   it('preserves the saved resume point when no timestamp query is present', async () => {
