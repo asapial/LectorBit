@@ -461,6 +461,28 @@ impl Repo {
         rows.into_iter().map(study_item_from_row).collect()
     }
 
+    pub async fn list_due_study_items(
+        &self,
+        due_before: &str,
+        limit: u32,
+    ) -> DbResult<Vec<StudyItemRow>> {
+        let rows = sqlx::query(
+            "SELECT item.id, item.media_id, item.chapter_start_ms, item.kind, item.prompt, \
+                    item.answer, item.hint, item.options_json, item.evidence_json, state.due_at, \
+                    state.interval_days, state.repetitions, state.ease_milli, state.last_quality \
+             FROM study_items item \
+             JOIN learning_artifacts artifact ON artifact.id = item.artifact_id \
+             JOIN review_states state ON state.study_item_id = item.id \
+             WHERE julianday(state.due_at) <= julianday(?) AND artifact.superseded_at IS NULL \
+             ORDER BY state.due_at, item.created_at, item.id LIMIT ?",
+        )
+        .bind(due_before)
+        .bind(i64::from(limit.clamp(1, 500)))
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter().map(study_item_from_row).collect()
+    }
+
     /// Deterministic SM-2 update. The model never selects review dates.
     pub async fn record_review(
         &self,

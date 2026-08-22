@@ -40,6 +40,7 @@ const COMMANDS: &[&str] = &[
     "learning_list_explanation_notes",
     "learning_generate_study_materials",
     "learning_list_study_materials",
+    "learning_list_due_reviews",
     "learning_record_review",
     "learning_companion",
     "search_query",

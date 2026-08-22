@@ -710,6 +710,11 @@ pub trait LearningOps: Send + Sync + 'static {
         &self,
         media_id: String,
     ) -> BoxFuture<'_, Result<Vec<StudyItemDto>, LearningErrorCode>>;
+    fn list_due_reviews(
+        &self,
+        due_before: String,
+        limit: u32,
+    ) -> BoxFuture<'_, Result<Vec<StudyItemDto>, LearningErrorCode>>;
     fn record_review(
         &self,
         study_item_id: String,
@@ -1191,6 +1196,13 @@ pub struct RecordReviewArgs {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct DueReviewsArgs {
+    pub due_before: String,
+    #[serde(default = "default_due_review_limit")]
+    pub limit: u32,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct CompanionArgs {
     pub media_id: String,
     pub at_ms: u64,
@@ -1590,6 +1602,14 @@ mod commands {
     }
 
     #[tauri::command]
+    pub(crate) async fn learning_list_due_reviews(
+        ops: State<'_, Arc<dyn LearningOps>>,
+        args: DueReviewsArgs,
+    ) -> Result<Vec<StudyItemDto>, LearningErrorCode> {
+        ops.list_due_reviews(args.due_before, args.limit).await
+    }
+
+    #[tauri::command]
     pub(crate) async fn learning_record_review(
         ops: State<'_, Arc<dyn LearningOps>>,
         args: RecordReviewArgs,
@@ -1698,6 +1718,7 @@ mod plugin_builder {
                 super::commands::learning_list_explanation_notes,
                 super::commands::learning_generate_study_materials,
                 super::commands::learning_list_study_materials,
+                super::commands::learning_list_due_reviews,
                 super::commands::learning_record_review,
                 super::commands::learning_companion,
                 super::commands::search_query,

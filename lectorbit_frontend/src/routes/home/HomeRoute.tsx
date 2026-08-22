@@ -1,16 +1,20 @@
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import CalendarDays from 'lucide-react/dist/esm/icons/calendar-days';
 import CheckCircle2 from 'lucide-react/dist/esm/icons/circle-check-big';
 import Clock3 from 'lucide-react/dist/esm/icons/clock-3';
 import ListChecks from 'lucide-react/dist/esm/icons/list-checks';
 import Play from 'lucide-react/dist/esm/icons/play';
 import TriangleAlert from 'lucide-react/dist/esm/icons/triangle-alert';
+import Brain from 'lucide-react/dist/esm/icons/brain';
+import Eye from 'lucide-react/dist/esm/icons/eye';
+import { useState } from 'react';
 import { Link } from 'react-router';
 import { EmptyState } from '../../components/feedback/EmptyState';
 import { PageHeader } from '../../components/layout/PageHeader';
 import { Badge } from '../../components/ui/Badge';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/Card';
 import { getRoutine, type RoutinePlan } from '../../ipc/planner';
+import { listDueReviews, recordReview, type StudyItem } from '../../ipc/learning';
 import { cn } from '../../lib/cn';
 
 export function HomeRoute() {
@@ -19,6 +23,10 @@ export function HomeRoute() {
     queryFn: () => getRoutine(30),
   });
   const routine = routineQuery.data;
+  const dueReviewsQuery = useQuery({
+    queryKey: ['learning', 'due-reviews'],
+    queryFn: () => listDueReviews(),
+  });
   const today = localIsoDate();
   const focusDay =
     routine?.days.find(
@@ -44,6 +52,12 @@ export function HomeRoute() {
         }
       />
 
+      <DueReviewQueue
+        items={dueReviewsQuery.data ?? []}
+        loading={dueReviewsQuery.isLoading}
+        failed={dueReviewsQuery.isError}
+      />
+
       {routineQuery.isLoading ? (
         <div className="grid gap-4 md:grid-cols-3" aria-label="Loading routine">
           {[0, 1, 2].map((item) => (
@@ -64,6 +78,159 @@ export function HomeRoute() {
         <RoutineView routine={routine} focusDate={focusDay?.date} />
       )}
     </>
+  );
+}
+
+function DueReviewQueue({
+  items,
+  loading,
+  failed,
+}: {
+  items: StudyItem[];
+  loading: boolean;
+  failed: boolean;
+}) {
+  const queryClient = useQueryClient();
+  const [revealed, setRevealed] = useState<Set<string>>(() => new Set());
+  const [startedAt, setStartedAt] = useState<Record<string, number>>({});
+  const review = useMutation({
+    mutationFn: ({ item, quality }: { item: StudyItem; quality: number }) =>
+      recordReview({
+        studyItemId: item.id,
+        quality,
+        confidence: quality <= 1 ? 2 : quality >= 4 ? 4 : 3,
+        responseTimeMs: Math.max(0, Date.now() - (startedAt[item.id] ?? Date.now())),
+      }),
+    onSuccess: async (_result, variables) => {
+      setRevealed((current) => {
+        const next = new Set(current);
+        next.delete(variables.item.id);
+        return next;
+      });
+      await queryClient.invalidateQueries({ queryKey: ['learning', 'due-reviews'] });
+    },
+  });
+
+  return (
+    <section className="mb-6" aria-labelledby="due-reviews-heading">
+      <div className="mb-3 flex items-end justify-between gap-3">
+        <div>
+          <h2 id="due-reviews-heading" className="text-lg font-semibold">
+            Due reviews
+          </h2>
+          <p className="text-sm text-muted-foreground">
+            Review timing is calculated locally from your attempts.
+          </p>
+        </div>
+        <Badge tone={items.length ? 'primary' : 'success'}>{items.length} due</Badge>
+      </div>
+      {loading ? (
+        <div
+          className="h-28 animate-pulse rounded-lg border bg-card"
+          aria-label="Loading due reviews"
+        />
+      ) : failed ? (
+        <div
+          className="rounded-lg border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive"
+          role="alert"
+        >
+          Due reviews could not be loaded. Your review history is unchanged.
+        </div>
+      ) : items.length === 0 ? (
+        <Card>
+          <CardContent className="flex min-h-24 items-center gap-3 py-5">
+            <span className="grid size-10 place-items-center rounded-full bg-success/10 text-success">
+              <CheckCircle2 className="size-5" />
+            </span>
+            <div>
+              <p className="font-medium">Review queue complete</p>
+              <p className="text-sm text-muted-foreground">
+                New items appear here when they become due.
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="grid gap-4 lg:grid-cols-2">
+          {items.map((item) => {
+            const isRevealed = revealed.has(item.id);
+            return (
+              <Card key={item.id}>
+                <CardHeader className="pb-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <CardTitle className="flex items-center gap-2 text-base">
+                      <Brain className="size-4 text-primary" /> {formatStudyKind(item.kind)}
+                    </CardTitle>
+                    <span className="font-mono text-xs text-muted-foreground">
+                      {item.evidence[0]
+                        ? formatTimestamp(item.evidence[0].start_ms)
+                        : 'Evidence linked'}
+                    </span>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-sm font-medium leading-6">{item.prompt}</p>
+                  {item.hint ? (
+                    <p className="mt-2 text-xs text-muted-foreground">Hint: {item.hint}</p>
+                  ) : null}
+                  {isRevealed ? (
+                    <div className="mt-4 rounded-md border border-primary/20 bg-primary/5 p-3 text-sm leading-6">
+                      {item.answer}
+                    </div>
+                  ) : null}
+                  {review.isError && review.variables?.item.id === item.id ? (
+                    <p className="mt-3 text-sm text-destructive" role="alert">
+                      This review could not be saved. Try again; the due date was not changed.
+                    </p>
+                  ) : null}
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    {!isRevealed ? (
+                      <button
+                        type="button"
+                        className={secondaryButtonClass}
+                        onClick={() => {
+                          setStartedAt((current) => ({ ...current, [item.id]: Date.now() }));
+                          setRevealed((current) => new Set(current).add(item.id));
+                        }}
+                      >
+                        <Eye className="size-4" /> Reveal answer
+                      </button>
+                    ) : (
+                      <>
+                        <button
+                          type="button"
+                          className={secondaryButtonClass}
+                          disabled={review.isPending}
+                          onClick={() => review.mutate({ item, quality: 1 })}
+                        >
+                          Again
+                        </button>
+                        <button
+                          type="button"
+                          className={secondaryButtonClass}
+                          disabled={review.isPending}
+                          onClick={() => review.mutate({ item, quality: 3 })}
+                        >
+                          Hard
+                        </button>
+                        <button
+                          type="button"
+                          className={primaryButtonClass}
+                          disabled={review.isPending}
+                          onClick={() => review.mutate({ item, quality: 5 })}
+                        >
+                          Remembered
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            );
+          })}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -281,7 +448,18 @@ function formatDay(date: string): string {
   }).format(new Date(`${date}T00:00:00Z`));
 }
 
+function formatStudyKind(kind: StudyItem['kind']): string {
+  return kind
+    .split('_')
+    .map((word) => word[0]?.toUpperCase() + word.slice(1))
+    .join(' ');
+}
+
 const primaryLinkClass =
   'inline-flex h-9 items-center justify-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground shadow-sm transition-colors hover:bg-primary/90 focus-visible:ring-2 focus-visible:ring-ring';
 const secondaryLinkClass =
   'inline-flex h-9 items-center justify-center gap-2 rounded-md border bg-background px-4 text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring';
+const secondaryButtonClass =
+  'inline-flex min-h-11 items-center justify-center gap-2 rounded-md border bg-background px-4 text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50';
+const primaryButtonClass =
+  'inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50';

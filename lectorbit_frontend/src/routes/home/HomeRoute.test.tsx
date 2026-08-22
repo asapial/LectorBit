@@ -1,11 +1,19 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { HomeRoute } from './HomeRoute';
 
-const { getRoutineMock } = vi.hoisted(() => ({ getRoutineMock: vi.fn() }));
+const { getRoutineMock, listDueReviewsMock, recordReviewMock } = vi.hoisted(() => ({
+  getRoutineMock: vi.fn(),
+  listDueReviewsMock: vi.fn(),
+  recordReviewMock: vi.fn(),
+}));
 vi.mock('../../ipc/planner', () => ({ getRoutine: getRoutineMock }));
+vi.mock('../../ipc/learning', () => ({
+  listDueReviews: listDueReviewsMock,
+  recordReview: recordReviewMock,
+}));
 
 function renderRoute() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -19,7 +27,10 @@ function renderRoute() {
 }
 
 describe('HomeRoute', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    listDueReviewsMock.mockResolvedValue([]);
+  });
 
   it('renders the empty Routine state', async () => {
     getRoutineMock.mockResolvedValue(null);
@@ -28,6 +39,43 @@ describe('HomeRoute', () => {
     expect(screen.getByRole('link', { name: /Build your first plan/ })).toHaveAttribute(
       'href',
       '/plan',
+    );
+  });
+
+  it('reviews due study material directly from Today', async () => {
+    getRoutineMock.mockResolvedValue(null);
+    listDueReviewsMock.mockResolvedValue([
+      {
+        id: 'review-1',
+        media_id: 'media-1',
+        chapter_start_ms: 0,
+        kind: 'flashcard',
+        prompt: 'What is stable sorting?',
+        answer: 'Equal keys retain their original order.',
+        hint: 'Think about ties.',
+        options: [],
+        evidence: [{ segment_id: 1, start_ms: 12_000, end_ms: 20_000 }],
+        due_at: '2026-08-19T00:00:00Z',
+        interval_days: 1,
+        repetitions: 1,
+        ease_milli: 2500,
+        last_quality: 4,
+      },
+    ]);
+    recordReviewMock.mockResolvedValue({ study_item_id: 'review-1' });
+    renderRoute();
+
+    expect(await screen.findByText('What is stable sorting?')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Reveal answer' }));
+    expect(screen.getByText('Equal keys retain their original order.')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Remembered' }));
+    await waitFor(() =>
+      expect(recordReviewMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          studyItemId: 'review-1',
+          quality: 5,
+        }),
+      ),
     );
   });
 

@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-learning-list-due-reviews"
+description = "Enables the learning_list_due_reviews command without any pre-configured scope."
+commands.allow = ["learning_list_due_reviews"]
+
+[[permission]]
+identifier = "deny-learning-list-due-reviews"
+description = "Denies the learning_list_due_reviews command without any pre-configured scope."
+commands.deny = ["learning_list_due_reviews"]

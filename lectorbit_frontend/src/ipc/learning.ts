@@ -102,15 +102,7 @@ const CompanionAnswerSchema = z.object({
 const JobSchema = z.object({
   id: z.string().min(1),
   kind: z.literal('lecture_understanding'),
-  status: z.enum([
-    'queued',
-    'running',
-    'paused',
-    'retry_wait',
-    'completed',
-    'failed',
-    'cancelled',
-  ]),
+  status: z.enum(['queued', 'running', 'paused', 'retry_wait', 'completed', 'failed', 'cancelled']),
   attempt: z.number().int().nonnegative(),
   last_error: z.string().nullable(),
   created_at: z.string().min(1),
@@ -218,6 +210,17 @@ export async function listStudyMaterials(mediaId: string): Promise<StudyItem[]> 
   return z.array(StudyItemSchema).parse(
     await invoke<unknown>('plugin:lectorbit|learning_list_study_materials', {
       args: { media_id: mediaId },
+    }).catch(wrapLearningError),
+  );
+}
+
+export async function listDueReviews(
+  dueBefore = new Date().toISOString(),
+  limit = 50,
+): Promise<StudyItem[]> {
+  return z.array(StudyItemSchema).parse(
+    await invoke<unknown>('plugin:lectorbit|learning_list_due_reviews', {
+      args: { due_before: dueBefore, limit },
     }).catch(wrapLearningError),
   );
 }

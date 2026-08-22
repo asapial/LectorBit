@@ -45,6 +45,7 @@ Default LectorBit permissions for the main window
 - `allow-learning-list-explanation-notes`
 - `allow-learning-generate-study-materials`
 - `allow-learning-list-study-materials`
+- `allow-learning-list-due-reviews`
 - `allow-learning-record-review`
 - `allow-learning-companion`
 - `allow-search-query`
@@ -446,6 +447,32 @@ Enables the learning_get_lecture_understanding command without any pre-configure
 <td>
 
 Denies the learning_get_lecture_understanding command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:allow-learning-list-due-reviews`
+
+</td>
+<td>
+
+Enables the learning_list_due_reviews command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:deny-learning-list-due-reviews`
+
+</td>
+<td>
+
+Denies the learning_list_due_reviews command without any pre-configured scope.
 
 </td>
 </tr>

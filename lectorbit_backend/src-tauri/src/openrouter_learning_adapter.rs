@@ -446,6 +446,29 @@ impl LearningOps for OpenRouterLearningAdapter {
         })
     }
 
+    fn list_due_reviews(
+        &self,
+        due_before: String,
+        limit: u32,
+    ) -> BoxFuture<'_, Result<Vec<StudyItemDto>, LearningErrorCode>> {
+        Box::pin(async move {
+            let due_before = chrono::DateTime::parse_from_rfc3339(&due_before)
+                .map_err(|_| invalid_input("The due-review cutoff is invalid."))?
+                .with_timezone(&chrono::Utc)
+                .to_rfc3339();
+            if limit == 0 || limit > 500 {
+                return Err(invalid_input("Choose between 1 and 500 due reviews."));
+            }
+            self.repo
+                .list_due_study_items(&due_before, limit)
+                .await
+                .map_err(database_error)?
+                .into_iter()
+                .map(study_item_to_dto)
+                .collect()
+        })
+    }
+
     fn record_review(
         &self,
         study_item_id: String,
