@@ -14,6 +14,12 @@ pub enum DbError {
     #[error("sqlite migration error: {0}")]
     Migrate(String),
 
+    #[error(
+        "migration {version} differs from the version already applied to this database; \
+         restore the original migration and add a new migration for schema changes"
+    )]
+    MigrationChanged { version: i64 },
+
     #[error("sqlite IO error: {0}")]
     Io(String),
 

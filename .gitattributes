@@ -1,0 +1,2 @@
+lectorbit_backend/migrations/*.sql text eol=lf
+lectorbit_backend/migrations/checksums.sha384 text eol=lf

@@ -100,7 +100,12 @@ impl Db {
         crate::migrations::MIGRATOR
             .run(&self.pool)
             .await
-            .map_err(|e| DbError::Migrate(e.to_string()))
+            .map_err(|error| match error {
+                sqlx::migrate::MigrateError::VersionMismatch(version) => {
+                    DbError::MigrationChanged { version }
+                }
+                other => DbError::Migrate(other.to_string()),
+            })
     }
 
     /// Borrow the underlying pool. Use sparingly — prefer [`Db::acquire`].

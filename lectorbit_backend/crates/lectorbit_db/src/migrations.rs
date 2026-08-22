@@ -1,12 +1,10 @@
 //! Embedded migrations. Append-only after release.
 //!
-//! `sqlx::migrate!` is invoked from `pool::Db::migrate` and walks the
-//! `lectorbit_backend/migrations` directory at compile time. The directory
-//! is declared via the `SQLX_MIGRATIONS_DIR` env var so the macro can find
-//! it from inside `crates/lectorbit_db`.
-//!
-//! To skip the env var and keep the call site ergonomic, we hard-code the
-//! path here (`../../migrations` relative to the crate root).
+//! `sqlx::migrate!` is invoked from `pool::Db::migrate` and embeds the
+//! `lectorbit_backend/migrations` directory at compile time. `build.rs`
+//! watches the directory and validates every raw file checksum against
+//! `migrations/checksums.sha384`, preventing stale builds and edits to
+//! migrations that may already exist in user databases.
 
 use sqlx::migrate::Migrator;
 
