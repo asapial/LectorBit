@@ -388,7 +388,7 @@ describe('LibraryRoute', () => {
     await waitFor(() => expect(revokeRootMock).toHaveBeenCalledWith('root-1'));
   });
 
-  it('retries unavailable metadata by rescanning the owning folder', async () => {
+  it('does not render a metadata retry button on individual video rows', async () => {
     listRootsMock.mockResolvedValueOnce([activeRoot]);
     listMediaMock.mockResolvedValue({
       items: [
@@ -416,10 +416,9 @@ describe('LibraryRoute', () => {
     });
 
     renderRoute();
-    fireEvent.click(await screen.findByRole('button', { name: /retry metadata/i }));
-
-    await waitFor(() => expect(startScanMock).toHaveBeenCalledOnce());
-    expect(startScanMock.mock.calls[0]?.[0]).toBe('root-1');
+    expect(await screen.findByText('needs-metadata.mp4')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /retry metadata/i })).not.toBeInTheDocument();
+    expect(startScanMock).not.toHaveBeenCalled();
   });
 
   it('does not show previously removed folders in the active folder list', async () => {

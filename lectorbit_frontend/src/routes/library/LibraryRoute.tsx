@@ -5,7 +5,6 @@ import FileAudio from 'lucide-react/dist/esm/icons/file-audio';
 import FileVideo from 'lucide-react/dist/esm/icons/file-video';
 import ScanLine from 'lucide-react/dist/esm/icons/scan-line';
 import Captions from 'lucide-react/dist/esm/icons/captions';
-import RotateCcw from 'lucide-react/dist/esm/icons/rotate-ccw';
 import Trash2 from 'lucide-react/dist/esm/icons/trash-2';
 import TriangleAlert from 'lucide-react/dist/esm/icons/triangle-alert';
 import Sparkles from 'lucide-react/dist/esm/icons/sparkles';
@@ -283,8 +282,6 @@ export function LibraryRoute() {
               analysisProgress={analysisProgress}
               pendingMediaId={transcribe.isPending ? transcribe.variables?.mediaId : undefined}
               onTranscribe={(mediaId, modelId) => transcribe.mutate({ mediaId, modelId })}
-              busyScanRootIds={busyScanRootIds}
-              onRetryMetadata={(rootId) => scan.mutate({ rootId })}
             />
           ))}
         </>
@@ -313,16 +310,12 @@ function FolderMediaCard({
   analysisProgress,
   pendingMediaId,
   onTranscribe,
-  busyScanRootIds,
-  onRetryMetadata,
 }: {
   root: LibraryRoot;
   readyModelId?: string;
   analysisProgress: Record<string, AnalysisProgress>;
   pendingMediaId?: string;
   onTranscribe: (mediaId: string, modelId: string) => void;
-  busyScanRootIds: ReadonlySet<string>;
-  onRetryMetadata: (rootId: string) => void;
 }) {
   const [pageIndex, setPageIndex] = useState(0);
   const media = useInfiniteQuery({
@@ -388,8 +381,6 @@ function FolderMediaCard({
       analysisProgress={analysisProgress}
       pendingMediaId={pendingMediaId}
       onTranscribe={onTranscribe}
-      busyScanRootIds={busyScanRootIds}
-      onRetryMetadata={onRetryMetadata}
     />
   );
 }
@@ -412,8 +403,6 @@ function MediaLibraryCard({
   analysisProgress,
   pendingMediaId,
   onTranscribe,
-  busyScanRootIds,
-  onRetryMetadata,
 }: {
   root: LibraryRoot;
   items: MediaListItem[];
@@ -432,8 +421,6 @@ function MediaLibraryCard({
   analysisProgress: Record<string, AnalysisProgress>;
   pendingMediaId?: string;
   onTranscribe: (mediaId: string, modelId: string) => void;
-  busyScanRootIds: ReadonlySet<string>;
-  onRetryMetadata: (rootId: string) => void;
 }) {
   const mediaScrollRef = useRef<HTMLDivElement>(null);
   const virtualized = items.length > 200;
@@ -548,8 +535,8 @@ function MediaLibraryCard({
               <div>
                 <p className="font-medium">Some metadata needs another pass</p>
                 <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
-                  Retry an affected item to rescan its folder. LectorBit leaves the media file
-                  untouched.
+                  Use Rescan folder in the folder table above after the media inspector is
+                  available. LectorBit leaves the media files untouched.
                 </p>
               </div>
             </div>
@@ -602,8 +589,6 @@ function MediaLibraryCard({
                       analysisEvent={analysisProgress[items[row.index].id]}
                       pending={pendingMediaId === items[row.index].id}
                       onTranscribe={onTranscribe}
-                      retryingMetadata={busyScanRootIds.has(items[row.index].root_id)}
-                      onRetryMetadata={onRetryMetadata}
                     />
                   ))}
                 </tbody>
@@ -679,8 +664,6 @@ function MediaRow({
   analysisEvent,
   pending,
   onTranscribe,
-  retryingMetadata,
-  onRetryMetadata,
 }: {
   item: MediaListItem;
   virtualStart?: number;
@@ -688,8 +671,6 @@ function MediaRow({
   analysisEvent?: AnalysisProgress;
   pending: boolean;
   onTranscribe: (mediaId: string, modelId: string) => void;
-  retryingMetadata: boolean;
-  onRetryMetadata: (rootId: string) => void;
 }) {
   return (
     <tr
@@ -749,20 +730,6 @@ function MediaRow({
               }
             >
               {analysisLabel(analysisEvent, pending)}
-            </Button>
-          </div>
-        ) : null}
-        {['failed', 'unavailable', 'missing'].includes(item.probe_status) ? (
-          <div className="mt-2">
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={retryingMetadata}
-              onClick={() => onRetryMetadata(item.root_id)}
-              leftIcon={<RotateCcw className="size-3.5" />}
-              title="Rescan this item’s approved folder and retry metadata"
-            >
-              {retryingMetadata ? 'Retrying…' : 'Retry metadata'}
             </Button>
           </div>
         ) : null}
