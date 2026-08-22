@@ -35,6 +35,7 @@ Default LectorBit permissions for the main window
 - `allow-models-list`
 - `allow-models-install`
 - `allow-models-remove`
+- `allow-analysis-get-capability`
 - `allow-analysis-start-transcription`
 - `allow-analysis-get-transcript-state`
 - `allow-analysis-list-jobs`
@@ -58,6 +59,32 @@ Default LectorBit permissions for the main window
 <th>Description</th>
 </tr>
 
+
+<tr>
+<td>
+
+`lectorbit:allow-analysis-get-capability`
+
+</td>
+<td>
+
+Enables the analysis_get_capability command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:deny-analysis-get-capability`
+
+</td>
+<td>
+
+Denies the analysis_get_capability command without any pre-configured scope.
+
+</td>
+</tr>
 
 <tr>
 <td>

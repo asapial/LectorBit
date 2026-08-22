@@ -3,7 +3,10 @@
 use std::path::{Path, PathBuf};
 
 use chrono::Utc;
-use lectorbit_ai::{builtin_models, ModelManifest, TranscriptOutput, EXPECTED_WHISPER_VERSION};
+use lectorbit_ai::{
+    builtin_models, model_supports_language, ModelManifest, TranscriptOutput,
+    TranscriptionLanguage, EXPECTED_WHISPER_VERSION,
+};
 use lectorbit_db::{AnalysisRepo, DbError, ModelManifestRow, TranscriptSegmentInput};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -16,6 +19,10 @@ pub enum AnalysisError {
     ModelNotFound,
     #[error("model is not installed and verified")]
     ModelNotReady,
+    #[error("model does not support the requested language")]
+    ModelLanguageUnsupported,
+    #[error("another transcription is already active for this media")]
+    TranscriptionBusy,
     #[error("media is unavailable")]
     MediaUnavailable,
     #[error("invalid input")]
@@ -62,6 +69,8 @@ pub struct ModelDownloadPayload {
 pub struct TranscriptionPayload {
     pub media_id: String,
     pub model_id: String,
+    #[serde(default)]
+    pub language: TranscriptionLanguage,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -70,6 +79,8 @@ pub struct TranscriptState {
     pub status: String,
     pub segment_count: u64,
     pub updated_at: Option<String>,
+    pub language: Option<String>,
+    pub model_id: Option<String>,
     pub job: Option<Job>,
 }
 
@@ -155,6 +166,7 @@ impl AnalysisService {
         &self,
         media_id: &str,
         model_id: &str,
+        language: TranscriptionLanguage,
     ) -> Result<JobEnqueue, AnalysisError> {
         validate_identifier(media_id)?;
         validate_identifier(model_id)?;
@@ -166,6 +178,9 @@ impl AnalysisService {
         if model.state != "ready" || model.installed_path.is_none() {
             return Err(AnalysisError::ModelNotReady);
         }
+        if !model_supports_language(&model.manifest.id, language) {
+            return Err(AnalysisError::ModelLanguageUnsupported);
+        }
         self.media
             .resolve_authorized_media(media_id)
             .await
@@ -173,10 +188,10 @@ impl AnalysisService {
         let payload = TranscriptionPayload {
             media_id: media_id.into(),
             model_id: model_id.into(),
+            language,
         };
-        if let Some(job) =
-            jobs::find_active_by_payload(self.repo.pool(), "transcribe", &payload).await?
-        {
+        let active_jobs = jobs::list_by_kind(self.repo.pool(), "transcribe", 50_000).await?;
+        if let Some(job) = matching_active_transcription(&active_jobs, &payload)? {
             return Ok(JobEnqueue { job, is_new: false });
         }
         let job = jobs::enqueue(self.repo.pool(), "transcribe", &payload).await?;
@@ -208,11 +223,20 @@ impl AnalysisService {
             _ if stored.is_some() => "completed",
             _ => "not_started",
         };
+        let segment_count = stored
+            .as_ref()
+            .map(|value| value.segment_count)
+            .unwrap_or(0);
+        let updated_at = stored.as_ref().map(|value| value.updated_at.clone());
+        let language = stored.as_ref().map(|value| value.language.clone());
+        let model_id = stored.as_ref().map(|value| value.model_id.clone());
         Ok(TranscriptState {
             media_id: media_id.into(),
             status: status.into(),
-            segment_count: stored.as_ref().map(|value| value.1).unwrap_or(0),
-            updated_at: stored.map(|value| value.0),
+            segment_count,
+            updated_at,
+            language,
+            model_id,
             job,
         })
     }
@@ -375,6 +399,30 @@ impl AnalysisService {
     }
 }
 
+fn matching_active_transcription(
+    jobs: &[Job],
+    requested: &TranscriptionPayload,
+) -> Result<Option<Job>, AnalysisError> {
+    for job in jobs.iter().filter(|job| {
+        matches!(
+            job.status,
+            jobs::JobStatus::Queued | jobs::JobStatus::Running | jobs::JobStatus::RetryWait
+        )
+    }) {
+        let Ok(active) = serde_json::from_str::<TranscriptionPayload>(&job.payload) else {
+            continue;
+        };
+        if active.media_id != requested.media_id {
+            continue;
+        }
+        if active == *requested {
+            return Ok(Some(job.clone()));
+        }
+        return Err(AnalysisError::TranscriptionBusy);
+    }
+    Ok(None)
+}
+
 fn to_manifest_row(model: ModelManifest) -> ModelManifestRow {
     ModelManifestRow {
         id: model.id,
@@ -409,6 +457,20 @@ fn authorize_owned_file(root: &Path, file: &Path) -> Result<PathBuf, AnalysisErr
 mod tests {
     use super::*;
 
+    fn transcription_job(payload: &TranscriptionPayload, status: jobs::JobStatus) -> Job {
+        let now = chrono::Utc::now();
+        Job {
+            id: "job".into(),
+            kind: "transcribe".into(),
+            payload: serde_json::to_string(payload).expect("payload"),
+            status,
+            attempt: 0,
+            last_error: None,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
     #[test]
     fn rejects_path_like_identifiers() {
         assert!(matches!(
@@ -426,5 +488,56 @@ mod tests {
         let root = tempfile::tempdir().expect("root");
         let outside = tempfile::NamedTempFile::new().expect("outside");
         assert!(authorize_owned_file(root.path(), outside.path()).is_err());
+    }
+
+    #[test]
+    fn old_transcription_payloads_default_to_english() {
+        let payload: TranscriptionPayload =
+            serde_json::from_str(r#"{"media_id":"media","model_id":"whisper-base.en"}"#)
+                .expect("legacy payload");
+        assert_eq!(payload.language, TranscriptionLanguage::English);
+    }
+
+    #[test]
+    fn active_transcription_dedupes_only_the_full_payload() {
+        let requested = TranscriptionPayload {
+            media_id: "media".into(),
+            model_id: "whisper-base".into(),
+            language: TranscriptionLanguage::Bangla,
+        };
+        let duplicate = transcription_job(&requested, jobs::JobStatus::Running);
+        assert_eq!(
+            matching_active_transcription(&[duplicate.clone()], &requested)
+                .expect("duplicate")
+                .map(|job| job.id),
+            Some(duplicate.id)
+        );
+
+        let conflicting = TranscriptionPayload {
+            language: TranscriptionLanguage::English,
+            ..requested.clone()
+        };
+        assert!(matches!(
+            matching_active_transcription(
+                &[transcription_job(&conflicting, jobs::JobStatus::Queued)],
+                &requested
+            ),
+            Err(AnalysisError::TranscriptionBusy)
+        ));
+    }
+
+    #[test]
+    fn paused_transcription_does_not_permanently_block_a_new_request() {
+        let requested = TranscriptionPayload {
+            media_id: "media".into(),
+            model_id: "whisper-base".into(),
+            language: TranscriptionLanguage::Bangla,
+        };
+        assert!(matching_active_transcription(
+            &[transcription_job(&requested, jobs::JobStatus::Paused)],
+            &requested
+        )
+        .expect("paused jobs are not active")
+        .is_none());
     }
 }

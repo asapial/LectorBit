@@ -131,14 +131,9 @@ pub fn run() {
                 std::env::var_os("LECTORBIT_FFPROBE_PATH"),
             );
             let resource_dir = app.path().resource_dir().ok();
-            let whisper_path = resolve_named_sidecar(
+            let whisper_path = resolve_whisper_path(
                 resource_dir.as_deref(),
                 std::env::var_os("LECTORBIT_WHISPER_PATH"),
-                if cfg!(windows) {
-                    "whisper-cli.exe"
-                } else {
-                    "whisper-cli"
-                },
             );
             let ffmpeg_path = resolve_ffmpeg_path(
                 resource_dir.as_deref(),
@@ -282,6 +277,38 @@ fn resolve_ffmpeg_path(
         })
 }
 
+fn resolve_whisper_path(
+    resource_dir: Option<&std::path::Path>,
+    configured: Option<std::ffi::OsString>,
+) -> Option<std::path::PathBuf> {
+    let filename = if cfg!(windows) {
+        "whisper-cli.exe"
+    } else {
+        "whisper-cli"
+    };
+    let search_path = if cfg!(debug_assertions) {
+        std::env::var_os("PATH")
+    } else {
+        None
+    };
+    resolve_named_sidecar(resource_dir, configured, filename)
+        .or_else(|| resolve_development_whisper(filename))
+        .or_else(|| resolve_executable_on_path(filename, search_path))
+}
+
+fn resolve_development_whisper(filename: &str) -> Option<std::path::PathBuf> {
+    if !cfg!(debug_assertions) {
+        return None;
+    }
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("resources")
+        .join("sidecars")
+        .join(filename)
+        .canonicalize()
+        .ok()
+        .filter(|path| path.is_file())
+}
+
 fn resolve_ffprobe_path_with_search_path(
     resource_dir: Option<&std::path::Path>,
     configured: Option<std::ffi::OsString>,
@@ -416,6 +443,14 @@ mod tests {
         assert_eq!(
             resolve_executable_on_path(filename, Some(search_path)),
             executable.canonicalize().ok()
+        );
+    }
+
+    #[test]
+    fn missing_development_whisper_is_not_fabricated() {
+        assert_eq!(
+            resolve_development_whisper("definitely-missing-whisper-cli"),
+            None
         );
     }
 

@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   action: vi.fn(),
   replan: vi.fn(),
   cloudStatus: vi.fn(),
+  analysisCapability: vi.fn(),
   models: vi.fn(),
   transcriptState: vi.fn(),
   transcribe: vi.fn(),
@@ -49,6 +50,7 @@ vi.mock('../../ipc/planner', () => ({
   getCloudPlanningStatus: mocks.cloudStatus,
 }));
 vi.mock('../../ipc/analysis', () => ({
+  getAnalysisCapability: mocks.analysisCapability,
   listModels: mocks.models,
   getTranscriptState: mocks.transcriptState,
   startTranscription: mocks.transcribe,
@@ -188,9 +190,18 @@ describe('PlayerRoute', () => {
       provider: 'OpenRouter',
       model: 'openrouter/free',
     });
+    mocks.analysisCapability.mockResolvedValue({
+      available: true,
+      engine: 'whisper.cpp',
+      expected_version: '1.9.2',
+      unavailable_reason: null,
+      message: 'Local transcription is ready.',
+      supported_languages: ['en', 'bn'],
+    });
     mocks.models.mockResolvedValue([
       {
         id: 'whisper-small',
+        display_name: 'Whisper Small Multilingual',
         version: '1',
         provider: 'local',
         expected_size_bytes: 1,
@@ -201,12 +212,15 @@ describe('PlayerRoute', () => {
         bytes_downloaded: 1,
         verified_at: '2026-08-14T00:00:00Z',
         last_error: null,
+        supported_languages: ['en', 'bn'],
       },
     ]);
     mocks.transcriptState.mockResolvedValue({
       media_id: 'media-1',
       status: 'completed',
       segment_count: 42,
+      language: 'en',
+      model_id: 'whisper-small',
       updated_at: '2026-08-14T00:00:00Z',
       job: null,
     });
@@ -325,6 +339,37 @@ describe('PlayerRoute', () => {
     expect(screen.getByRole('button', { name: 'Analyze this lecture' })).toBeInTheDocument();
   });
 
+  it('shows the completed transcript language and can retranscribe in another language', async () => {
+    mocks.transcriptState.mockResolvedValue({
+      media_id: 'media-1',
+      status: 'completed',
+      segment_count: 42,
+      language: 'bn',
+      model_id: 'whisper-small',
+      updated_at: '2026-08-14T00:00:00Z',
+      job: null,
+    });
+    renderRoute();
+    await screen.findByRole('heading', { name: 'Graph theory' });
+    fireEvent.click(screen.getByRole('button', { name: 'Open tools' }));
+
+    expect(await screen.findByText('বাংলা (Bangla) transcript ready')).toBeInTheDocument();
+    expect(screen.getByText(/42 cited segments · whisper-small/)).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: 'বাংলা (Bangla)' })).toBeChecked();
+
+    fireEvent.click(screen.getByRole('radio', { name: 'English' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Retranscribe in English' }));
+
+    await waitFor(() =>
+      expect(mocks.transcribe).toHaveBeenCalledWith(
+        'media-1',
+        'whisper-small',
+        'en',
+        expect.any(Function),
+      ),
+    );
+  });
+
   it('turns a missing transcript into an actionable local transcription workflow', async () => {
     mocks.transcriptState.mockResolvedValue({
       media_id: 'media-1',
@@ -334,7 +379,12 @@ describe('PlayerRoute', () => {
       job: null,
     });
     mocks.transcribe.mockImplementation(
-      (_mediaId: string, _modelId: string, onEvent: (event: AnalysisProgress) => void) => {
+      (
+        _mediaId: string,
+        _modelId: string,
+        _language: 'en' | 'bn',
+        onEvent: (event: AnalysisProgress) => void,
+      ) => {
         onEvent({ event: 'queued', data: { jobId: 'transcription-job' } });
         return Promise.resolve({
           id: 'transcription-job',
@@ -359,10 +409,148 @@ describe('PlayerRoute', () => {
       expect(mocks.transcribe).toHaveBeenCalledWith(
         'media-1',
         'whisper-small',
+        'en',
         expect.any(Function),
       ),
     );
     expect(await screen.findByText('Transcription queued locally.')).toBeInTheDocument();
+  });
+
+  it('selects a compatible multilingual model for Bangla transcription', async () => {
+    mocks.transcriptState.mockResolvedValue({
+      media_id: 'media-1',
+      status: 'not_started',
+      segment_count: 0,
+      updated_at: null,
+      job: null,
+    });
+    mocks.models.mockResolvedValue([
+      {
+        id: 'whisper-base.en',
+        display_name: 'Whisper Base English',
+        version: '1',
+        provider: 'local',
+        expected_size_bytes: 1,
+        architecture: 'whisper',
+        analyzer_compatibility: '1',
+        license: 'MIT',
+        state: 'ready',
+        bytes_downloaded: 1,
+        verified_at: '2026-08-14T00:00:00Z',
+        last_error: null,
+        supported_languages: ['en'],
+      },
+      {
+        id: 'whisper-base',
+        display_name: 'Whisper Base Multilingual',
+        version: '1',
+        provider: 'local',
+        expected_size_bytes: 1,
+        architecture: 'whisper',
+        analyzer_compatibility: '1',
+        license: 'MIT',
+        state: 'ready',
+        bytes_downloaded: 1,
+        verified_at: '2026-08-14T00:00:00Z',
+        last_error: null,
+        supported_languages: ['en', 'bn'],
+      },
+    ]);
+    renderRoute();
+    await screen.findByRole('heading', { name: 'Graph theory' });
+    fireEvent.click(screen.getByRole('button', { name: 'Open tools' }));
+    fireEvent.click(await screen.findByRole('radio', { name: 'বাংলা (Bangla)' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Transcribe this lecture' }));
+
+    await waitFor(() =>
+      expect(mocks.transcribe).toHaveBeenCalledWith(
+        'media-1',
+        'whisper-base',
+        'bn',
+        expect.any(Function),
+      ),
+    );
+  });
+
+  it('shows engine setup before allowing transcription when the sidecar is unavailable', async () => {
+    mocks.transcriptState.mockResolvedValue({
+      media_id: 'media-1',
+      status: 'not_started',
+      segment_count: 0,
+      updated_at: null,
+      job: null,
+    });
+    mocks.analysisCapability.mockResolvedValue({
+      available: false,
+      engine: 'whisper.cpp',
+      expected_version: '1.9.2',
+      unavailable_reason: 'whisper_missing',
+      message: 'The Whisper transcription component was not found.',
+      supported_languages: ['en', 'bn'],
+    });
+    renderRoute();
+    await screen.findByRole('heading', { name: 'Graph theory' });
+    fireEvent.click(screen.getByRole('button', { name: 'Open tools' }));
+
+    expect(await screen.findByText('Local transcription engine unavailable')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Open transcription settings' })).toHaveAttribute(
+      'href',
+      '/settings',
+    );
+    expect(
+      screen.queryByRole('button', { name: 'Transcribe this lecture' }),
+    ).not.toBeInTheDocument();
+    expect(mocks.transcribe).not.toHaveBeenCalled();
+  });
+
+  it('clears stale starting status when transcription startup fails', async () => {
+    mocks.transcriptState.mockResolvedValue({
+      media_id: 'media-1',
+      status: 'not_started',
+      segment_count: 0,
+      updated_at: null,
+      job: null,
+    });
+    mocks.transcribe.mockRejectedValue(
+      Object.assign(new Error('Local transcription is unavailable on this installation.'), {
+        kind: 'sidecar_unavailable',
+      }),
+    );
+    renderRoute();
+    await screen.findByRole('heading', { name: 'Graph theory' });
+    fireEvent.click(screen.getByRole('button', { name: 'Open tools' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Transcribe this lecture' }));
+
+    expect(
+      await screen.findByText('Local transcription is unavailable on this installation.'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Starting local transcription…')).not.toBeInTheDocument();
+  });
+
+  it('shows the safe busy message when another transcription already owns the lecture', async () => {
+    mocks.transcriptState.mockResolvedValue({
+      media_id: 'media-1',
+      status: 'not_started',
+      segment_count: 0,
+      language: null,
+      model_id: null,
+      updated_at: null,
+      job: null,
+    });
+    mocks.transcribe.mockRejectedValue(
+      Object.assign(new Error('This lecture is already being transcribed in English.'), {
+        kind: 'transcription_busy',
+      }),
+    );
+    renderRoute();
+    await screen.findByRole('heading', { name: 'Graph theory' });
+    fireEvent.click(screen.getByRole('button', { name: 'Open tools' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Transcribe this lecture' }));
+
+    expect(
+      await screen.findByText('This lecture is already being transcribed in English.'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Starting local transcription…')).not.toBeInTheDocument();
   });
 
   it('unlocks grounded actions as soon as local transcription completes', async () => {
@@ -378,11 +566,18 @@ describe('PlayerRoute', () => {
         media_id: 'media-1',
         status: 'completed',
         segment_count: 42,
+        language: 'en',
+        model_id: 'whisper-small',
         updated_at: '2026-08-14T00:00:00Z',
         job: null,
       });
     mocks.transcribe.mockImplementation(
-      (_mediaId: string, _modelId: string, onEvent: (event: AnalysisProgress) => void) => {
+      (
+        _mediaId: string,
+        _modelId: string,
+        _language: 'en' | 'bn',
+        onEvent: (event: AnalysisProgress) => void,
+      ) => {
         onEvent({ event: 'completed', data: { jobId: 'transcription-job' } });
         return Promise.resolve({
           id: 'transcription-job',
@@ -402,7 +597,7 @@ describe('PlayerRoute', () => {
 
     const consent = screen.getByRole('checkbox');
     await waitFor(() => expect(consent).not.toBeDisabled());
-    expect(screen.getByText('42 cited segments')).toBeInTheDocument();
+    expect(screen.getAllByText(/42 cited segments/)).not.toHaveLength(0);
     expect(screen.getByRole('button', { name: 'Analyze this lecture' })).toBeDisabled();
     fireEvent.click(consent);
     expect(screen.getByRole('button', { name: 'Analyze this lecture' })).toBeEnabled();
@@ -421,7 +616,7 @@ describe('PlayerRoute', () => {
     await screen.findByRole('heading', { name: 'Graph theory' });
     fireEvent.click(screen.getByRole('button', { name: 'Open tools' }));
     expect(
-      await screen.findByRole('link', { name: 'Install transcription model' }),
+      await screen.findByRole('link', { name: 'Install English transcription model' }),
     ).toHaveAttribute('href', '/settings');
   });
 

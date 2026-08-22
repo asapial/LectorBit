@@ -41,7 +41,15 @@ import {
   CardTitle,
 } from '../../components/ui/Card';
 import { cn } from '../../lib/cn';
-import { listModels, startTranscription, type AnalysisProgress } from '../../ipc/analysis';
+import {
+  getAnalysisCapability,
+  listModels,
+  startTranscription,
+  type AnalysisCapability,
+  type AnalysisProgress,
+  type LocalModel,
+  type TranscriptionLanguage,
+} from '../../ipc/analysis';
 
 interface LiveScan {
   status: StatusKind;
@@ -58,6 +66,7 @@ export function LibraryRoute() {
   const [removeTarget, setRemoveTarget] = useState<LibraryRoot | null>(null);
   const [liveScans, setLiveScans] = useState<Record<string, LiveScan>>({});
   const [analysisProgress, setAnalysisProgress] = useState<Record<string, AnalysisProgress>>({});
+  const [transcriptionLanguage, setTranscriptionLanguage] = useState<TranscriptionLanguage>('en');
 
   const roots = useQuery({
     queryKey: ['library', 'roots'] as const,
@@ -81,12 +90,41 @@ export function LibraryRoute() {
     queryFn: listModels,
     staleTime: 5_000,
   });
-  const readyModelId = models.data?.find((model) => model.state === 'ready')?.id;
+  const analysisCapability = useQuery({
+    queryKey: ['analysis', 'capability'] as const,
+    queryFn: getAnalysisCapability,
+    staleTime: 5_000,
+  });
+  const engineSupportsLanguage =
+    analysisCapability.data?.available === true &&
+    analysisCapability.data.supported_languages.includes(transcriptionLanguage);
+  const readyModel = engineSupportsLanguage
+    ? models.data?.find(
+        (model) =>
+          model.state === 'ready' && model.supported_languages.includes(transcriptionLanguage),
+      )
+    : undefined;
+  const readyModelId = readyModel?.id;
   const activeRoots = (roots.data ?? []).filter((root) => root.is_active);
 
+  useEffect(() => {
+    const supported = analysisCapability.data?.supported_languages;
+    if (supported?.length && !supported.includes(transcriptionLanguage)) {
+      setTranscriptionLanguage(supported[0]);
+    }
+  }, [analysisCapability.data?.supported_languages, transcriptionLanguage]);
+
   const transcribe = useMutation({
-    mutationFn: ({ mediaId, modelId }: { mediaId: string; modelId: string }) =>
-      startTranscription(mediaId, modelId, (event) => {
+    mutationFn: ({
+      mediaId,
+      modelId,
+      language,
+    }: {
+      mediaId: string;
+      modelId: string;
+      language: TranscriptionLanguage;
+    }) =>
+      startTranscription(mediaId, modelId, language, (event) => {
         setAnalysisProgress((current) => ({ ...current, [mediaId]: event }));
         if (event.event === 'completed') {
           setBanner('Transcript indexed. Its timestamped moments are now searchable.');
@@ -206,13 +244,46 @@ export function LibraryRoute() {
         title="Indexed media"
         description="Add a course folder once. LectorBit scans every subfolder, reads each video locally, and prepares metadata for planning."
         actions={
-          <Button
-            onClick={() => register.mutate()}
-            disabled={register.isPending || roots.isPending}
-            leftIcon={<FolderSearch className="size-4" />}
-          >
-            {register.isPending ? 'Adding…' : 'Add folder'}
-          </Button>
+          <div className="flex flex-wrap items-end gap-2">
+            <label className="space-y-1 text-xs font-medium text-muted-foreground">
+              Transcript language
+              <select
+                aria-label="Transcript language"
+                className="form-control block min-w-40 text-sm text-foreground"
+                value={transcriptionLanguage}
+                disabled={transcribe.isPending}
+                onChange={(event) =>
+                  setTranscriptionLanguage(event.target.value as TranscriptionLanguage)
+                }
+              >
+                <option
+                  value="en"
+                  disabled={
+                    analysisCapability.data !== undefined &&
+                    !analysisCapability.data.supported_languages.includes('en')
+                  }
+                >
+                  English
+                </option>
+                <option
+                  value="bn"
+                  disabled={
+                    analysisCapability.data !== undefined &&
+                    !analysisCapability.data.supported_languages.includes('bn')
+                  }
+                >
+                  বাংলা (Bangla)
+                </option>
+              </select>
+            </label>
+            <Button
+              onClick={() => register.mutate()}
+              disabled={register.isPending || roots.isPending}
+              leftIcon={<FolderSearch className="size-4" />}
+            >
+              {register.isPending ? 'Adding…' : 'Add folder'}
+            </Button>
+          </div>
         }
       />
 
@@ -232,6 +303,18 @@ export function LibraryRoute() {
           </button>
         </div>
       ) : null}
+
+      <TranscriptionReadinessBanner
+        capability={analysisCapability.data}
+        capabilityPending={analysisCapability.isPending}
+        capabilityError={analysisCapability.isError}
+        modelPending={models.isPending}
+        modelError={models.isError}
+        language={transcriptionLanguage}
+        readyModel={readyModel}
+        retryCapability={() => void analysisCapability.refetch()}
+        retryModels={() => void models.refetch()}
+      />
 
       {roots.isPending ? (
         <div className="flex items-center gap-3 text-sm text-muted-foreground">
@@ -281,7 +364,9 @@ export function LibraryRoute() {
               readyModelId={readyModelId}
               analysisProgress={analysisProgress}
               pendingMediaId={transcribe.isPending ? transcribe.variables?.mediaId : undefined}
-              onTranscribe={(mediaId, modelId) => transcribe.mutate({ mediaId, modelId })}
+              onTranscribe={(mediaId, modelId) =>
+                transcribe.mutate({ mediaId, modelId, language: transcriptionLanguage })
+              }
             />
           ))}
         </>
@@ -296,6 +381,106 @@ export function LibraryRoute() {
         />
       ) : null}
     </div>
+  );
+}
+
+function TranscriptionReadinessBanner({
+  capability,
+  capabilityPending,
+  capabilityError,
+  modelPending,
+  modelError,
+  language,
+  readyModel,
+  retryCapability,
+  retryModels,
+}: {
+  capability?: AnalysisCapability;
+  capabilityPending: boolean;
+  capabilityError: boolean;
+  modelPending: boolean;
+  modelError: boolean;
+  language: TranscriptionLanguage;
+  readyModel?: LocalModel;
+  retryCapability: () => void;
+  retryModels: () => void;
+}) {
+  const pending = capabilityPending || modelPending;
+  const queryError = capabilityError || modelError;
+  const engineReady = capability?.available === true;
+  const languageSupported = capability?.supported_languages.includes(language) === true;
+  const ready = engineReady && languageSupported && readyModel !== undefined;
+  const languageName = language === 'bn' ? 'Bangla' : 'English';
+
+  let title: string;
+  let detail: string;
+  if (pending) {
+    title = 'Checking local transcription setup';
+    detail = 'Verifying the local engine and installed language models.';
+  } else if (queryError) {
+    title = 'Transcription setup could not be checked';
+    detail = 'Check the local engine and model catalog again before starting a transcript.';
+  } else if (!engineReady) {
+    title = 'Local transcription engine unavailable';
+    detail = capability?.message ?? 'Install or repair the local transcription engine in Settings.';
+  } else if (!languageSupported) {
+    title = `${languageName} is not supported by this local engine`;
+    detail = 'Choose a supported language or update the local transcription components.';
+  } else if (!readyModel) {
+    title = `Install a ${languageName} transcription model`;
+    detail = `The local engine is ready, but no verified model for ${languageName} is installed.`;
+  } else {
+    title = `${languageName} transcription ready`;
+    detail = `${readyModel.display_name} will create timestamped transcripts locally.`;
+  }
+
+  return (
+    <section
+      aria-label="Transcription readiness"
+      role={ready || pending ? 'status' : 'alert'}
+      className={cn(
+        'flex flex-wrap items-center justify-between gap-3 rounded-xl border p-4',
+        ready
+          ? 'border-success/25 bg-success/[0.06]'
+          : pending
+            ? 'border-primary/20 bg-primary/[0.04]'
+            : 'border-warning/30 bg-warning/[0.07]',
+      )}
+    >
+      <div className="flex min-w-0 items-start gap-3">
+        {ready ? (
+          <CircleCheck className="mt-0.5 size-5 shrink-0 text-success" />
+        ) : pending ? (
+          <Spinner label="Checking transcription setup" />
+        ) : (
+          <TriangleAlert className="mt-0.5 size-5 shrink-0 text-warning" />
+        )}
+        <div className="min-w-0">
+          <p className="text-sm font-semibold">{title}</p>
+          <p className="mt-1 text-xs leading-5 text-muted-foreground">{detail}</p>
+        </div>
+      </div>
+      {queryError ? (
+        <div className="flex gap-2">
+          {capabilityError ? (
+            <Button size="sm" variant="outline" onClick={retryCapability}>
+              Check engine
+            </Button>
+          ) : null}
+          {modelError ? (
+            <Button size="sm" variant="outline" onClick={retryModels}>
+              Check models
+            </Button>
+          ) : null}
+        </div>
+      ) : !pending && !ready ? (
+        <Link className={settingsLinkClass} to="/settings">
+          Open transcription settings
+        </Link>
+      ) : ready ? (
+        <Badge tone="success">Ready on this device</Badge>
+      ) : null}
+    </section>
   );
 }
 
@@ -726,7 +911,7 @@ function MediaRow({
               title={
                 readyModelId
                   ? 'Create or refresh the local transcript'
-                  : 'Install a model in Settings first'
+                  : 'Complete transcription setup above'
               }
             >
               {analysisLabel(analysisEvent, pending)}
@@ -1133,3 +1318,6 @@ function formatTimestamp(iso: string): string {
     minute: '2-digit',
   });
 }
+
+const settingsLinkClass =
+  'inline-flex h-9 items-center justify-center rounded-lg border border-input bg-background px-3 text-sm font-semibold shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground';

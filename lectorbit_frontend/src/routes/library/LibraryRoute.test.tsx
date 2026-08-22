@@ -2,13 +2,23 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { LibraryRoot, MediaPage, ScanEvent, ScanJob } from '../../ipc/library';
+import type {
+  AnalysisCapability,
+  AnalysisJob,
+  AnalysisProgress,
+  LocalModel,
+  TranscriptionLanguage,
+} from '../../ipc/analysis';
+import type { LibraryRoot, MediaListItem, MediaPage, ScanEvent, ScanJob } from '../../ipc/library';
 import { LibraryRoute } from './LibraryRoute';
 
 const {
   listRootsMock,
   listMediaMock,
   listScanJobsMock,
+  getAnalysisCapabilityMock,
+  listModelsMock,
+  startTranscriptionMock,
   pickAndRegisterRootMock,
   revokeRootMock,
   startScanMock,
@@ -17,9 +27,31 @@ const {
   listMediaMock:
     vi.fn<(options?: { rootId?: string; cursor?: string; limit?: number }) => Promise<MediaPage>>(),
   listScanJobsMock: vi.fn<() => Promise<ScanJob[]>>(),
+  getAnalysisCapabilityMock: vi.fn<() => Promise<AnalysisCapability>>(),
+  listModelsMock: vi.fn<() => Promise<LocalModel[]>>(),
+  startTranscriptionMock:
+    vi.fn<
+      (
+        mediaId: string,
+        modelId: string,
+        language: TranscriptionLanguage,
+        onEvent: (event: AnalysisProgress) => void,
+      ) => Promise<AnalysisJob>
+    >(),
   pickAndRegisterRootMock: vi.fn<() => Promise<LibraryRoot | null>>(),
   revokeRootMock: vi.fn<(id: string) => Promise<LibraryRoot>>(),
   startScanMock: vi.fn<(rootId: string, onEvent: (event: ScanEvent) => void) => Promise<ScanJob>>(),
+}));
+
+vi.mock('../../ipc/analysis', () => ({
+  getAnalysisCapability: () => getAnalysisCapabilityMock(),
+  listModels: () => listModelsMock(),
+  startTranscription: (
+    mediaId: string,
+    modelId: string,
+    language: TranscriptionLanguage,
+    onEvent: (event: AnalysisProgress) => void,
+  ) => startTranscriptionMock(mediaId, modelId, language, onEvent),
 }));
 
 vi.mock('../../ipc/library', () => ({
@@ -60,6 +92,42 @@ const queuedJob: ScanJob = {
   updated_at: '2026-08-08T10:00:00Z',
 };
 
+const readyMedia: MediaListItem = {
+  id: 'media-1',
+  root_id: 'root-1',
+  display_name: 'lesson.mp4',
+  path_redacted: '[REDACTED]/lesson.mp4',
+  media_kind: 'video',
+  size_bytes: 1_048_576,
+  duration_ms: 90_000,
+  container: 'mp4',
+  video_codec: 'h264',
+  audio_codec: 'aac',
+  width: 1280,
+  height: 720,
+  audio_streams: 1,
+  subtitle_streams: 0,
+  probe_status: 'ready',
+  probe_error: null,
+  discovered_at: '2026-08-08T00:00:00Z',
+};
+
+const multilingualModel: LocalModel = {
+  id: 'whisper-base',
+  display_name: 'Whisper Base Multilingual',
+  version: '1',
+  provider: 'local',
+  expected_size_bytes: 1,
+  architecture: 'whisper',
+  analyzer_compatibility: '1.9.2',
+  license: 'MIT',
+  state: 'ready',
+  bytes_downloaded: 1,
+  verified_at: '2026-08-20T00:00:00Z',
+  last_error: null,
+  supported_languages: ['en', 'bn'],
+};
+
 function renderRoute() {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -78,12 +146,24 @@ describe('LibraryRoute', () => {
     listRootsMock.mockReset();
     listMediaMock.mockReset();
     listScanJobsMock.mockReset();
+    getAnalysisCapabilityMock.mockReset();
+    listModelsMock.mockReset();
+    startTranscriptionMock.mockReset();
     pickAndRegisterRootMock.mockReset();
     revokeRootMock.mockReset();
     startScanMock.mockReset();
     listRootsMock.mockResolvedValue([]);
     listMediaMock.mockResolvedValue({ items: [], next_cursor: null });
     listScanJobsMock.mockResolvedValue([]);
+    getAnalysisCapabilityMock.mockResolvedValue({
+      available: true,
+      engine: 'whisper.cpp',
+      expected_version: '1.9.2',
+      unavailable_reason: null,
+      message: 'Local transcription is ready.',
+      supported_languages: ['en', 'bn'],
+    });
+    listModelsMock.mockResolvedValue([]);
     startScanMock.mockResolvedValue(queuedJob);
   });
 
@@ -139,7 +219,92 @@ describe('LibraryRoute', () => {
     expect(screen.getByText('[REDACTED]/lesson.mp4 · 1.0 MB')).toBeInTheDocument();
   });
 
-  it('loads the next media page from the opaque cursor', async () => {
+  it('uses the multilingual model when Bangla transcription is selected', async () => {
+    listRootsMock.mockResolvedValueOnce([activeRoot]);
+    listMediaMock.mockResolvedValue({ items: [readyMedia], next_cursor: null });
+    listModelsMock.mockResolvedValue([
+      { ...multilingualModel, id: 'whisper-base.en', supported_languages: ['en'] },
+      multilingualModel,
+    ]);
+    startTranscriptionMock.mockResolvedValue({
+      id: 'transcription-job',
+      kind: 'transcribe',
+      status: 'queued',
+      attempt: 0,
+      last_error: null,
+      created_at: '2026-08-20T00:00:00Z',
+      updated_at: '2026-08-20T00:00:00Z',
+    });
+    renderRoute();
+
+    fireEvent.change(await screen.findByLabelText('Transcript language'), {
+      target: { value: 'bn' },
+    });
+    expect(await screen.findByText('Bangla transcription ready')).toBeInTheDocument();
+    await screen.findByText('lesson.mp4');
+    const transcribeButton = screen.getByRole('button', { name: 'Transcribe' });
+    await waitFor(() => expect(transcribeButton).toBeEnabled());
+    fireEvent.click(transcribeButton);
+
+    await waitFor(() =>
+      expect(startTranscriptionMock).toHaveBeenCalledWith(
+        'media-1',
+        'whisper-base',
+        'bn',
+        expect.any(Function),
+      ),
+    );
+  });
+
+  it('explains the missing engine instead of blaming the installed model', async () => {
+    listRootsMock.mockResolvedValueOnce([activeRoot]);
+    listMediaMock.mockResolvedValue({ items: [readyMedia], next_cursor: null });
+    listModelsMock.mockResolvedValue([multilingualModel]);
+    getAnalysisCapabilityMock.mockResolvedValue({
+      available: false,
+      engine: 'whisper.cpp',
+      expected_version: '1.9.2',
+      unavailable_reason: 'whisper_missing',
+      message: 'Install the local whisper.cpp engine, then restart LectorBit.',
+      supported_languages: ['en', 'bn'],
+    });
+    renderRoute();
+
+    expect(await screen.findByText('Local transcription engine unavailable')).toBeInTheDocument();
+    expect(
+      screen.getByText('Install the local whisper.cpp engine, then restart LectorBit.'),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Open transcription settings' })).toHaveAttribute(
+      'href',
+      '/settings',
+    );
+    await screen.findByText('lesson.mp4');
+    expect(screen.getByRole('button', { name: 'Transcribe' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Transcribe' })).toHaveAttribute(
+      'title',
+      'Complete transcription setup above',
+    );
+    expect(startTranscriptionMock).not.toHaveBeenCalled();
+  });
+
+  it('disables languages the local engine does not support', async () => {
+    getAnalysisCapabilityMock.mockResolvedValue({
+      available: true,
+      engine: 'whisper.cpp',
+      expected_version: '1.9.2',
+      unavailable_reason: null,
+      message: 'English transcription is ready.',
+      supported_languages: ['en'],
+    });
+    listModelsMock.mockResolvedValue([multilingualModel]);
+    renderRoute();
+
+    expect(await screen.findByText('English transcription ready')).toBeInTheDocument();
+    const languageSelect = screen.getByLabelText('Transcript language');
+    expect(within(languageSelect).getByRole('option', { name: 'বাংলা (Bangla)' })).toBeDisabled();
+  });
+
+  it('navigates to the next media page using the opaque cursor', async () => {
     listRootsMock.mockResolvedValueOnce([activeRoot]);
     const base = {
       root_id: 'root-1',

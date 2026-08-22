@@ -23,6 +23,7 @@ import {
 } from '../../components/ui/Card';
 import { StatusBadge, type StatusKind } from '../../components/ui/StatusBadge';
 import {
+  getAnalysisCapability,
   installModel,
   listAnalysisJobs,
   listModels,
@@ -37,6 +38,7 @@ import {
   type UpdateCheck,
   type UpdateProgress,
 } from '../../ipc/updates';
+import { cn } from '../../lib/cn';
 
 export function SettingsRoute() {
   const queryClient = useQueryClient();
@@ -52,6 +54,11 @@ export function SettingsRoute() {
     queryFn: listModels,
     refetchInterval: (query) =>
       query.state.data?.some((model) => model.state === 'downloading') ? 1_500 : false,
+  });
+  const analysisCapability = useQuery({
+    queryKey: ['analysis', 'capability'] as const,
+    queryFn: getAnalysisCapability,
+    staleTime: 5_000,
   });
   const jobs = useQuery({
     queryKey: ['analysis', 'model-jobs'] as const,
@@ -155,7 +162,8 @@ export function SettingsRoute() {
             <div>
               <CardTitle>Transcription models</CardTitle>
               <CardDescription className="mt-1">
-                Downloads are resumable, size-checked, and SHA-256 verified before use.
+                Run English and Bangla transcription locally with a verified engine and compatible
+                language model. Downloads are resumable and SHA-256 verified before use.
               </CardDescription>
             </div>
             <span className="rounded-md bg-muted px-2.5 py-1 font-mono text-xs text-muted-foreground">
@@ -163,7 +171,81 @@ export function SettingsRoute() {
             </span>
           </div>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-4">
+          {analysisCapability.isPending ? (
+            <div className="h-24 animate-pulse rounded-lg bg-muted motion-reduce:animate-none" />
+          ) : analysisCapability.isError ? (
+            <div
+              className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-destructive/30 bg-destructive/10 p-4"
+              role="alert"
+            >
+              <div className="flex items-start gap-3">
+                <TriangleAlert className="mt-0.5 size-5 shrink-0 text-destructive" />
+                <div>
+                  <p className="text-sm font-medium">Local engine status could not be checked</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    LectorBit cannot safely start transcription until this check succeeds.
+                  </p>
+                </div>
+              </div>
+              <Button size="sm" variant="outline" onClick={() => void analysisCapability.refetch()}>
+                Check again
+              </Button>
+            </div>
+          ) : analysisCapability.data ? (
+            <div
+              className={cn(
+                'flex flex-wrap items-start justify-between gap-4 rounded-lg border p-4',
+                analysisCapability.data.available
+                  ? 'border-success/25 bg-success/[0.06]'
+                  : 'border-warning/30 bg-warning/[0.07]',
+              )}
+              role={analysisCapability.data.available ? 'status' : 'alert'}
+            >
+              <div className="flex min-w-0 items-start gap-3">
+                {analysisCapability.data.available ? (
+                  <CheckCircle2 className="mt-0.5 size-5 shrink-0 text-success" />
+                ) : (
+                  <TriangleAlert className="mt-0.5 size-5 shrink-0 text-warning" />
+                )}
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold">
+                    {analysisCapability.data.available
+                      ? 'Local transcription engine ready'
+                      : 'Local transcription engine unavailable'}
+                  </p>
+                  <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                    {analysisCapability.data.message}
+                  </p>
+                  {!analysisCapability.data.available ? (
+                    <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                      {analysisCapabilityHelp(analysisCapability.data.unavailable_reason)}
+                    </p>
+                  ) : null}
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {analysisCapability.data.supported_languages.map((language) => (
+                      <Badge key={language} tone="neutral">
+                        {languageLabel(language)}
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              <div className="flex shrink-0 flex-col items-end gap-2">
+                <span className="font-mono text-[11px] text-muted-foreground">
+                  {analysisCapability.data.engine} · {analysisCapability.data.expected_version}
+                </span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => void analysisCapability.refetch()}
+                >
+                  <RefreshCw className="size-3.5" /> Check again
+                </Button>
+              </div>
+            </div>
+          ) : null}
+
           {models.isPending ? (
             <div className="h-36 animate-pulse rounded-lg bg-muted motion-reduce:animate-none" />
           ) : null}
@@ -497,10 +579,15 @@ function ModelRow({
     <div className="grid gap-4 py-5 first:pt-1 last:pb-1 md:grid-cols-[minmax(0,1fr)_14rem_auto] md:items-center">
       <div>
         <div className="flex flex-wrap items-center gap-2">
-          <p className="font-medium">Whisper base English</p>
+          <p className="font-medium">{model.display_name}</p>
           <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">
             {model.analyzer_compatibility}
           </span>
+          {model.supported_languages.map((language) => (
+            <Badge key={language} tone="neutral">
+              {languageLabel(language)}
+            </Badge>
+          ))}
         </div>
         <p className="mt-1 text-xs text-muted-foreground">
           {formatBytes(model.expected_size_bytes)} · {model.provider} · {model.architecture}
@@ -597,6 +684,26 @@ function formatBytes(bytes: number) {
 function formatDate(value: string) {
   const date = new Date(value);
   return Number.isNaN(date.valueOf()) ? 'locally' : date.toLocaleDateString();
+}
+function languageLabel(language: string) {
+  if (language === 'bn') return 'বাংলা · Bangla';
+  if (language === 'en') return 'English';
+  return language.toUpperCase();
+}
+function analysisCapabilityHelp(reason: string | null) {
+  switch (reason) {
+    case 'whisper_missing':
+    case 'whisper_not_configured':
+      return 'Install the Whisper component. For development, set LECTORBIT_WHISPER_PATH to whisper-cli.exe and restart the app.';
+    case 'ffmpeg_missing':
+    case 'ffmpeg_not_configured':
+      return 'Install or configure FFmpeg, then restart the app.';
+    case 'version_mismatch':
+    case 'unsupported_version':
+      return 'Install the required Whisper engine version shown here, then restart the app.';
+    default:
+      return 'Repair or reinstall the local transcription components, then check again.';
+  }
 }
 function messageFrom(error: unknown) {
   return error instanceof Error ? error.message : 'The operation could not continue.';

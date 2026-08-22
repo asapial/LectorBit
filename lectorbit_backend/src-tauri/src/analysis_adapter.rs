@@ -2,15 +2,18 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-use lectorbit_ai::{install_model, WhisperCpp};
+use lectorbit_ai::{
+    install_model, supported_languages_for_model, AiError, TranscriptionLanguage, WhisperCpp,
+    EXPECTED_WHISPER_VERSION,
+};
 use lectorbit_services::{
     AnalysisError, AnalysisService, Job, JobStatus, ModelDownloadPayload, SearchError,
     SearchService, TranscriptionPayload,
 };
 use tauri_plugin_lectorbit::{
-    AnalysisErrorCode, AnalysisErrorKind, AnalysisEventSink, AnalysisJobDto, AnalysisOps,
-    AnalysisProgressDto, BoxFuture, ModelDto, SearchErrorCode, SearchErrorKind, SearchHitDto,
-    SearchOps, TranscriptStateDto,
+    AnalysisCapabilityDto, AnalysisErrorCode, AnalysisErrorKind, AnalysisEventSink, AnalysisJobDto,
+    AnalysisOps, AnalysisProgressDto, BoxFuture, ModelDto, SearchErrorCode, SearchErrorKind,
+    SearchHitDto, SearchOps, TranscriptStateDto,
 };
 use tokio::sync::Semaphore;
 
@@ -19,6 +22,7 @@ pub struct AnalysisAdapter {
     service: AnalysisService,
     search: SearchService,
     whisper: Option<Arc<WhisperCpp>>,
+    capability: AnalysisCapabilityDto,
     client: reqwest::Client,
     work_root: PathBuf,
     model_permits: Arc<Semaphore>,
@@ -33,26 +37,12 @@ impl AnalysisAdapter {
         ffmpeg_path: Option<PathBuf>,
         work_root: PathBuf,
     ) -> Self {
-        let whisper = match whisper_path
-            .zip(ffmpeg_path)
-            .and_then(|(whisper, ffmpeg)| WhisperCpp::new(whisper, ffmpeg).ok())
-        {
-            Some(adapter) => match adapter.verify_version().await {
-                Ok(()) => Some(Arc::new(adapter)),
-                Err(error) => {
-                    tracing::warn!(%error, "whisper.cpp sidecar verification failed");
-                    None
-                }
-            },
-            None => {
-                tracing::warn!("whisper.cpp or ffmpeg sidecar is not configured");
-                None
-            }
-        };
+        let (whisper, capability) = initialize_whisper(whisper_path, ffmpeg_path).await;
         Self {
             service,
             search,
             whisper,
+            capability,
             client: reqwest::Client::builder()
                 .https_only(true)
                 .user_agent("LectorBit/0.1 model-manager")
@@ -250,7 +240,7 @@ impl AnalysisAdapter {
             job_id: job.id.clone(),
         });
         let output = whisper
-            .transcribe(&media, &model, &work_dir)
+            .transcribe(&media, &model, &work_dir, payload.language)
             .await
             .map_err(|error| {
                 AnalysisErrorCode::new(AnalysisErrorKind::Internal, safe_ai_message(&error))
@@ -275,7 +265,108 @@ impl AnalysisAdapter {
     }
 }
 
+async fn initialize_whisper(
+    whisper_path: Option<PathBuf>,
+    ffmpeg_path: Option<PathBuf>,
+) -> (Option<Arc<WhisperCpp>>, AnalysisCapabilityDto) {
+    let Some(whisper_path) = whisper_path else {
+        tracing::warn!("whisper.cpp sidecar is not configured");
+        return (
+            None,
+            unavailable_capability(
+                "whisper_missing",
+                "Install the local whisper.cpp 1.9.2 engine, then restart LectorBit.",
+            ),
+        );
+    };
+    let Some(ffmpeg_path) = ffmpeg_path else {
+        tracing::warn!("ffmpeg sidecar is not configured for transcription");
+        return (
+            None,
+            unavailable_capability(
+                "ffmpeg_missing",
+                "Install FFmpeg 8.1.2, then restart LectorBit.",
+            ),
+        );
+    };
+    let adapter = match WhisperCpp::new(whisper_path, ffmpeg_path) {
+        Ok(adapter) => adapter,
+        Err(error) => {
+            tracing::warn!(%error, "whisper.cpp sidecar could not be opened");
+            return (
+                None,
+                unavailable_capability(
+                    "whisper_unavailable",
+                    "The local transcription engine could not be opened. Repair it, then restart LectorBit.",
+                ),
+            );
+        }
+    };
+    if let Err(error) = adapter.verify_version().await {
+        tracing::warn!(%error, "whisper.cpp sidecar verification failed");
+        let (reason, message) = match error {
+                AiError::UnsupportedVersion => (
+                    "version_mismatch",
+                    "The local transcription engine version is incompatible. Install whisper.cpp 1.9.2 and restart LectorBit.",
+                ),
+                _ => (
+                    "whisper_unavailable",
+                    "The local transcription engine could not be verified. Repair it, then restart LectorBit.",
+                ),
+            };
+        return (None, unavailable_capability(reason, message));
+    }
+    if let Err(error) = adapter.verify_ffmpeg_version().await {
+        tracing::warn!(%error, "FFmpeg sidecar verification failed for transcription");
+        let (reason, message) = match error {
+            AiError::UnsupportedFfmpegVersion => (
+                "ffmpeg_version_mismatch",
+                "The audio extractor version is incompatible. Install FFmpeg 8.1.2 and restart LectorBit.",
+            ),
+            _ => (
+                "ffmpeg_unavailable",
+                "The audio extractor could not be verified. Repair FFmpeg, then restart LectorBit.",
+            ),
+        };
+        return (None, unavailable_capability(reason, message));
+    }
+    (
+        Some(Arc::new(adapter)),
+        AnalysisCapabilityDto {
+            available: true,
+            engine: "whisper.cpp".into(),
+            expected_version: EXPECTED_WHISPER_VERSION.into(),
+            unavailable_reason: None,
+            message: "Local English and Bangla transcription is ready.".into(),
+            supported_languages: vec!["en".into(), "bn".into()],
+        },
+    )
+}
+
+fn unavailable_capability(reason: &str, message: &str) -> AnalysisCapabilityDto {
+    AnalysisCapabilityDto {
+        available: false,
+        engine: "whisper.cpp".into(),
+        expected_version: EXPECTED_WHISPER_VERSION.into(),
+        unavailable_reason: Some(reason.into()),
+        message: message.into(),
+        supported_languages: vec!["en".into(), "bn".into()],
+    }
+}
+
+fn model_display_name(model_id: &str) -> &'static str {
+    match model_id {
+        "whisper-base" => "Whisper base multilingual (বাংলা + English)",
+        "whisper-base.en" => "Whisper base English",
+        _ => "Whisper local model",
+    }
+}
+
 impl AnalysisOps for AnalysisAdapter {
+    fn capability(&self) -> BoxFuture<'_, Result<AnalysisCapabilityDto, AnalysisErrorCode>> {
+        Box::pin(async move { Ok(self.capability.clone()) })
+    }
+
     fn list_models(&self) -> BoxFuture<'_, Result<Vec<ModelDto>, AnalysisErrorCode>> {
         Box::pin(async move {
             self.service
@@ -285,6 +376,11 @@ impl AnalysisOps for AnalysisAdapter {
                     models
                         .into_iter()
                         .map(|model| ModelDto {
+                            display_name: model_display_name(&model.id).into(),
+                            supported_languages: supported_languages_for_model(&model.id)
+                                .iter()
+                                .map(|language| (*language).into())
+                                .collect(),
                             id: model.id,
                             version: model.version,
                             provider: model.provider,
@@ -338,18 +434,25 @@ impl AnalysisOps for AnalysisAdapter {
         &self,
         media_id: String,
         model_id: String,
+        language: String,
         sink: AnalysisEventSink,
     ) -> BoxFuture<'_, Result<AnalysisJobDto, AnalysisErrorCode>> {
         Box::pin(async move {
             if self.whisper.is_none() {
                 return Err(AnalysisErrorCode::new(
                     AnalysisErrorKind::SidecarUnavailable,
-                    "Local transcription is unavailable on this installation.",
+                    self.capability.message.clone(),
                 ));
             }
+            let language = TranscriptionLanguage::try_from(language.as_str()).map_err(|_| {
+                AnalysisErrorCode::new(
+                    AnalysisErrorKind::LanguageNotSupported,
+                    "Choose English or Bangla for local transcription.",
+                )
+            })?;
             let enqueued = self
                 .service
-                .enqueue_transcription(&media_id, &model_id)
+                .enqueue_transcription(&media_id, &model_id, language)
                 .await
                 .map_err(map_analysis_error)?;
             let dto = job_dto(&enqueued.job);
@@ -376,6 +479,8 @@ impl AnalysisOps for AnalysisAdapter {
                     status: state.status,
                     segment_count: state.segment_count,
                     updated_at: state.updated_at,
+                    language: state.language,
+                    model_id: state.model_id,
                     job: state.job.as_ref().map(job_dto),
                 })
                 .map_err(map_analysis_error)
@@ -452,6 +557,14 @@ fn map_analysis_error(error: AnalysisError) -> AnalysisErrorCode {
             AnalysisErrorKind::ModelNotReady,
             "Install and verify a model first.",
         ),
+        AnalysisError::ModelLanguageUnsupported => (
+            AnalysisErrorKind::LanguageNotSupported,
+            "Install the multilingual Whisper model to transcribe Bangla.",
+        ),
+        AnalysisError::TranscriptionBusy => (
+            AnalysisErrorKind::TranscriptionBusy,
+            "Another transcription is already running for this lecture. Wait for it to finish before changing the language or model.",
+        ),
         AnalysisError::MediaUnavailable => (
             AnalysisErrorKind::MediaUnavailable,
             "That media file is no longer available.",
@@ -493,8 +606,14 @@ fn safe_ai_message(error: &lectorbit_ai::AiError) -> &'static str {
         lectorbit_ai::AiError::VerificationFailed => {
             "The downloaded model did not pass verification."
         }
-        lectorbit_ai::AiError::SidecarUnavailable | lectorbit_ai::AiError::UnsupportedVersion => {
+        lectorbit_ai::AiError::SidecarUnavailable
+        | lectorbit_ai::AiError::UnsupportedVersion
+        | lectorbit_ai::AiError::FfmpegUnavailable
+        | lectorbit_ai::AiError::UnsupportedFfmpegVersion => {
             "Local transcription is unavailable on this installation."
+        }
+        lectorbit_ai::AiError::UnsupportedLanguage => {
+            "Choose English or Bangla for local transcription."
         }
         lectorbit_ai::AiError::ExtractionFailed => "Audio could not be extracted from this media.",
         lectorbit_ai::AiError::TranscriptionFailed | lectorbit_ai::AiError::InvalidOutput => {

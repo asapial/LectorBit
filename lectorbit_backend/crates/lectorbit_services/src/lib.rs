@@ -15,6 +15,7 @@ pub use analysis::{
     AnalysisError, AnalysisService, JobEnqueue as AnalysisEnqueue, ModelDownloadPayload, ModelView,
     TranscriptState, TranscriptionPayload,
 };
+pub use lectorbit_ai::TranscriptionLanguage;
 
 pub use diagnostics::{DiagnosticsReport, DiagnosticsService};
 pub use jobs::{

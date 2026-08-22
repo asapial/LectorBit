@@ -35,6 +35,7 @@ permissions = [
   "allow-models-list",
   "allow-models-install",
   "allow-models-remove",
+  "allow-analysis-get-capability",
   "allow-analysis-start-transcription",
   "allow-analysis-get-transcript-state",
   "allow-analysis-list-jobs",

@@ -5,6 +5,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::time::Duration;
 
 use fs2::available_space;
 use serde::{Deserialize, Serialize};
@@ -14,7 +15,57 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command;
 
 pub const EXPECTED_WHISPER_VERSION: &str = "1.9.2";
-pub const MODEL_CATALOG_VERSION: &str = "2026-08-12";
+pub const EXPECTED_FFMPEG_VERSION: &str = "8.1.2";
+pub const MODEL_CATALOG_VERSION: &str = "2026-08-20";
+
+const SIDECAR_PROBE_TIMEOUT: Duration = Duration::from_secs(10);
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum TranscriptionLanguage {
+    #[serde(rename = "en")]
+    English,
+    #[serde(rename = "bn")]
+    Bangla,
+}
+
+impl TranscriptionLanguage {
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::English => "en",
+            Self::Bangla => "bn",
+        }
+    }
+}
+
+impl Default for TranscriptionLanguage {
+    fn default() -> Self {
+        Self::English
+    }
+}
+
+impl TryFrom<&str> for TranscriptionLanguage {
+    type Error = AiError;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "en" => Ok(Self::English),
+            "bn" => Ok(Self::Bangla),
+            _ => Err(AiError::UnsupportedLanguage),
+        }
+    }
+}
+
+pub fn supported_languages_for_model(model_id: &str) -> &'static [&'static str] {
+    match model_id {
+        "whisper-base.en" => &["en"],
+        "whisper-base" => &["en", "bn"],
+        _ => &[],
+    }
+}
+
+pub fn model_supports_language(model_id: &str, language: TranscriptionLanguage) -> bool {
+    supported_languages_for_model(model_id).contains(&language.code())
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ModelManifest {
@@ -71,6 +122,10 @@ pub enum AiError {
     SidecarUnavailable,
     #[error("the configured sidecar version is unsupported")]
     UnsupportedVersion,
+    #[error("the configured FFmpeg sidecar is unavailable")]
+    FfmpegUnavailable,
+    #[error("the configured FFmpeg sidecar version is unsupported")]
+    UnsupportedFfmpegVersion,
     #[error("the model manifest is invalid")]
     InvalidManifest,
     #[error("there is not enough free disk space for this model")]
@@ -85,6 +140,8 @@ pub enum AiError {
     TranscriptionFailed,
     #[error("local transcription returned invalid output")]
     InvalidOutput,
+    #[error("the requested transcription language is unsupported")]
+    UnsupportedLanguage,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -280,21 +337,55 @@ impl WhisperCpp {
     }
 
     pub async fn verify_version(&self) -> Result<(), AiError> {
-        let output = Command::new(&self.whisper_cli)
-            .arg("--version")
-            .stdin(Stdio::null())
-            .stderr(Stdio::piped())
-            .stdout(Stdio::piped())
-            .output()
-            .await
-            .map_err(|_| AiError::SidecarUnavailable)?;
+        let output = tokio::time::timeout(
+            SIDECAR_PROBE_TIMEOUT,
+            Command::new(&self.whisper_cli)
+                .arg("--version")
+                .stdin(Stdio::null())
+                .stderr(Stdio::piped())
+                .stdout(Stdio::piped())
+                .kill_on_drop(true)
+                .output(),
+        )
+        .await
+        .map_err(|_| AiError::SidecarUnavailable)?
+        .map_err(|_| AiError::SidecarUnavailable)?;
         let text = format!(
             "{}{}",
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
-        if !output.status.success() || !text.contains(EXPECTED_WHISPER_VERSION) {
+        if !output.status.success()
+            || !contains_pinned_version(&text, "whisper.cpp version:", EXPECTED_WHISPER_VERSION)
+        {
             return Err(AiError::UnsupportedVersion);
+        }
+        Ok(())
+    }
+
+    pub async fn verify_ffmpeg_version(&self) -> Result<(), AiError> {
+        let output = tokio::time::timeout(
+            SIDECAR_PROBE_TIMEOUT,
+            Command::new(&self.ffmpeg)
+                .arg("-version")
+                .stdin(Stdio::null())
+                .stderr(Stdio::piped())
+                .stdout(Stdio::piped())
+                .kill_on_drop(true)
+                .output(),
+        )
+        .await
+        .map_err(|_| AiError::FfmpegUnavailable)?
+        .map_err(|_| AiError::FfmpegUnavailable)?;
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        if !output.status.success()
+            || !contains_pinned_version(&text, "ffmpeg version", EXPECTED_FFMPEG_VERSION)
+        {
+            return Err(AiError::UnsupportedFfmpegVersion);
         }
         Ok(())
     }
@@ -304,6 +395,7 @@ impl WhisperCpp {
         media_path: &Path,
         model_path: &Path,
         work_dir: &Path,
+        language: TranscriptionLanguage,
     ) -> Result<TranscriptOutput, AiError> {
         if !media_path.is_absolute()
             || !media_path.is_file()
@@ -337,7 +429,7 @@ impl WhisperCpp {
                 "--output-json",
                 "--no-prints",
                 "--language",
-                "auto",
+                language.code(),
                 "--model",
             ])
             .arg(model_path)
@@ -360,6 +452,22 @@ impl WhisperCpp {
             .map_err(|_| AiError::InvalidOutput)?;
         parse_whisper_json(&bytes)
     }
+}
+
+fn contains_pinned_version(output: &str, marker: &str, expected: &str) -> bool {
+    output.lines().any(|line| {
+        let Some((_, suffix)) = line.split_once(marker) else {
+            return false;
+        };
+        let suffix = suffix.trim_start();
+        let Some(remainder) = suffix.strip_prefix(expected) else {
+            return false;
+        };
+        remainder
+            .chars()
+            .next()
+            .is_none_or(|character| character.is_whitespace() || matches!(character, '-' | '('))
+    })
 }
 
 #[derive(Deserialize)]
@@ -419,6 +527,11 @@ mod tests {
     fn catalog_manifest_is_valid() {
         for model in builtin_models() {
             validate_manifest(&model).expect("valid catalog");
+            assert!(
+                !supported_languages_for_model(&model.id).is_empty(),
+                "catalog model {} must declare an explicit language policy",
+                model.id
+            );
         }
     }
 
@@ -448,5 +561,64 @@ mod tests {
         assert_eq!(output.segments.len(), 1);
         assert_eq!(output.segments[0].start_ms, 120);
         assert_eq!(output.segments[0].text, "Hello world");
+    }
+
+    #[test]
+    fn maps_supported_transcription_languages_to_whisper_codes() {
+        assert_eq!(TranscriptionLanguage::English.code(), "en");
+        assert_eq!(TranscriptionLanguage::Bangla.code(), "bn");
+        assert!(TranscriptionLanguage::try_from("auto").is_err());
+    }
+
+    #[test]
+    fn english_models_reject_bangla_but_multilingual_models_accept_it() {
+        assert!(model_supports_language(
+            "whisper-base.en",
+            TranscriptionLanguage::English
+        ));
+        assert!(!model_supports_language(
+            "whisper-base.en",
+            TranscriptionLanguage::Bangla
+        ));
+        assert!(model_supports_language(
+            "whisper-base",
+            TranscriptionLanguage::Bangla
+        ));
+        assert!(!model_supports_language(
+            "unknown-model",
+            TranscriptionLanguage::English
+        ));
+    }
+
+    #[test]
+    fn parses_bangla_transcript_without_losing_unicode() {
+        let document = r#"{
+              "result":{"language":"bn"},
+              "transcription":[
+                {"offsets":{"from":0,"to":1500},"text":" মেশিন লার্নিং কী? "}
+              ]
+            }"#;
+        let output = parse_whisper_json(document.as_bytes()).expect("parse Bangla transcript");
+        assert_eq!(output.language, "bn");
+        assert_eq!(output.segments[0].text, "মেশিন লার্নিং কী?");
+    }
+
+    #[test]
+    fn sidecar_version_matching_requires_the_exact_pinned_release() {
+        assert!(contains_pinned_version(
+            "whisper.cpp version: 1.9.2\n",
+            "whisper.cpp version:",
+            EXPECTED_WHISPER_VERSION
+        ));
+        assert!(contains_pinned_version(
+            "ffmpeg version 8.1.2-full_build-www.gyan.dev Copyright",
+            "ffmpeg version",
+            EXPECTED_FFMPEG_VERSION
+        ));
+        assert!(!contains_pinned_version(
+            "ffmpeg version 8.1.20",
+            "ffmpeg version",
+            EXPECTED_FFMPEG_VERSION
+        ));
     }
 }

@@ -52,10 +52,13 @@ import {
 } from '../../ipc/playback';
 import { getCloudPlanningStatus, replanActive } from '../../ipc/planner';
 import {
+  getAnalysisCapability,
   getTranscriptState,
   listModels,
   startTranscription,
+  type AnalysisCapability,
   type AnalysisProgress,
+  type TranscriptionLanguage,
 } from '../../ipc/analysis';
 import {
   askCompanion,
@@ -109,6 +112,7 @@ export function PlayerRoute() {
   const [learningConsent, setLearningConsent] = useState(false);
   const [learningStatus, setLearningStatus] = useState<string>();
   const [learningError, setLearningError] = useState<string>();
+  const [transcriptionLanguage, setTranscriptionLanguage] = useState<TranscriptionLanguage>('en');
   const [lectureJobActive, setLectureJobActive] = useState(false);
   const [transcriptionProgress, setTranscriptionProgress] = useState<AnalysisProgress>();
   const [revealedStudyItem, setRevealedStudyItem] = useState<string>();
@@ -192,8 +196,13 @@ export function PlayerRoute() {
     queryFn: listModels,
     staleTime: 5_000,
   });
+  const analysisCapabilityQuery = useQuery({
+    queryKey: ['analysis', 'capability'] as const,
+    queryFn: getAnalysisCapability,
+    staleTime: 5_000,
+  });
   const readyTranscriptionModel = analysisModelsQuery.data?.find(
-    (model) => model.state === 'ready',
+    (model) => model.state === 'ready' && model.supported_languages.includes(transcriptionLanguage),
   );
   const transcriptQuery = useQuery({
     queryKey: ['analysis', 'transcript', view?.media_id] as const,
@@ -201,6 +210,12 @@ export function PlayerRoute() {
     enabled: Boolean(view?.media_id),
     refetchInterval: (query) => (isTranscriptActive(query.state.data?.status) ? 1_500 : false),
   });
+  useEffect(() => {
+    const recordedLanguage = transcriptQuery.data?.language;
+    if (recordedLanguage === 'en' || recordedLanguage === 'bn') {
+      setTranscriptionLanguage(recordedLanguage);
+    }
+  }, [transcriptQuery.data?.language, view?.media_id]);
   const cloudLearningQuery = useQuery({
     queryKey: ['cloud-planning', 'status'] as const,
     queryFn: getCloudPlanningStatus,
@@ -226,35 +241,57 @@ export function PlayerRoute() {
   const transcribeLecture = useMutation({
     mutationFn: async () => {
       if (!view) throw new Error('Open a lecture first.');
+      if (!analysisCapabilityQuery.data?.available) {
+        throw new Error(
+          analysisCapabilityQuery.data?.message ??
+            'The local transcription engine is not available yet.',
+        );
+      }
+      if (!analysisCapabilityQuery.data.supported_languages.includes(transcriptionLanguage)) {
+        throw new Error(`${transcriptionLanguageLabel(transcriptionLanguage)} is not supported.`);
+      }
       if (!readyTranscriptionModel) {
-        throw new Error('Install a local transcription model in Settings first.');
+        throw new Error(
+          `Install a ${transcriptionLanguageLabel(transcriptionLanguage)} transcription model in Settings first.`,
+        );
       }
       setTranscriptionProgress(undefined);
       setLearningError(undefined);
       setLearningStatus('Starting local transcription…');
-      return startTranscription(view.media_id, readyTranscriptionModel.id, (event) => {
-        setTranscriptionProgress(event);
-        if (event.event === 'queued') setLearningStatus('Transcription queued locally.');
-        if (event.event === 'extracting') setLearningStatus('Extracting lecture audio locally…');
-        if (event.event === 'transcribing') setLearningStatus('Transcribing lecture locally…');
-        if (event.event === 'indexing') {
-          setLearningStatus(`Indexing ${event.data.segments} transcript segments…`);
-        }
-        if (event.event === 'completed') {
-          setLearningStatus('Transcript ready. Grounded study tools are now available.');
-          void transcriptQuery.refetch();
-          void queryClient.invalidateQueries({ queryKey: ['search'] });
-        }
-        if (event.event === 'failed') {
-          setLearningStatus(undefined);
-          setLearningError(event.data.message);
-        }
-      });
+      return startTranscription(
+        view.media_id,
+        readyTranscriptionModel.id,
+        transcriptionLanguage,
+        (event) => {
+          setTranscriptionProgress(event);
+          if (event.event === 'queued') setLearningStatus('Transcription queued locally.');
+          if (event.event === 'extracting') setLearningStatus('Extracting lecture audio locally…');
+          if (event.event === 'transcribing') setLearningStatus('Transcribing lecture locally…');
+          if (event.event === 'indexing') {
+            setLearningStatus(`Indexing ${event.data.segments} transcript segments…`);
+          }
+          if (event.event === 'completed') {
+            setLearningStatus('Transcript ready. Grounded study tools are now available.');
+            void transcriptQuery.refetch();
+            void queryClient.invalidateQueries({ queryKey: ['search'] });
+          }
+          if (event.event === 'failed') {
+            setLearningStatus(undefined);
+            setLearningError(event.data.message);
+          }
+        },
+      );
     },
     onSuccess: () => {
       void transcriptQuery.refetch();
     },
-    onError: (cause) => setLearningError(messageFrom(cause)),
+    onError: (cause) => {
+      setLearningStatus(undefined);
+      setLearningError(messageFrom(cause));
+      if (analysisErrorKind(cause) === 'sidecar_unavailable') {
+        void analysisCapabilityQuery.refetch();
+      }
+    },
   });
   const generateLecture = useMutation({
     mutationFn: async () => {
@@ -1157,13 +1194,21 @@ export function PlayerRoute() {
                   <LearningSetup
                     transcriptStatus={transcriptQuery.data?.status}
                     transcriptSegments={transcriptQuery.data?.segment_count ?? 0}
+                    transcriptLanguage={transcriptQuery.data?.language ?? null}
+                    transcriptModelId={transcriptQuery.data?.model_id ?? null}
                     transcriptPending={transcriptQuery.isPending}
                     transcriptError={transcriptQuery.isError}
                     retryTranscript={() => void transcriptQuery.refetch()}
+                    capability={analysisCapabilityQuery.data}
+                    capabilityPending={analysisCapabilityQuery.isPending}
+                    capabilityError={analysisCapabilityQuery.isError}
+                    retryCapability={() => void analysisCapabilityQuery.refetch()}
                     modelPending={analysisModelsQuery.isPending}
                     modelError={analysisModelsQuery.isError}
                     hasReadyModel={Boolean(readyTranscriptionModel)}
                     retryModels={() => void analysisModelsQuery.refetch()}
+                    language={transcriptionLanguage}
+                    setLanguage={setTranscriptionLanguage}
                     cloudConfigured={cloudLearningReady}
                     cloudPending={cloudLearningQuery.isPending}
                     cloudError={cloudLearningQuery.isError}
@@ -1589,13 +1634,21 @@ export function PlayerRoute() {
 function LearningSetup({
   transcriptStatus,
   transcriptSegments,
+  transcriptLanguage,
+  transcriptModelId,
   transcriptPending,
   transcriptError,
   retryTranscript,
+  capability,
+  capabilityPending,
+  capabilityError,
+  retryCapability,
   modelPending,
   modelError,
   hasReadyModel,
   retryModels,
+  language,
+  setLanguage,
   cloudConfigured,
   cloudPending,
   cloudError,
@@ -1607,13 +1660,21 @@ function LearningSetup({
 }: {
   transcriptStatus?: 'not_started' | 'queued' | 'processing' | 'attention' | 'completed' | 'failed';
   transcriptSegments: number;
+  transcriptLanguage: string | null;
+  transcriptModelId: string | null;
   transcriptPending: boolean;
   transcriptError: boolean;
   retryTranscript: () => void;
+  capability?: AnalysisCapability;
+  capabilityPending: boolean;
+  capabilityError: boolean;
+  retryCapability: () => void;
   modelPending: boolean;
   modelError: boolean;
   hasReadyModel: boolean;
   retryModels: () => void;
+  language: TranscriptionLanguage;
+  setLanguage: (language: TranscriptionLanguage) => void;
   cloudConfigured: boolean;
   cloudPending: boolean;
   cloudError: boolean;
@@ -1625,6 +1686,12 @@ function LearningSetup({
 }) {
   const transcriptReady = transcriptStatus === 'completed';
   const transcriptActive = isTranscriptActive(transcriptStatus);
+  const engineReady = capability?.available === true;
+  const languageSupported = capability?.supported_languages.includes(language) === true;
+  const transcriptionActive =
+    transcriptionPending ||
+    transcriptActive ||
+    isTranscriptionProgressActive(transcriptionProgress);
   return (
     <section className="space-y-3" aria-labelledby="toolkit-readiness-heading">
       <div>
@@ -1635,12 +1702,27 @@ function LearningSetup({
           Grounded answers require these local and cloud prerequisites.
         </p>
       </div>
-      <div className="grid gap-2 sm:grid-cols-3">
+      <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+        <ReadinessItem
+          label="Local engine"
+          value={
+            capabilityPending
+              ? 'Checking…'
+              : capabilityError
+                ? 'Status unavailable'
+                : engineReady
+                  ? `${capability?.engine ?? 'Whisper'} ready`
+                  : 'Setup needed'
+          }
+          ready={engineReady}
+          pending={capabilityPending}
+        />
         <ReadinessItem
           label="Local transcript"
           value={transcriptReadinessLabel(
             transcriptStatus,
             transcriptSegments,
+            transcriptLanguage,
             transcriptPending,
             transcriptError,
           )}
@@ -1669,36 +1751,168 @@ function LearningSetup({
         />
       </div>
 
+      <fieldset
+        className="rounded-xl border border-border/70 bg-background/60 p-4"
+        disabled={transcriptionActive}
+      >
+        <legend className="px-1 text-xs font-semibold">Transcript language</legend>
+        <p className="text-xs leading-5 text-muted-foreground">
+          {transcriptReady
+            ? `Current transcript: ${transcriptLanguage ? transcriptionLanguageDisplay(transcriptLanguage) : 'language not recorded'}. Choose a language below to replace it.`
+            : 'Choose the spoken language so local transcription and grounded study content use the right language.'}
+        </p>
+        <div className="mt-3 flex flex-wrap gap-2">
+          {(['en', 'bn'] as const).map((option) => (
+            <label
+              key={option}
+              className={cn(
+                'flex cursor-pointer items-center gap-2 rounded-lg border bg-background px-3 py-2 text-xs font-medium',
+                language === option && 'border-primary bg-primary/[0.06] text-primary',
+                transcriptionActive && 'cursor-not-allowed opacity-60',
+              )}
+            >
+              <input
+                type="radio"
+                name="transcription-language"
+                value={option}
+                checked={language === option}
+                onChange={() => setLanguage(option)}
+                className="size-3.5 accent-primary"
+              />
+              {transcriptionLanguageDisplay(option)}
+            </label>
+          ))}
+        </div>
+      </fieldset>
+
+      {transcriptReady ? (
+        <div className="rounded-xl border border-success/25 bg-success/[0.06] p-4">
+          <div className="flex items-start gap-3">
+            <CheckCircle2 className="mt-0.5 size-5 shrink-0 text-success" />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold">
+                {transcriptLanguage
+                  ? `${transcriptionLanguageDisplay(transcriptLanguage)} transcript ready`
+                  : 'Local transcript ready'}
+              </p>
+              <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                {transcriptSegments} cited segments
+                {transcriptModelId ? ` · ${transcriptModelId}` : ''}. Retranscribing creates a new
+                active transcript without deleting prior study history.
+              </p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {capabilityError ? (
+                  <Button size="sm" variant="outline" onClick={retryCapability}>
+                    <RefreshCcw className="size-3.5" /> Check local engine again
+                  </Button>
+                ) : capabilityPending ? (
+                  <Button size="sm" variant="outline" disabled>
+                    <LoaderCircle className="size-3.5 animate-spin" /> Checking local engine…
+                  </Button>
+                ) : !engineReady ? (
+                  <Link className={settingsLinkClass} to="/settings">
+                    Open transcription settings
+                  </Link>
+                ) : !languageSupported ? (
+                  <Link className={settingsLinkClass} to="/settings">
+                    Set up {transcriptionLanguageLabel(language)} transcription
+                  </Link>
+                ) : modelError ? (
+                  <Button size="sm" variant="outline" onClick={retryModels}>
+                    <RefreshCcw className="size-3.5" /> Check models again
+                  </Button>
+                ) : modelPending ? (
+                  <Button size="sm" variant="outline" disabled>
+                    <LoaderCircle className="size-3.5 animate-spin" /> Checking models…
+                  </Button>
+                ) : !hasReadyModel ? (
+                  <Link className={settingsLinkClass} to="/settings">
+                    Install {transcriptionLanguageLabel(language)} transcription model
+                  </Link>
+                ) : (
+                  <Button size="sm" disabled={transcriptionActive} onClick={startTranscript}>
+                    {transcriptionActive ? (
+                      <LoaderCircle className="size-3.5 animate-spin" />
+                    ) : (
+                      <RefreshCcw className="size-3.5" />
+                    )}
+                    {transcriptionActive
+                      ? transcriptionActionLabel(
+                          transcriptionProgress,
+                          transcriptStatus,
+                          transcriptionPending,
+                        )
+                      : `Retranscribe in ${transcriptionLanguageLabel(language)}`}
+                  </Button>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {!transcriptReady ? (
         <div className="rounded-xl border border-warning/25 bg-warning/[0.07] p-4">
           <div className="flex items-start gap-3">
             <Captions className="mt-0.5 size-5 shrink-0 text-warning" />
             <div className="min-w-0 flex-1">
-              <p className="text-sm font-semibold">Prepare a local transcript first</p>
-              <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                LectorBit transcribes this lecture on-device. The transcript unlocks cited
-                explanations, frame notes, chapter navigation, and review cards.
+              <p className="text-sm font-semibold">
+                {capability && !engineReady
+                  ? 'Local transcription engine unavailable'
+                  : 'Prepare a local transcript first'}
               </p>
+              <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                {capability && !engineReady
+                  ? capability.message
+                  : 'LectorBit transcribes this lecture on-device. The transcript unlocks cited explanations, frame notes, chapter navigation, and review cards.'}
+              </p>
+              {capability && !engineReady ? (
+                <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                  {analysisCapabilityHelp(capability.unavailable_reason)}
+                </p>
+              ) : null}
+
               <div className="mt-3 flex flex-wrap gap-2">
                 {transcriptError ? (
                   <Button size="sm" variant="outline" onClick={retryTranscript}>
                     <RefreshCcw className="size-3.5" /> Check transcript again
                   </Button>
+                ) : capabilityError ? (
+                  <Button size="sm" variant="outline" onClick={retryCapability}>
+                    <RefreshCcw className="size-3.5" /> Check local engine again
+                  </Button>
+                ) : capabilityPending || transcriptPending ? (
+                  <Button size="sm" variant="outline" disabled>
+                    <LoaderCircle className="size-3.5 animate-spin" /> Checking local setup…
+                  </Button>
+                ) : !engineReady ? (
+                  <>
+                    <Link className={settingsLinkClass} to="/settings">
+                      Open transcription settings
+                    </Link>
+                    <Button size="sm" variant="outline" onClick={retryCapability}>
+                      <RefreshCcw className="size-3.5" /> Check again
+                    </Button>
+                  </>
+                ) : !languageSupported ? (
+                  <Link className={settingsLinkClass} to="/settings">
+                    Set up {transcriptionLanguageLabel(language)} transcription
+                  </Link>
                 ) : modelError ? (
                   <Button size="sm" variant="outline" onClick={retryModels}>
                     <RefreshCcw className="size-3.5" /> Check models again
                   </Button>
-                ) : modelPending || transcriptPending ? (
+                ) : modelPending ? (
                   <Button size="sm" variant="outline" disabled>
-                    <LoaderCircle className="size-3.5 animate-spin" /> Checking local setup…
+                    <LoaderCircle className="size-3.5 animate-spin" /> Checking models…
                   </Button>
-                ) : hasReadyModel ? (
-                  <Button
-                    size="sm"
-                    disabled={transcriptionPending || transcriptActive}
-                    onClick={startTranscript}
-                  >
-                    {transcriptionPending || transcriptActive ? (
+                ) : !hasReadyModel ? (
+                  <Link className={settingsLinkClass} to="/settings">
+                    Install {transcriptionLanguageLabel(language)} transcription model
+                  </Link>
+                ) : (
+                  <Button size="sm" disabled={transcriptionActive} onClick={startTranscript}>
+                    {transcriptionActive ? (
                       <LoaderCircle className="size-3.5 animate-spin" />
                     ) : (
                       <Captions className="size-3.5" />
@@ -1709,10 +1923,6 @@ function LearningSetup({
                       transcriptionPending,
                     )}
                   </Button>
-                ) : (
-                  <Link className={settingsLinkClass} to="/settings">
-                    Install transcription model
-                  </Link>
                 )}
               </div>
             </div>
@@ -2079,9 +2289,17 @@ function isTranscriptActive(status?: string): boolean {
   return status === 'queued' || status === 'processing' || status === 'attention';
 }
 
+function isTranscriptionProgressActive(progress?: AnalysisProgress): boolean {
+  return (
+    progress !== undefined &&
+    ['queued', 'extracting', 'transcribing', 'indexing'].includes(progress.event)
+  );
+}
+
 function transcriptReadinessLabel(
   status: string | undefined,
   segmentCount: number,
+  language: string | null,
   pending: boolean,
   error: boolean,
 ): string {
@@ -2089,7 +2307,12 @@ function transcriptReadinessLabel(
   if (error) return 'Unavailable';
   switch (status) {
     case 'completed':
-      return segmentCount > 0 ? `${segmentCount} cited segments` : 'Ready';
+      return [
+        language ? transcriptionLanguageDisplay(language) : undefined,
+        segmentCount > 0 ? `${segmentCount} cited segments` : 'Ready',
+      ]
+        .filter(Boolean)
+        .join(' · ');
     case 'queued':
       return 'Queued locally';
     case 'processing':
@@ -2120,6 +2343,32 @@ function transcriptionActionLabel(
   return 'Transcribe this lecture';
 }
 
+function transcriptionLanguageLabel(language: TranscriptionLanguage): string {
+  return language === 'bn' ? 'Bangla' : 'English';
+}
+
+function transcriptionLanguageDisplay(language: string): string {
+  if (language === 'bn') return 'বাংলা (Bangla)';
+  if (language === 'en') return 'English';
+  return language.toUpperCase();
+}
+
+function analysisCapabilityHelp(reason: string | null): string {
+  switch (reason) {
+    case 'whisper_missing':
+    case 'whisper_not_configured':
+      return 'Install the Whisper transcription component. During development, configure LECTORBIT_WHISPER_PATH and restart LectorBit.';
+    case 'ffmpeg_missing':
+    case 'ffmpeg_not_configured':
+      return 'Install or configure FFmpeg, then restart LectorBit.';
+    case 'version_mismatch':
+    case 'unsupported_version':
+      return 'Install the supported Whisper engine version shown in Settings, then restart LectorBit.';
+    default:
+      return 'Open Settings for engine details, repair the local transcription components, then check again.';
+  }
+}
+
 function assertLearningReady(transcriptStatus?: string, cloudConfigured?: boolean) {
   if (transcriptStatus !== 'completed') {
     throw new Error('Finish the local transcript before using grounded study tools.');
@@ -2131,6 +2380,11 @@ function assertLearningReady(transcriptStatus?: string, cloudConfigured?: boolea
 
 function messageFrom(cause: unknown): string {
   return cause instanceof Error ? cause.message : 'Playback could not continue.';
+}
+
+function analysisErrorKind(cause: unknown): string | undefined {
+  if (typeof cause !== 'object' || cause === null || !('kind' in cause)) return undefined;
+  return typeof cause.kind === 'string' ? cause.kind : undefined;
 }
 
 function mediaErrorMessage(error: MediaError | null): string {

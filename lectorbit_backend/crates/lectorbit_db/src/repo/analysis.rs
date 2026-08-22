@@ -37,6 +37,14 @@ pub struct TranscriptSegmentInput {
     pub text: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TranscriptStateRow {
+    pub updated_at: String,
+    pub segment_count: u64,
+    pub language: String,
+    pub model_id: String,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct SearchRow {
     pub media_id: String,
@@ -223,20 +231,23 @@ impl Repo {
         Ok(transcript_id)
     }
 
-    pub async fn transcript_state(&self, media_id: &str) -> DbResult<Option<(String, u64)>> {
+    pub async fn transcript_state(&self, media_id: &str) -> DbResult<Option<TranscriptStateRow>> {
         let row = sqlx::query(
-            "SELECT t.created_at, COUNT(s.id) AS segment_count \
+            "SELECT t.created_at, t.language, t.model_id, COUNT(s.id) AS segment_count \
              FROM transcripts t JOIN transcript_segments s ON s.transcript_id = t.id \
-             WHERE t.media_id = ? AND t.superseded_at IS NULL GROUP BY t.id",
+             WHERE t.media_id = ? AND t.superseded_at IS NULL \
+             GROUP BY t.id ORDER BY t.created_at DESC, t.id DESC LIMIT 1",
         )
         .bind(media_id)
         .fetch_optional(&self.pool)
         .await?;
         row.map(|row| {
-            Ok((
-                row.try_get("created_at")?,
-                row.try_get::<i64, _>("segment_count")?.max(0) as u64,
-            ))
+            Ok(TranscriptStateRow {
+                updated_at: row.try_get("created_at")?,
+                segment_count: row.try_get::<i64, _>("segment_count")?.max(0) as u64,
+                language: row.try_get("language")?,
+                model_id: row.try_get("model_id")?,
+            })
         })
         .transpose()
     }
@@ -337,4 +348,66 @@ fn model_from_row(row: sqlx::sqlite::SqliteRow) -> DbResult<ModelInstallRow> {
 
 fn to_i64(value: u64) -> i64 {
     value.min(i64::MAX as u64) as i64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn transcript_state_includes_active_language_and_model() {
+        let db = crate::Db::open_in_memory().await.expect("database");
+        sqlx::query(
+            "INSERT INTO library_roots \
+             (id, display_name, canonical_path, registered_at, revoked_at) \
+             VALUES ('root', 'Lectures', 'C:/lectures', '2026-08-20T00:00:00Z', NULL)",
+        )
+        .execute(db.pool())
+        .await
+        .expect("root");
+        sqlx::query(
+            "INSERT INTO media_files \
+             (id, root_id, folder_id, path, size_bytes, mtime, discovered_at, display_name) \
+             VALUES ('media', 'root', NULL, 'C:/lectures/demo.mp4', 1, \
+                     '2026-08-20T00:00:00Z', '2026-08-20T00:00:00Z', 'demo.mp4')",
+        )
+        .execute(db.pool())
+        .await
+        .expect("media");
+        sqlx::query(
+            "INSERT INTO models \
+             (id, version, provider, source_url, expected_size_bytes, sha256, architecture, \
+              analyzer_compatibility, license) \
+             VALUES ('whisper-base', 'test', 'test', 'https://example.com/model', 1, \
+                     '0000000000000000000000000000000000000000000000000000000000000000', \
+                     'any', '1.9.2', 'MIT')",
+        )
+        .execute(db.pool())
+        .await
+        .expect("model");
+
+        let repo = Repo::new(db.pool().clone());
+        repo.save_transcript(
+            "media",
+            "whisper-base",
+            "1.9.2",
+            "bn",
+            &[TranscriptSegmentInput {
+                start_ms: 0,
+                end_ms: 1_000,
+                text: "মেশিন লার্নিং".into(),
+            }],
+        )
+        .await
+        .expect("save transcript");
+
+        let state = repo
+            .transcript_state("media")
+            .await
+            .expect("state")
+            .expect("active transcript");
+        assert_eq!(state.language, "bn");
+        assert_eq!(state.model_id, "whisper-base");
+        assert_eq!(state.segment_count, 1);
+    }
 }

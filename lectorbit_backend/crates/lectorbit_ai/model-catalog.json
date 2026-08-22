@@ -1,7 +1,18 @@
 {
   "schema_version": 1,
-  "catalog_version": "2026-08-12",
+  "catalog_version": "2026-08-20",
   "models": [
+    {
+      "id": "whisper-base",
+      "version": "openai-whisper-base@80da2d8",
+      "provider": "ggerganov/whisper.cpp",
+      "source_url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/80da2d8bfee42b0e836fc3a9890373e5defc00a6/ggml-base.bin",
+      "expected_size_bytes": 147951465,
+      "sha256": "60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe",
+      "architecture": "any",
+      "analyzer_compatibility": "1.9.2",
+      "license": "MIT model conversion; upstream OpenAI model terms apply"
+    },
     {
       "id": "whisper-base.en",
       "version": "openai-whisper-base.en@80da2d8",

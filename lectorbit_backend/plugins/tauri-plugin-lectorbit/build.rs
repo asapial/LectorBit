@@ -30,6 +30,7 @@ const COMMANDS: &[&str] = &[
     "models_list",
     "models_install",
     "models_remove",
+    "analysis_get_capability",
     "analysis_start_transcription",
     "analysis_get_transcript_state",
     "analysis_list_jobs",

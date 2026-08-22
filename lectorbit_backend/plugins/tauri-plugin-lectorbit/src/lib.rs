@@ -477,6 +477,7 @@ pub trait PlaybackOps: Send + Sync + 'static {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ModelDto {
     pub id: String,
+    pub display_name: String,
     pub version: String,
     pub provider: String,
     pub expected_size_bytes: u64,
@@ -487,6 +488,17 @@ pub struct ModelDto {
     pub bytes_downloaded: u64,
     pub verified_at: Option<String>,
     pub last_error: Option<String>,
+    pub supported_languages: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AnalysisCapabilityDto {
+    pub available: bool,
+    pub engine: String,
+    pub expected_version: String,
+    pub unavailable_reason: Option<String>,
+    pub message: String,
+    pub supported_languages: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -506,6 +518,8 @@ pub struct TranscriptStateDto {
     pub status: String,
     pub segment_count: u64,
     pub updated_at: Option<String>,
+    pub language: Option<String>,
+    pub model_id: Option<String>,
     pub job: Option<AnalysisJobDto>,
 }
 
@@ -729,6 +743,7 @@ pub struct SearchHitDto {
 pub type AnalysisEventSink = Arc<dyn Fn(AnalysisProgressDto) + Send + Sync>;
 
 pub trait AnalysisOps: Send + Sync + 'static {
+    fn capability(&self) -> BoxFuture<'_, Result<AnalysisCapabilityDto, AnalysisErrorCode>>;
     fn list_models(&self) -> BoxFuture<'_, Result<Vec<ModelDto>, AnalysisErrorCode>>;
     fn install_model(
         &self,
@@ -740,6 +755,7 @@ pub trait AnalysisOps: Send + Sync + 'static {
         &self,
         media_id: String,
         model_id: String,
+        language: String,
         sink: AnalysisEventSink,
     ) -> BoxFuture<'_, Result<AnalysisJobDto, AnalysisErrorCode>>;
     fn transcript_state(
@@ -914,6 +930,8 @@ pub enum AnalysisErrorKind {
     InvalidInput,
     ModelNotFound,
     ModelNotReady,
+    LanguageNotSupported,
+    TranscriptionBusy,
     MediaUnavailable,
     SidecarUnavailable,
     Database,
@@ -1124,6 +1142,8 @@ pub struct ModelArgs {
 pub struct TranscriptionArgs {
     pub media_id: String,
     pub model_id: String,
+    #[serde(default = "default_transcription_language")]
+    pub language: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1206,6 +1226,14 @@ fn default_routine_days() -> u32 {
 
 fn default_search_limit() -> u32 {
     30
+}
+
+fn default_transcription_language() -> String {
+    "en".into()
+}
+
+fn default_due_review_limit() -> u32 {
+    50
 }
 
 mod commands {
@@ -1471,6 +1499,13 @@ mod commands {
     }
 
     #[tauri::command]
+    pub(crate) async fn analysis_get_capability(
+        ops: State<'_, Arc<dyn AnalysisOps>>,
+    ) -> Result<AnalysisCapabilityDto, AnalysisErrorCode> {
+        ops.capability().await
+    }
+
+    #[tauri::command]
     pub(crate) async fn analysis_start_transcription(
         ops: State<'_, Arc<dyn AnalysisOps>>,
         args: TranscriptionArgs,
@@ -1479,7 +1514,7 @@ mod commands {
         let sink: AnalysisEventSink = Arc::new(move |event| {
             let _ = on_event.send(event);
         });
-        ops.start_transcription(args.media_id, args.model_id, sink)
+        ops.start_transcription(args.media_id, args.model_id, args.language, sink)
             .await
     }
 
@@ -1653,6 +1688,7 @@ mod plugin_builder {
                 super::commands::models_list,
                 super::commands::models_install,
                 super::commands::models_remove,
+                super::commands::analysis_get_capability,
                 super::commands::analysis_start_transcription,
                 super::commands::analysis_get_transcript_state,
                 super::commands::analysis_list_jobs,
@@ -1721,6 +1757,38 @@ mod tests {
         assert_eq!(value["event"], "downloading");
         assert_eq!(value["data"]["jobId"], "job");
         assert_eq!(value["data"]["downloadedBytes"], 10);
+    }
+
+    #[test]
+    fn analysis_capability_uses_safe_wire_fields() {
+        let value = serde_json::to_value(AnalysisCapabilityDto {
+            available: false,
+            engine: "whisper.cpp".into(),
+            expected_version: "1.9.2".into(),
+            unavailable_reason: Some("whisper_missing".into()),
+            message: "Install the local transcription engine.".into(),
+            supported_languages: vec!["en".into(), "bn".into()],
+        })
+        .expect("serialize capability");
+        assert_eq!(value["available"], false);
+        assert_eq!(value["supported_languages"][1], "bn");
+        assert!(value.get("path").is_none());
+    }
+
+    #[test]
+    fn transcript_state_exposes_the_active_language_and_model() {
+        let value = serde_json::to_value(TranscriptStateDto {
+            media_id: "media".into(),
+            status: "completed".into(),
+            segment_count: 4,
+            updated_at: Some("2026-08-20T00:00:00Z".into()),
+            language: Some("bn".into()),
+            model_id: Some("whisper-base".into()),
+            job: None,
+        })
+        .expect("serialize transcript state");
+        assert_eq!(value["language"], "bn");
+        assert_eq!(value["model_id"], "whisper-base");
     }
 
     #[test]
