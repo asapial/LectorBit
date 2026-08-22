@@ -189,6 +189,8 @@ struct ProbeDocument {
 struct RawFormat {
     format_name: Option<String>,
     duration: Option<String>,
+    #[serde(default)]
+    tags: RawTags,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -211,6 +213,8 @@ struct RawStream {
 #[derive(Debug, Deserialize, Default)]
 struct RawTags {
     language: Option<String>,
+    #[serde(alias = "DURATION")]
+    duration: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -233,7 +237,11 @@ pub fn parse_probe_json(json: &[u8]) -> Result<ProbeMetadata, ProbeError> {
 
     for (fallback_index, raw) in document.streams.into_iter().enumerate() {
         let kind = raw.codec_type.unwrap_or_else(|| "data".into());
-        let duration_ms = raw.duration.as_deref().and_then(parse_seconds_ms);
+        let duration_ms = raw
+            .duration
+            .as_deref()
+            .and_then(parse_duration_ms)
+            .or_else(|| raw.tags.duration.as_deref().and_then(parse_duration_ms));
         stream_duration = stream_duration.max(duration_ms);
         if kind == "video" && video_codec.is_none() {
             video_codec = raw.codec_name.clone();
@@ -271,8 +279,13 @@ pub fn parse_probe_json(json: &[u8]) -> Result<ProbeMetadata, ProbeError> {
     let duration_ms = document
         .format
         .as_ref()
-        .and_then(|format| format.duration.as_deref())
-        .and_then(parse_seconds_ms)
+        .and_then(|format| {
+            format
+                .duration
+                .as_deref()
+                .and_then(parse_duration_ms)
+                .or_else(|| format.tags.duration.as_deref().and_then(parse_duration_ms))
+        })
         .or(stream_duration)
         .filter(|duration| *duration > 0)
         .ok_or(ProbeError::MissingDuration)?;
@@ -295,12 +308,34 @@ pub fn parse_probe_json(json: &[u8]) -> Result<ProbeMetadata, ProbeError> {
     })
 }
 
-fn parse_seconds_ms(value: &str) -> Option<u64> {
+fn parse_duration_ms(value: &str) -> Option<u64> {
+    if value.contains(':') {
+        return parse_clock_duration_ms(value);
+    }
     let seconds = value.parse::<f64>().ok()?;
     if !seconds.is_finite() || seconds < 0.0 {
         return None;
     }
     let milliseconds = seconds * 1_000.0;
+    if milliseconds > u64::MAX as f64 {
+        return None;
+    }
+    Some(milliseconds.round() as u64)
+}
+
+fn parse_clock_duration_ms(value: &str) -> Option<u64> {
+    let mut parts = value.split(':');
+    let hours = parts.next()?.parse::<u64>().ok()?;
+    let minutes = parts.next()?.parse::<u64>().ok()?;
+    let seconds = parts.next()?.parse::<f64>().ok()?;
+    if parts.next().is_some()
+        || minutes >= 60
+        || !seconds.is_finite()
+        || !(0.0..60.0).contains(&seconds)
+    {
+        return None;
+    }
+    let milliseconds = ((hours as f64 * 3_600.0) + (minutes as f64 * 60.0) + seconds) * 1_000.0;
     if milliseconds > u64::MAX as f64 {
         return None;
     }
@@ -341,6 +376,21 @@ mod tests {
     fn stream_duration_is_a_safe_fallback() {
         let json = br#"{"streams":[{"index":0,"codec_type":"audio","duration":"1.234"}]}"#;
         assert_eq!(parse_probe_json(json).expect("metadata").duration_ms, 1_234);
+    }
+
+    #[test]
+    fn parses_ffprobe_duration_tags_used_by_some_mp4_and_matroska_files() {
+        let json = br#"{
+          "streams":[
+            {"codec_type":"video","codec_name":"h264","width":1280,"height":720,
+             "tags":{"DURATION":"00:01:05.432000000"}}
+          ],
+          "format":{"format_name":"matroska,webm"}
+        }"#;
+        let metadata = parse_probe_json(json).expect("tag duration");
+        assert_eq!(metadata.duration_ms, 65_432);
+        assert_eq!(metadata.video_codec.as_deref(), Some("h264"));
+        assert_eq!((metadata.width, metadata.height), (Some(1280), Some(720)));
     }
 
     #[test]

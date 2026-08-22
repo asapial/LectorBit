@@ -95,6 +95,10 @@ impl MediaService {
             return Ok(ProbeEnqueue { job, is_new: false });
         }
         let job = jobs::enqueue(self.repo.pool(), "probe", &payload).await?;
+        // Renderer queries poll queued/probing rows. Updating the media state
+        // here makes startup recovery and explicit rescans visible immediately
+        // instead of leaving a stale unavailable row in the UI until reload.
+        self.repo.mark_probe_queued(&candidate.media_id).await?;
         Ok(ProbeEnqueue { job, is_new: true })
     }
 

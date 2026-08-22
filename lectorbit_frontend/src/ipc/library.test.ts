@@ -138,6 +138,36 @@ describe('ipc/library', () => {
     });
   });
 
+  it('normalizes numeric bridge values and absent optional metadata fields', async () => {
+    vi.mocked(invoke).mockResolvedValueOnce({
+      items: [
+        {
+          ...mediaPage.items[0],
+          size_bytes: '2048',
+          duration_ms: '90500',
+          width: '1920',
+          height: '1080',
+          audio_streams: undefined,
+          subtitle_streams: undefined,
+          probe_error: undefined,
+        },
+      ],
+      next_cursor: null,
+    });
+
+    const page = await listMedia({ rootId: 'root-1' });
+
+    expect(page.items[0]).toMatchObject({
+      size_bytes: 2048,
+      duration_ms: 90500,
+      width: 1920,
+      height: 1080,
+      audio_streams: 0,
+      subtitle_streams: 0,
+      probe_error: null,
+    });
+  });
+
   it('scopes media pagination to one folder module', async () => {
     await listMedia({ rootId: 'root-1', cursor: 'opaque-next', limit: 20 });
 

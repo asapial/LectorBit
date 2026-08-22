@@ -1,6 +1,21 @@
 import { Channel, invoke } from '@tauri-apps/api/core';
 import { z } from 'zod';
 
+const NonnegativeIntegerSchema = z.preprocess(
+  (value) => (typeof value === 'string' && /^\d+$/.test(value.trim()) ? Number(value) : value),
+  z.number().int().nonnegative(),
+);
+
+const NullableNonnegativeIntegerSchema = z.preprocess(
+  (value) => (value === undefined ? null : value),
+  NonnegativeIntegerSchema.nullable(),
+);
+
+const NullableStringSchema = z.preprocess(
+  (value) => (value === undefined ? null : value),
+  z.string().nullable(),
+);
+
 const LibraryRootSchema = z.object({
   id: z.string().min(1),
   display_name: z.string().min(1),
@@ -70,26 +85,26 @@ const MediaListItemSchema = z.object({
   display_name: z.string().min(1),
   path_redacted: z.string().min(1),
   media_kind: z.enum(['video', 'audio']),
-  size_bytes: z.number().int().nonnegative(),
-  duration_ms: z.number().int().nonnegative().nullable(),
-  container: z.string().nullable(),
-  video_codec: z.string().nullable(),
-  audio_codec: z.string().nullable(),
-  width: z.number().int().nonnegative().nullable(),
-  height: z.number().int().nonnegative().nullable(),
-  audio_streams: z.number().int().nonnegative(),
-  subtitle_streams: z.number().int().nonnegative(),
+  size_bytes: NonnegativeIntegerSchema,
+  duration_ms: NullableNonnegativeIntegerSchema,
+  container: NullableStringSchema,
+  video_codec: NullableStringSchema,
+  audio_codec: NullableStringSchema,
+  width: NullableNonnegativeIntegerSchema,
+  height: NullableNonnegativeIntegerSchema,
+  audio_streams: NonnegativeIntegerSchema.optional().default(0),
+  subtitle_streams: NonnegativeIntegerSchema.optional().default(0),
   probe_status: z.enum(['queued', 'probing', 'ready', 'failed', 'unavailable', 'missing']),
-  probe_error: z.string().nullable(),
+  probe_error: NullableStringSchema,
   discovered_at: z.string().min(1),
 });
 
 const MediaSummarySchema = z.object({
-  total_items: z.number().int().nonnegative(),
-  ready_items: z.number().int().nonnegative(),
-  attention_items: z.number().int().nonnegative(),
-  known_duration_ms: z.number().int().nonnegative(),
-  duration_known_items: z.number().int().nonnegative(),
+  total_items: NonnegativeIntegerSchema,
+  ready_items: NonnegativeIntegerSchema,
+  attention_items: NonnegativeIntegerSchema,
+  known_duration_ms: NonnegativeIntegerSchema,
+  duration_known_items: NonnegativeIntegerSchema,
 });
 
 const MediaPageSchema = z.object({

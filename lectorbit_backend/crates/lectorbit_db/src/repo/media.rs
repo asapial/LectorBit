@@ -287,6 +287,19 @@ impl Repo {
         Ok(())
     }
 
+    pub async fn mark_probe_queued(&self, media_id: &str) -> DbResult<()> {
+        let result = sqlx::query(
+            "UPDATE media_files SET probe_status = 'queued', probe_error = NULL WHERE id = ?",
+        )
+        .bind(media_id)
+        .execute(&self.pool)
+        .await?;
+        if result.rows_affected() == 0 {
+            return Err(DbError::Pool("media row not found".into()));
+        }
+        Ok(())
+    }
+
     pub async fn save_probe_success(
         &self,
         media_id: &str,
@@ -621,6 +634,37 @@ mod tests {
         assert_eq!(chunks.len(), 1);
         assert_eq!(chunks[0].start_ms, 0);
         assert_eq!(chunks[0].end_ms, 90_500);
+        db.close().await;
+    }
+
+    #[tokio::test]
+    async fn requeued_probe_is_visible_to_renderer_polling() {
+        let (db, repo, root_id) = fixture().await;
+        let candidate = repo
+            .reconcile_discovery(&root_id, &[discovered("lesson.mp4")], true)
+            .await
+            .expect("discover")
+            .remove(0);
+        repo.save_probe_failure(
+            &candidate.media_id,
+            "unavailable",
+            "Media inspection is unavailable.",
+            "8.1.2",
+        )
+        .await
+        .expect("failure");
+
+        repo.mark_probe_queued(&candidate.media_id)
+            .await
+            .expect("requeue");
+        let item = repo
+            .list_page(Some(&root_id), None, 10)
+            .await
+            .expect("page")
+            .items
+            .remove(0);
+        assert_eq!(item.probe_status, "queued");
+        assert_eq!(item.probe_error, None);
         db.close().await;
     }
 
