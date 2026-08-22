@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => ({
   cloudStatus: vi.fn(),
   analysisCapability: vi.fn(),
   models: vi.fn(),
+  installModel: vi.fn(),
   transcriptState: vi.fn(),
   transcribe: vi.fn(),
   getLecture: vi.fn(),
@@ -52,6 +53,7 @@ vi.mock('../../ipc/planner', () => ({
 vi.mock('../../ipc/analysis', () => ({
   getAnalysisCapability: mocks.analysisCapability,
   listModels: mocks.models,
+  installModel: mocks.installModel,
   getTranscriptState: mocks.transcriptState,
   startTranscription: mocks.transcribe,
 }));
@@ -227,6 +229,15 @@ describe('PlayerRoute', () => {
     mocks.transcribe.mockResolvedValue({
       id: 'transcription-job',
       kind: 'transcribe',
+      status: 'queued',
+      attempt: 0,
+      last_error: null,
+      created_at: '2026-08-14T00:00:00Z',
+      updated_at: '2026-08-14T00:00:00Z',
+    });
+    mocks.installModel.mockResolvedValue({
+      id: 'model-job',
+      kind: 'model_download',
       status: 'queued',
       attempt: 0,
       last_error: null,
@@ -603,7 +614,7 @@ describe('PlayerRoute', () => {
     expect(screen.getByRole('button', { name: 'Analyze this lecture' })).toBeEnabled();
   });
 
-  it('points to model setup when local transcription is not installed', async () => {
+  it('installs the bilingual model inline and enables Bangla transcription', async () => {
     mocks.transcriptState.mockResolvedValue({
       media_id: 'media-1',
       status: 'not_started',
@@ -611,13 +622,128 @@ describe('PlayerRoute', () => {
       updated_at: null,
       job: null,
     });
-    mocks.models.mockResolvedValue([]);
+    let modelReady = false;
+    let emitInstallProgress: ((event: AnalysisProgress) => void) | undefined;
+    mocks.models.mockImplementation(() =>
+      Promise.resolve([
+        {
+          id: 'whisper-base',
+          display_name: 'Whisper Base Multilingual',
+          version: '1',
+          provider: 'local',
+          expected_size_bytes: 100,
+          architecture: 'whisper',
+          analyzer_compatibility: '1.9.2',
+          license: 'MIT',
+          state: modelReady ? 'ready' : 'available',
+          bytes_downloaded: modelReady ? 100 : 0,
+          verified_at: modelReady ? '2026-08-14T00:00:00Z' : null,
+          last_error: null,
+          supported_languages: ['en', 'bn'],
+        },
+      ]),
+    );
+    mocks.installModel.mockImplementation(
+      (_modelId: string, onEvent: (event: AnalysisProgress) => void) => {
+        emitInstallProgress = onEvent;
+        onEvent({ event: 'queued', data: { jobId: 'model-job' } });
+        return Promise.resolve({
+          id: 'model-job',
+          kind: 'model_download',
+          status: 'queued',
+          attempt: 0,
+          last_error: null,
+          created_at: '2026-08-14T00:00:00Z',
+          updated_at: '2026-08-14T00:00:00Z',
+        });
+      },
+    );
     renderRoute();
     await screen.findByRole('heading', { name: 'Graph theory' });
     fireEvent.click(screen.getByRole('button', { name: 'Open tools' }));
+    fireEvent.click(await screen.findByRole('radio', { name: 'বাংলা (Bangla)' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Install Bangla + English model' }));
+
+    await waitFor(() =>
+      expect(mocks.installModel).toHaveBeenCalledWith('whisper-base', expect.any(Function)),
+    );
+    act(() => {
+      emitInstallProgress?.({
+        event: 'downloading',
+        data: { jobId: 'model-job', downloadedBytes: 50, totalBytes: 100 },
+      });
+    });
     expect(
-      await screen.findByRole('link', { name: 'Install English transcription model' }),
-    ).toHaveAttribute('href', '/settings');
+      screen.getByRole('progressbar', { name: 'Transcription model download' }),
+    ).toHaveAttribute('aria-valuenow', '50');
+
+    modelReady = true;
+    act(() => {
+      emitInstallProgress?.({ event: 'completed', data: { jobId: 'model-job' } });
+    });
+    fireEvent.click(await screen.findByRole('button', { name: 'Transcribe this lecture' }));
+    await waitFor(() =>
+      expect(mocks.transcribe).toHaveBeenCalledWith(
+        'media-1',
+        'whisper-base',
+        'bn',
+        expect.any(Function),
+      ),
+    );
+  });
+
+  it('surfaces an inline model download failure and allows retry', async () => {
+    mocks.transcriptState.mockResolvedValue({
+      media_id: 'media-1',
+      status: 'not_started',
+      segment_count: 0,
+      updated_at: null,
+      job: null,
+    });
+    mocks.models.mockResolvedValue([
+      {
+        id: 'whisper-base',
+        display_name: 'Whisper Base Multilingual',
+        version: '1',
+        provider: 'local',
+        expected_size_bytes: 100,
+        architecture: 'whisper',
+        analyzer_compatibility: '1.9.2',
+        license: 'MIT',
+        state: 'available',
+        bytes_downloaded: 0,
+        verified_at: null,
+        last_error: null,
+        supported_languages: ['en', 'bn'],
+      },
+    ]);
+    mocks.installModel.mockImplementation(
+      (_modelId: string, onEvent: (event: AnalysisProgress) => void) => {
+        onEvent({ event: 'queued', data: { jobId: 'model-job' } });
+        onEvent({
+          event: 'failed',
+          data: { jobId: 'model-job', message: 'The verified model download was interrupted.' },
+        });
+        return Promise.resolve({
+          id: 'model-job',
+          kind: 'model_download',
+          status: 'queued',
+          attempt: 0,
+          last_error: null,
+          created_at: '2026-08-14T00:00:00Z',
+          updated_at: '2026-08-14T00:00:00Z',
+        });
+      },
+    );
+    renderRoute();
+    await screen.findByRole('heading', { name: 'Graph theory' });
+    fireEvent.click(screen.getByRole('button', { name: 'Open tools' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Install Bangla + English model' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'The verified model download was interrupted.',
+    );
+    expect(screen.getByRole('button', { name: 'Retry Bangla + English model' })).toBeEnabled();
   });
 
   it('blocks cloud learning actions until OpenRouter is configured', async () => {

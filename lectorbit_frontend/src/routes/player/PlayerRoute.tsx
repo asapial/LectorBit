@@ -8,6 +8,7 @@ import CheckCircle2 from 'lucide-react/dist/esm/icons/circle-check-big';
 import Captions from 'lucide-react/dist/esm/icons/captions';
 import Clock3 from 'lucide-react/dist/esm/icons/clock-3';
 import ChevronDown from 'lucide-react/dist/esm/icons/chevron-down';
+import Download from 'lucide-react/dist/esm/icons/download';
 import FastForward from 'lucide-react/dist/esm/icons/fast-forward';
 import Flag from 'lucide-react/dist/esm/icons/flag';
 import Keyboard from 'lucide-react/dist/esm/icons/keyboard';
@@ -54,10 +55,12 @@ import { getCloudPlanningStatus, replanActive } from '../../ipc/planner';
 import {
   getAnalysisCapability,
   getTranscriptState,
+  installModel,
   listModels,
   startTranscription,
   type AnalysisCapability,
   type AnalysisProgress,
+  type LocalModel,
   type TranscriptionLanguage,
 } from '../../ipc/analysis';
 import {
@@ -113,6 +116,8 @@ export function PlayerRoute() {
   const [learningStatus, setLearningStatus] = useState<string>();
   const [learningError, setLearningError] = useState<string>();
   const [transcriptionLanguage, setTranscriptionLanguage] = useState<TranscriptionLanguage>('en');
+  const [modelInstallProgress, setModelInstallProgress] = useState<AnalysisProgress>();
+  const [modelInstallTargetId, setModelInstallTargetId] = useState<string>();
   const [lectureJobActive, setLectureJobActive] = useState(false);
   const [transcriptionProgress, setTranscriptionProgress] = useState<AnalysisProgress>();
   const [revealedStudyItem, setRevealedStudyItem] = useState<string>();
@@ -195,14 +200,23 @@ export function PlayerRoute() {
     queryKey: ['analysis', 'models'] as const,
     queryFn: listModels,
     staleTime: 5_000,
+    refetchInterval: (query) =>
+      query.state.data?.some((model) => model.state === 'downloading') ? 1_500 : false,
   });
   const analysisCapabilityQuery = useQuery({
     queryKey: ['analysis', 'capability'] as const,
     queryFn: getAnalysisCapability,
     staleTime: 5_000,
   });
-  const readyTranscriptionModel = analysisModelsQuery.data?.find(
-    (model) => model.state === 'ready' && model.supported_languages.includes(transcriptionLanguage),
+  const readyTranscriptionModel = selectTranscriptionModel(
+    analysisModelsQuery.data,
+    transcriptionLanguage,
+    'ready',
+  );
+  const installableTranscriptionModel = selectTranscriptionModel(
+    analysisModelsQuery.data,
+    transcriptionLanguage,
+    'installable',
   );
   const transcriptQuery = useQuery({
     queryKey: ['analysis', 'transcript', view?.media_id] as const,
@@ -237,6 +251,36 @@ export function PlayerRoute() {
     queryKey: ['learning', 'study-materials', view?.media_id] as const,
     queryFn: () => listStudyMaterials(view!.media_id),
     enabled: Boolean(view?.media_id),
+  });
+  const installTranscriptionModel = useMutation({
+    mutationFn: async (model: LocalModel) => {
+      setLearningError(undefined);
+      setLearningStatus(undefined);
+      setModelInstallTargetId(model.id);
+      setModelInstallProgress(undefined);
+      return installModel(model.id, (event) => {
+        setModelInstallProgress(event);
+        if (event.event === 'completed') {
+          setLearningError(undefined);
+          setLearningStatus(`${model.display_name} is verified and ready for local transcription.`);
+          void analysisModelsQuery.refetch();
+        }
+        if (event.event === 'failed') {
+          setLearningStatus(undefined);
+          setLearningError(event.data.message);
+          void analysisModelsQuery.refetch();
+        }
+      });
+    },
+    onSuccess: () => {
+      void analysisModelsQuery.refetch();
+    },
+    onError: (cause) => {
+      setModelInstallProgress(undefined);
+      setLearningStatus(undefined);
+      setLearningError(messageFrom(cause));
+      void analysisModelsQuery.refetch();
+    },
   });
   const transcribeLecture = useMutation({
     mutationFn: async () => {
@@ -1206,6 +1250,21 @@ export function PlayerRoute() {
                     modelPending={analysisModelsQuery.isPending}
                     modelError={analysisModelsQuery.isError}
                     hasReadyModel={Boolean(readyTranscriptionModel)}
+                    installableModel={installableTranscriptionModel}
+                    modelInstallProgress={
+                      modelInstallTargetId === installableTranscriptionModel?.id
+                        ? modelInstallProgress
+                        : undefined
+                    }
+                    modelInstallPending={
+                      installTranscriptionModel.isPending &&
+                      installTranscriptionModel.variables?.id === installableTranscriptionModel?.id
+                    }
+                    installSelectedModel={() => {
+                      if (installableTranscriptionModel) {
+                        installTranscriptionModel.mutate(installableTranscriptionModel);
+                      }
+                    }}
                     retryModels={() => void analysisModelsQuery.refetch()}
                     language={transcriptionLanguage}
                     setLanguage={setTranscriptionLanguage}
@@ -1646,6 +1705,10 @@ function LearningSetup({
   modelPending,
   modelError,
   hasReadyModel,
+  installableModel,
+  modelInstallProgress,
+  modelInstallPending,
+  installSelectedModel,
   retryModels,
   language,
   setLanguage,
@@ -1672,6 +1735,10 @@ function LearningSetup({
   modelPending: boolean;
   modelError: boolean;
   hasReadyModel: boolean;
+  installableModel?: LocalModel;
+  modelInstallProgress?: AnalysisProgress;
+  modelInstallPending: boolean;
+  installSelectedModel: () => void;
   retryModels: () => void;
   language: TranscriptionLanguage;
   setLanguage: (language: TranscriptionLanguage) => void;
@@ -1692,6 +1759,11 @@ function LearningSetup({
     transcriptionPending ||
     transcriptActive ||
     isTranscriptionProgressActive(transcriptionProgress);
+  const modelInstallActive =
+    modelInstallPending ||
+    installableModel?.state === 'downloading' ||
+    isModelInstallProgressActive(modelInstallProgress);
+  const localSetupActive = transcriptionActive || modelInstallActive;
   return (
     <section className="space-y-3" aria-labelledby="toolkit-readiness-heading">
       <div>
@@ -1753,7 +1825,7 @@ function LearningSetup({
 
       <fieldset
         className="rounded-xl border border-border/70 bg-background/60 p-4"
-        disabled={transcriptionActive}
+        disabled={localSetupActive}
       >
         <legend className="px-1 text-xs font-semibold">Transcript language</legend>
         <p className="text-xs leading-5 text-muted-foreground">
@@ -1768,7 +1840,7 @@ function LearningSetup({
               className={cn(
                 'flex cursor-pointer items-center gap-2 rounded-lg border bg-background px-3 py-2 text-xs font-medium',
                 language === option && 'border-primary bg-primary/[0.06] text-primary',
-                transcriptionActive && 'cursor-not-allowed opacity-60',
+                localSetupActive && 'cursor-not-allowed opacity-60',
               )}
             >
               <input
@@ -1825,9 +1897,16 @@ function LearningSetup({
                   <Button size="sm" variant="outline" disabled>
                     <LoaderCircle className="size-3.5 animate-spin" /> Checking models…
                   </Button>
+                ) : !hasReadyModel && installableModel ? (
+                  <ModelInstallControl
+                    model={installableModel}
+                    progress={modelInstallProgress}
+                    pending={modelInstallPending}
+                    onInstall={installSelectedModel}
+                  />
                 ) : !hasReadyModel ? (
                   <Link className={settingsLinkClass} to="/settings">
-                    Install {transcriptionLanguageLabel(language)} transcription model
+                    Review {transcriptionLanguageLabel(language)} transcription models
                   </Link>
                 ) : (
                   <Button size="sm" disabled={transcriptionActive} onClick={startTranscript}>
@@ -1906,9 +1985,16 @@ function LearningSetup({
                   <Button size="sm" variant="outline" disabled>
                     <LoaderCircle className="size-3.5 animate-spin" /> Checking models…
                   </Button>
+                ) : !hasReadyModel && installableModel ? (
+                  <ModelInstallControl
+                    model={installableModel}
+                    progress={modelInstallProgress}
+                    pending={modelInstallPending}
+                    onInstall={installSelectedModel}
+                  />
                 ) : !hasReadyModel ? (
                   <Link className={settingsLinkClass} to="/settings">
-                    Install {transcriptionLanguageLabel(language)} transcription model
+                    Review {transcriptionLanguageLabel(language)} transcription models
                   </Link>
                 ) : (
                   <Button size="sm" disabled={transcriptionActive} onClick={startTranscript}>
@@ -1952,6 +2038,53 @@ function LearningSetup({
         </div>
       ) : null}
     </section>
+  );
+}
+
+function ModelInstallControl({
+  model,
+  progress,
+  pending,
+  onInstall,
+}: {
+  model: LocalModel;
+  progress?: AnalysisProgress;
+  pending: boolean;
+  onInstall: () => void;
+}) {
+  const active = pending || model.state === 'downloading' || isModelInstallProgressActive(progress);
+  const percentage = modelInstallPercentage(model, progress);
+  const coverage = modelCoverageLabel(model);
+  const failed = model.state === 'failed' || progress?.event === 'failed';
+  return (
+    <div className="min-w-[15rem] space-y-2">
+      <Button size="sm" disabled={active} onClick={onInstall}>
+        {active ? (
+          <LoaderCircle className="size-3.5 animate-spin" />
+        ) : (
+          <Download className="size-3.5" />
+        )}
+        {active ? `Installing ${coverage}…` : failed ? `Retry ${coverage}` : `Install ${coverage}`}
+      </Button>
+      <p className="text-xs leading-5 text-muted-foreground" aria-live="polite">
+        {modelInstallStatus(model, progress, percentage)}
+      </p>
+      {percentage !== undefined && active ? (
+        <div
+          className="h-1.5 overflow-hidden rounded-full bg-muted"
+          role="progressbar"
+          aria-label="Transcription model download"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={percentage}
+        >
+          <div
+            className="h-full rounded-full bg-primary transition-[width] duration-200 motion-reduce:transition-none"
+            style={{ width: `${percentage}%` }}
+          />
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -2294,6 +2427,70 @@ function isTranscriptionProgressActive(progress?: AnalysisProgress): boolean {
     progress !== undefined &&
     ['queued', 'extracting', 'transcribing', 'indexing'].includes(progress.event)
   );
+}
+
+function isModelInstallProgressActive(progress?: AnalysisProgress): boolean {
+  return progress !== undefined && ['queued', 'downloading'].includes(progress.event);
+}
+
+function selectTranscriptionModel(
+  models: LocalModel[] | undefined,
+  language: TranscriptionLanguage,
+  state: 'ready' | 'installable',
+): LocalModel | undefined {
+  return models
+    ?.filter(
+      (model) =>
+        model.supported_languages.includes(language) &&
+        (state === 'ready' ? model.state === 'ready' : model.state !== 'ready'),
+    )
+    .sort((left, right) => {
+      const coverageDifference = right.supported_languages.length - left.supported_languages.length;
+      if (coverageDifference !== 0) return coverageDifference;
+      if (left.state === 'downloading' && right.state !== 'downloading') return -1;
+      if (right.state === 'downloading' && left.state !== 'downloading') return 1;
+      return left.id.localeCompare(right.id);
+    })[0];
+}
+
+function modelInstallPercentage(
+  model: LocalModel,
+  progress: AnalysisProgress | undefined,
+): number | undefined {
+  if (progress?.event === 'downloading') {
+    return Math.min(
+      100,
+      Math.round((progress.data.downloadedBytes / progress.data.totalBytes) * 100),
+    );
+  }
+  if (model.state === 'downloading' && model.expected_size_bytes > 0) {
+    return Math.min(100, Math.round((model.bytes_downloaded / model.expected_size_bytes) * 100));
+  }
+  return undefined;
+}
+
+function modelCoverageLabel(model: LocalModel): string {
+  const supportsEnglish = model.supported_languages.includes('en');
+  const supportsBangla = model.supported_languages.includes('bn');
+  if (supportsEnglish && supportsBangla) return 'Bangla + English model';
+  if (supportsBangla) return 'Bangla model';
+  return 'English model';
+}
+
+function modelInstallStatus(
+  model: LocalModel,
+  progress: AnalysisProgress | undefined,
+  percentage: number | undefined,
+): string {
+  if (progress?.event === 'failed') return progress.data.message;
+  if (model.state === 'failed') return model.last_error ?? 'The download did not complete.';
+  if (progress?.event === 'completed') return `${model.display_name} is verified and ready.`;
+  if (progress?.event === 'queued')
+    return `${model.display_name} is waiting for the download worker.`;
+  if (progress?.event === 'downloading' || model.state === 'downloading') {
+    return `${model.display_name} is downloading${percentage === undefined ? '' : ` · ${percentage}%`}.`;
+  }
+  return `${model.display_name} is downloaded once, verified, and kept on this device.`;
 }
 
 function transcriptReadinessLabel(
