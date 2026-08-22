@@ -139,19 +139,26 @@ pub fn run() {
                 std::env::var_os("LECTORBIT_FFPROBE_PATH"),
             );
             let resource_dir = app.path().resource_dir().ok();
-            let whisper_path = resolve_whisper_path(
-                resource_dir.as_deref(),
-                std::env::var_os("LECTORBIT_WHISPER_PATH"),
-            );
             let ffmpeg_path = resolve_ffmpeg_path(
                 resource_dir.as_deref(),
                 std::env::var_os("LECTORBIT_FFMPEG_PATH"),
             );
+            let analysis_resource_dir = resource_dir.clone();
             let analysis_adapter = Arc::new(tauri::async_runtime::block_on(AnalysisAdapter::new(
                 analysis_service,
                 SearchService::new(analysis_repo),
-                whisper_path,
-                ffmpeg_path.clone(),
+                move || {
+                    (
+                        resolve_whisper_path(
+                            analysis_resource_dir.as_deref(),
+                            std::env::var_os("LECTORBIT_WHISPER_PATH"),
+                        ),
+                        resolve_ffmpeg_path(
+                            analysis_resource_dir.as_deref(),
+                            std::env::var_os("LECTORBIT_FFMPEG_PATH"),
+                        ),
+                    )
+                },
                 app_data.join("analysis-work"),
             )));
             std::fs::create_dir_all(app_data.join("analysis-work"))

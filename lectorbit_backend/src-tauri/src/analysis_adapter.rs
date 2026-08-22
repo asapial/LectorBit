@@ -15,14 +15,93 @@ use tauri_plugin_lectorbit::{
     AnalysisOps, AnalysisProgressDto, BoxFuture, ModelDto, SearchErrorCode, SearchErrorKind,
     SearchHitDto, SearchOps, TranscriptStateDto,
 };
-use tokio::sync::Semaphore;
+use tokio::sync::{Mutex, RwLock, Semaphore};
+
+type EnginePathResolver = dyn Fn() -> (Option<PathBuf>, Option<PathBuf>) + Send + Sync + 'static;
+
+#[derive(Clone)]
+struct AnalysisEngine {
+    state: Arc<RwLock<AnalysisEngineState>>,
+    probe_lock: Arc<Mutex<()>>,
+    resolve_paths: Arc<EnginePathResolver>,
+}
+
+struct AnalysisEngineState {
+    whisper: Option<Arc<WhisperCpp>>,
+    capability: AnalysisCapabilityDto,
+    probe_generation: u64,
+}
+
+impl AnalysisEngine {
+    async fn new<F>(resolve_paths: F) -> Self
+    where
+        F: Fn() -> (Option<PathBuf>, Option<PathBuf>) + Send + Sync + 'static,
+    {
+        let resolve_paths: Arc<EnginePathResolver> = Arc::new(resolve_paths);
+        let (whisper_path, ffmpeg_path) = resolve_paths();
+        let (whisper, capability) = initialize_whisper(whisper_path, ffmpeg_path).await;
+        Self {
+            state: Arc::new(RwLock::new(AnalysisEngineState {
+                whisper,
+                capability,
+                probe_generation: 1,
+            })),
+            probe_lock: Arc::new(Mutex::new(())),
+            resolve_paths,
+        }
+    }
+
+    async fn refresh_if_unavailable(&self) {
+        let observed_generation = {
+            let state = self.state.read().await;
+            if state.whisper.is_some() {
+                return;
+            }
+            state.probe_generation
+        };
+
+        // Capability and transcription requests can arrive together. Only one of
+        // them should launch the external version probes; the others reuse its
+        // result after acquiring this lock.
+        let _probe_guard = self.probe_lock.lock().await;
+        {
+            let state = self.state.read().await;
+            if state.whisper.is_some() || state.probe_generation != observed_generation {
+                return;
+            }
+        }
+
+        let (whisper_path, ffmpeg_path) = (self.resolve_paths)();
+        let (whisper, capability) = initialize_whisper(whisper_path, ffmpeg_path).await;
+        *self.state.write().await = AnalysisEngineState {
+            whisper,
+            capability,
+            probe_generation: observed_generation.saturating_add(1),
+        };
+    }
+
+    async fn capability(&self) -> AnalysisCapabilityDto {
+        self.refresh_if_unavailable().await;
+        self.state.read().await.capability.clone()
+    }
+
+    async fn whisper(&self) -> Result<Arc<WhisperCpp>, AnalysisErrorCode> {
+        self.refresh_if_unavailable().await;
+        let state = self.state.read().await;
+        state.whisper.clone().ok_or_else(|| {
+            AnalysisErrorCode::new(
+                AnalysisErrorKind::SidecarUnavailable,
+                state.capability.message.clone(),
+            )
+        })
+    }
+}
 
 #[derive(Clone)]
 pub struct AnalysisAdapter {
     service: AnalysisService,
     search: SearchService,
-    whisper: Option<Arc<WhisperCpp>>,
-    capability: AnalysisCapabilityDto,
+    engine: AnalysisEngine,
     client: reqwest::Client,
     work_root: PathBuf,
     model_permits: Arc<Semaphore>,
@@ -30,19 +109,20 @@ pub struct AnalysisAdapter {
 }
 
 impl AnalysisAdapter {
-    pub async fn new(
+    pub async fn new<F>(
         service: AnalysisService,
         search: SearchService,
-        whisper_path: Option<PathBuf>,
-        ffmpeg_path: Option<PathBuf>,
+        resolve_engine_paths: F,
         work_root: PathBuf,
-    ) -> Self {
-        let (whisper, capability) = initialize_whisper(whisper_path, ffmpeg_path).await;
+    ) -> Self
+    where
+        F: Fn() -> (Option<PathBuf>, Option<PathBuf>) + Send + Sync + 'static,
+    {
+        let engine = AnalysisEngine::new(resolve_engine_paths).await;
         Self {
             service,
             search,
-            whisper,
-            capability,
+            engine,
             client: reqwest::Client::builder()
                 .https_only(true)
                 .user_agent("LectorBit/0.1 model-manager")
@@ -214,12 +294,7 @@ impl AnalysisAdapter {
             .mark_job_running(&job.id)
             .await
             .map_err(map_analysis_error)?;
-        let whisper = self.whisper.clone().ok_or_else(|| {
-            AnalysisErrorCode::new(
-                AnalysisErrorKind::SidecarUnavailable,
-                "Local transcription is unavailable on this installation.",
-            )
-        })?;
+        let whisper = self.engine.whisper().await?;
         let payload: TranscriptionPayload =
             serde_json::from_str(&job.payload).map_err(|_| invalid_analysis_error())?;
         let media = self
@@ -275,7 +350,7 @@ async fn initialize_whisper(
             None,
             unavailable_capability(
                 "whisper_missing",
-                "Install the local whisper.cpp 1.9.2 engine, then restart LectorBit.",
+                "Install the local whisper.cpp 1.9.2 engine, then try again.",
             ),
         );
     };
@@ -283,10 +358,7 @@ async fn initialize_whisper(
         tracing::warn!("ffmpeg sidecar is not configured for transcription");
         return (
             None,
-            unavailable_capability(
-                "ffmpeg_missing",
-                "Install FFmpeg 8.1.2, then restart LectorBit.",
-            ),
+            unavailable_capability("ffmpeg_missing", "Install FFmpeg 8.1.2, then try again."),
         );
     };
     let adapter = match WhisperCpp::new(whisper_path, ffmpeg_path) {
@@ -297,7 +369,7 @@ async fn initialize_whisper(
                 None,
                 unavailable_capability(
                     "whisper_unavailable",
-                    "The local transcription engine could not be opened. Repair it, then restart LectorBit.",
+                    "The local transcription engine could not be opened. Repair it, then try again.",
                 ),
             );
         }
@@ -307,11 +379,11 @@ async fn initialize_whisper(
         let (reason, message) = match error {
                 AiError::UnsupportedVersion => (
                     "version_mismatch",
-                    "The local transcription engine version is incompatible. Install whisper.cpp 1.9.2 and restart LectorBit.",
+                    "The local transcription engine version is incompatible. Install whisper.cpp 1.9.2, then try again.",
                 ),
                 _ => (
                     "whisper_unavailable",
-                    "The local transcription engine could not be verified. Repair it, then restart LectorBit.",
+                    "The local transcription engine could not be verified. Repair it, then try again.",
                 ),
             };
         return (None, unavailable_capability(reason, message));
@@ -321,11 +393,11 @@ async fn initialize_whisper(
         let (reason, message) = match error {
             AiError::UnsupportedFfmpegVersion => (
                 "ffmpeg_version_mismatch",
-                "The audio extractor version is incompatible. Install FFmpeg 8.1.2 and restart LectorBit.",
+                "The audio extractor version is incompatible. Install FFmpeg 8.1.2, then try again.",
             ),
             _ => (
                 "ffmpeg_unavailable",
-                "The audio extractor could not be verified. Repair FFmpeg, then restart LectorBit.",
+                "The audio extractor could not be verified. Repair FFmpeg, then try again.",
             ),
         };
         return (None, unavailable_capability(reason, message));
@@ -364,7 +436,7 @@ fn model_display_name(model_id: &str) -> &'static str {
 
 impl AnalysisOps for AnalysisAdapter {
     fn capability(&self) -> BoxFuture<'_, Result<AnalysisCapabilityDto, AnalysisErrorCode>> {
-        Box::pin(async move { Ok(self.capability.clone()) })
+        Box::pin(async move { Ok(self.engine.capability().await) })
     }
 
     fn list_models(&self) -> BoxFuture<'_, Result<Vec<ModelDto>, AnalysisErrorCode>> {
@@ -438,12 +510,7 @@ impl AnalysisOps for AnalysisAdapter {
         sink: AnalysisEventSink,
     ) -> BoxFuture<'_, Result<AnalysisJobDto, AnalysisErrorCode>> {
         Box::pin(async move {
-            if self.whisper.is_none() {
-                return Err(AnalysisErrorCode::new(
-                    AnalysisErrorKind::SidecarUnavailable,
-                    self.capability.message.clone(),
-                ));
-            }
+            self.engine.whisper().await?;
             let language = TranscriptionLanguage::try_from(language.as_str()).map_err(|_| {
                 AnalysisErrorCode::new(
                     AnalysisErrorKind::LanguageNotSupported,
@@ -669,5 +736,47 @@ mod tests {
     fn work_directory_rejects_path_input() {
         assert!(safe_work_dir(std::path::Path::new("C:/cache"), "../escape").is_err());
         assert!(safe_work_dir(std::path::Path::new("C:/cache"), "job/escape").is_err());
+    }
+
+    #[tokio::test]
+    async fn unavailable_engine_re_resolves_sidecar_paths() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let whisper_path = directory.path().join("whisper-fixture");
+        let ffmpeg_path = directory.path().join("ffmpeg-fixture");
+        let resolver_whisper = whisper_path.clone();
+        let resolver_ffmpeg = ffmpeg_path.clone();
+        let calls = Arc::new(AtomicU64::new(0));
+        let resolver_calls = calls.clone();
+
+        let engine = AnalysisEngine::new(move || {
+            resolver_calls.fetch_add(1, Ordering::Relaxed);
+            (
+                resolver_whisper.is_file().then(|| resolver_whisper.clone()),
+                resolver_ffmpeg.is_file().then(|| resolver_ffmpeg.clone()),
+            )
+        })
+        .await;
+
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+        assert_eq!(
+            engine
+                .state
+                .read()
+                .await
+                .capability
+                .unavailable_reason
+                .as_deref(),
+            Some("whisper_missing")
+        );
+
+        std::fs::write(&whisper_path, b"fixture").expect("create whisper fixture");
+        std::fs::write(&ffmpeg_path, b"fixture").expect("create ffmpeg fixture");
+
+        let capability = engine.capability().await;
+        assert_eq!(calls.load(Ordering::Relaxed), 2);
+        assert_eq!(
+            capability.unavailable_reason.as_deref(),
+            Some("whisper_unavailable")
+        );
     }
 }
