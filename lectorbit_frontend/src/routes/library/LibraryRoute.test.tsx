@@ -169,13 +169,15 @@ describe('LibraryRoute', () => {
       });
 
     renderRoute();
-    fireEvent.click(await screen.findByRole('button', { name: /load more/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /^next$/i }));
 
     expect(await screen.findByText('second.mp4')).toBeInTheDocument();
+    expect(screen.queryByText('first.mp4')).not.toBeInTheDocument();
+    expect(screen.getAllByText('Page 2 of 2')).toHaveLength(2);
     expect(listMediaMock).toHaveBeenLastCalledWith({
       rootId: 'root-1',
       cursor: 'cursor-1',
-      limit: 50,
+      limit: 10,
     });
   });
 
@@ -255,8 +257,8 @@ describe('LibraryRoute', () => {
         name: 'Plan Statistics module with AI',
       }),
     ).toHaveAttribute('href', '/plan?module=root-2');
-    expect(listMediaMock).toHaveBeenCalledWith({ rootId: 'root-1', cursor: undefined, limit: 50 });
-    expect(listMediaMock).toHaveBeenCalledWith({ rootId: 'root-2', cursor: undefined, limit: 50 });
+    expect(listMediaMock).toHaveBeenCalledWith({ rootId: 'root-1', cursor: undefined, limit: 10 });
+    expect(listMediaMock).toHaveBeenCalledWith({ rootId: 'root-2', cursor: undefined, limit: 10 });
   });
 
   it('keeps pagination independent for each folder module', async () => {
@@ -289,11 +291,11 @@ describe('LibraryRoute', () => {
           items: [{ ...base, id: 'stats-2', root_id: 'root-2', display_name: 'Statistics 2.mp4' }],
           next_cursor: null,
           summary: {
-            total_items: 2,
-            ready_items: 2,
+            total_items: 20,
+            ready_items: 20,
             attention_items: 0,
-            known_duration_ms: 120_000,
-            duration_known_items: 2,
+            known_duration_ms: 1_200_000,
+            duration_known_items: 20,
           },
         });
       }
@@ -302,11 +304,11 @@ describe('LibraryRoute', () => {
           items: [{ ...base, id: 'stats-1', root_id: 'root-2', display_name: 'Statistics 1.mp4' }],
           next_cursor: 'stats-next',
           summary: {
-            total_items: 2,
-            ready_items: 2,
+            total_items: 20,
+            ready_items: 20,
             attention_items: 0,
-            known_duration_ms: 120_000,
-            duration_known_items: 2,
+            known_duration_ms: 1_200_000,
+            duration_known_items: 20,
           },
         });
       }
@@ -319,20 +321,20 @@ describe('LibraryRoute', () => {
     renderRoute();
 
     const statisticsModule = await screen.findByRole('region', { name: 'Statistics' });
-    expect(await within(statisticsModule).findByText('2m')).toBeInTheDocument();
-    expect(within(statisticsModule).getByText('2 of 2 durations known')).toBeInTheDocument();
-    fireEvent.click(await within(statisticsModule).findByRole('button', { name: /load more/i }));
+    expect(await within(statisticsModule).findByText('20m')).toBeInTheDocument();
+    expect(within(statisticsModule).getByText('20 of 20 durations known')).toBeInTheDocument();
+    fireEvent.click(await within(statisticsModule).findByRole('button', { name: /^next$/i }));
 
     expect(await within(statisticsModule).findByText('Statistics 2.mp4')).toBeInTheDocument();
     expect(listMediaMock).toHaveBeenCalledWith({
       rootId: 'root-2',
       cursor: 'stats-next',
-      limit: 50,
+      limit: 10,
     });
     expect(listMediaMock).not.toHaveBeenCalledWith({
       rootId: 'root-1',
       cursor: 'videos-next',
-      limit: 50,
+      limit: 10,
     });
     expect(
       within(screen.getByRole('region', { name: 'Videos' })).queryByText('Statistics 2.mp4'),

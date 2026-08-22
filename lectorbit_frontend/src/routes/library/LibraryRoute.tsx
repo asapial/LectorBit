@@ -51,6 +51,8 @@ interface LiveScan {
   total?: number;
 }
 
+const MEDIA_PAGE_SIZE = 10;
+
 export function LibraryRoute() {
   const queryClient = useQueryClient();
   const [banner, setBanner] = useState<string | null>(null);
@@ -322,9 +324,11 @@ function FolderMediaCard({
   busyScanRootIds: ReadonlySet<string>;
   onRetryMetadata: (rootId: string) => void;
 }) {
+  const [pageIndex, setPageIndex] = useState(0);
   const media = useInfiniteQuery({
     queryKey: ['library', 'media', root.id] as const,
-    queryFn: ({ pageParam }) => listMedia({ rootId: root.id, cursor: pageParam, limit: 50 }),
+    queryFn: ({ pageParam }) =>
+      listMedia({ rootId: root.id, cursor: pageParam, limit: MEDIA_PAGE_SIZE }),
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
     refetchInterval: (query) =>
@@ -337,24 +341,49 @@ function FolderMediaCard({
         : false,
   });
 
+  const pages = media.data?.pages ?? [];
+  const currentPage = pages[pageIndex];
   // Treat the root boundary defensively as well as at the database query. A
   // malformed/stale page can never leak another folder's media into this module.
-  const items =
-    media.data?.pages.flatMap((page) => page.items).filter((item) => item.root_id === root.id) ??
-    [];
+  const items = currentPage?.items.filter((item) => item.root_id === root.id) ?? [];
+  const summary = pages[0]?.summary;
+  const totalPages = summary
+    ? Math.max(1, Math.ceil(summary.total_items / MEDIA_PAGE_SIZE))
+    : Math.max(1, pages.length + (media.hasNextPage ? 1 : 0));
+  const canGoBack = pageIndex > 0;
+  const canGoForward = pageIndex < pages.length - 1 || media.hasNextPage;
+
+  useEffect(() => {
+    if (pageIndex >= pages.length && pages.length > 0) setPageIndex(pages.length - 1);
+  }, [pageIndex, pages.length]);
+
+  const goForward = async () => {
+    if (pageIndex < pages.length - 1) {
+      setPageIndex((current) => current + 1);
+      return;
+    }
+    if (!media.hasNextPage || media.isFetchingNextPage) return;
+    const result = await media.fetchNextPage();
+    if ((result.data?.pages.length ?? 0) > pages.length) {
+      setPageIndex((current) => current + 1);
+    }
+  };
 
   return (
     <MediaLibraryCard
       root={root}
       items={items}
-      summary={media.data?.pages[0]?.summary}
-      loadedPageCount={media.data?.pages.length ?? 0}
+      summary={summary}
+      pageNumber={pageIndex + 1}
+      totalPages={totalPages}
       pending={media.isPending}
       error={media.error}
-      hasNextPage={media.hasNextPage}
-      loadingMore={media.isFetchingNextPage}
+      canGoBack={canGoBack}
+      canGoForward={canGoForward}
+      changingPage={media.isFetchingNextPage}
       onRetry={() => void media.refetch()}
-      onLoadMore={() => void media.fetchNextPage()}
+      onPreviousPage={() => setPageIndex((current) => Math.max(0, current - 1))}
+      onNextPage={() => void goForward()}
       readyModelId={readyModelId}
       analysisProgress={analysisProgress}
       pendingMediaId={pendingMediaId}
@@ -369,13 +398,16 @@ function MediaLibraryCard({
   root,
   items,
   summary,
-  loadedPageCount,
+  pageNumber,
+  totalPages,
   pending,
   error,
-  hasNextPage,
-  loadingMore,
+  canGoBack,
+  canGoForward,
+  changingPage,
   onRetry,
-  onLoadMore,
+  onPreviousPage,
+  onNextPage,
   readyModelId,
   analysisProgress,
   pendingMediaId,
@@ -386,13 +418,16 @@ function MediaLibraryCard({
   root: LibraryRoot;
   items: MediaListItem[];
   summary?: MediaSummary;
-  loadedPageCount: number;
+  pageNumber: number;
+  totalPages: number;
   pending: boolean;
   error: Error | null;
-  hasNextPage: boolean;
-  loadingMore: boolean;
+  canGoBack: boolean;
+  canGoForward: boolean;
+  changingPage: boolean;
   onRetry: () => void;
-  onLoadMore: () => void;
+  onPreviousPage: () => void;
+  onNextPage: () => void;
   readyModelId?: string;
   analysisProgress: Record<string, AnalysisProgress>;
   pendingMediaId?: string;
@@ -424,11 +459,11 @@ function MediaLibraryCard({
   const knownDurationMs = summary?.known_duration_ms ?? loadedDurationMs;
   const durationKnownCount = summary?.duration_known_items ?? loadedDurationKnownCount;
   const totalsAreExact = summary !== undefined;
-  const loadedPagesDetail = `${loadedPageCount.toLocaleString()} ${loadedPageCount === 1 ? 'page' : 'pages'} loaded`;
-  const mediaMetricLabel = totalsAreExact || !hasNextPage ? 'Media in module' : 'Media loaded';
+  const pageDetail = `Page ${pageNumber.toLocaleString()} of ${totalPages.toLocaleString()}`;
+  const mediaMetricLabel = totalsAreExact || !canGoForward ? 'Media in module' : 'Media loaded';
   const mediaMetricDetail = totalsAreExact
-    ? `${items.length.toLocaleString()} currently loaded · ${loadedPagesDetail}`
-    : loadedPagesDetail;
+    ? `${items.length.toLocaleString()} shown · ${pageDetail}`
+    : pageDetail;
   const readyMetricDetail = totalsAreExact
     ? `${readyCount.toLocaleString()} metadata-ready in this module`
     : `${readyCount.toLocaleString()} metadata-ready on loaded pages`;
@@ -436,8 +471,8 @@ function MediaLibraryCard({
     attentionCount === 0
       ? 'module is healthy'
       : loadedAttentionCount > 0
-        ? 'retry loaded items below'
-        : 'load more to review affected items';
+        ? 'affected videos are visible on this page'
+        : 'review the remaining video pages';
   const moduleHeadingId = `library-module-${root.id}`;
   return (
     <section aria-labelledby={moduleHeadingId}>
@@ -482,7 +517,7 @@ function MediaLibraryCard({
                 tone="success"
               />
               <ModuleMetric
-                label={summary || !hasNextPage ? 'Known study time' : 'Loaded study time'}
+                label={summary || !canGoForward ? 'Known study time' : 'Loaded study time'}
                 value={formatModuleDuration(knownDurationMs)}
                 detail={`${durationKnownCount.toLocaleString()} of ${totalCount.toLocaleString()} durations known`}
               />
@@ -573,12 +608,31 @@ function MediaLibraryCard({
                   ))}
                 </tbody>
               </table>
-              {hasNextPage ? (
-                <div className="flex justify-center border-t border-border pt-4">
-                  <Button variant="secondary" size="sm" disabled={loadingMore} onClick={onLoadMore}>
-                    {loadingMore ? 'Loading…' : 'Load more'}
+              {totalPages > 1 ? (
+                <nav
+                  aria-label={`${root.display_name} video pages`}
+                  className="flex items-center justify-between gap-3 border-t border-border pt-4"
+                >
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    disabled={!canGoBack || changingPage}
+                    onClick={onPreviousPage}
+                  >
+                    Previous
                   </Button>
-                </div>
+                  <span className="text-xs font-medium tabular-nums text-muted-foreground">
+                    {pageDetail}
+                  </span>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    disabled={!canGoForward || changingPage}
+                    onClick={onNextPage}
+                  >
+                    {changingPage ? 'Loading…' : 'Next'}
+                  </Button>
+                </nav>
               ) : null}
             </div>
           ) : null}
