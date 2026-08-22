@@ -288,10 +288,10 @@ export function SettingsRoute() {
         <CardHeader>
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <CardTitle>OpenRouter planning suggestions</CardTitle>
+              <CardTitle>Cloud AI provider</CardTitle>
               <CardDescription className="mt-1">
-                Optional AI can propose a course order and explain why. Rust still validates every
-                hard scheduling constraint before a plan can be committed.
+                One protected OpenRouter key powers optional planning and lecture intelligence.
+                Scheduling, progress, and review dates remain deterministic and local.
               </CardDescription>
             </div>
             <Badge tone={cloudPlanning.data?.configured ? 'success' : 'neutral'}>
@@ -365,10 +365,11 @@ export function SettingsRoute() {
             ) : null}
           </form>
           <p className="text-xs leading-relaxed text-muted-foreground">
-            AI requests contain selected video names, durations, and planning limits only. Media,
-            transcripts, absolute paths, and viewing history are excluded. Every request requires
-            fresh confirmation in Plan Builder. Free model providers may retain or use request
-            metadata under their own policies, so avoid sensitive information in video names.
+            Planning requests contain selected video names, durations, limits, and available
+            grounded summaries. Lecture intelligence can send transcript text and an optional
+            reduced frame only after consent in the Player. Media files, absolute paths, and viewing
+            history are never sent. Free model providers may retain or use request data under their
+            own policies.
           </p>
         </CardContent>
       </Card>
@@ -432,7 +433,7 @@ export function SettingsRoute() {
           />
           <PrivacyFact
             icon={<CheckCircle2 className="size-4" />}
-            label="Media bytes never leave this device"
+            label="Media files stay local; cloud evidence is opt-in"
           />
         </CardContent>
       </Card>

@@ -90,6 +90,7 @@ function pageLabel(pathname: string) {
   const labels: Record<string, string> = {
     '/library': 'Library',
     '/plan': 'Plan builder',
+    '/ai': 'AI Studio',
     '/search': 'Search',
     '/settings': 'Settings',
     '/diagnostics': 'Diagnostics',

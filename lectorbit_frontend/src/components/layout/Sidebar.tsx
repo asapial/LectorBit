@@ -6,6 +6,7 @@ import ListChecks from 'lucide-react/dist/esm/icons/list-checks';
 import Search from 'lucide-react/dist/esm/icons/search';
 import Settings2 from 'lucide-react/dist/esm/icons/settings-2';
 import ShieldCheck from 'lucide-react/dist/esm/icons/shield-check';
+import Sparkles from 'lucide-react/dist/esm/icons/sparkles';
 import { NavLink } from 'react-router';
 import type { ComponentType, SVGProps } from 'react';
 import { cn } from '../../lib/cn';
@@ -37,6 +38,12 @@ const entries: NavEntry[] = [
     label: 'Plan',
     icon: ListChecks,
     description: 'Schedule & replan',
+  },
+  {
+    to: '/ai',
+    label: 'AI Studio',
+    icon: Sparkles,
+    description: 'Models & intelligence',
   },
   {
     to: '/search',
@@ -112,7 +119,7 @@ export function Sidebar() {
         <div className="mb-1.5 flex items-center gap-2 font-medium text-sidebar-foreground">
           <ShieldCheck className="size-3.5 text-success" /> Private by design
         </div>
-        Your media stays on this device.
+        Media stays local. Cloud intelligence is always opt-in.
       </div>
     </aside>
   );
@@ -136,7 +143,7 @@ export function MobileNavigation() {
   return (
     <nav
       aria-label="Mobile navigation"
-      className="fixed bottom-3 left-1/2 z-40 grid w-[calc(100%-1.5rem)] max-w-2xl -translate-x-1/2 grid-cols-5 rounded-2xl border border-border/80 bg-card/90 p-1.5 shadow-[0_16px_50px_rgba(28,25,23,0.16)] backdrop-blur-xl supports-[padding:max(0px)]:bottom-[max(0.75rem,env(safe-area-inset-bottom))] min-[1180px]:hidden"
+      className="fixed bottom-3 left-1/2 z-40 grid w-[calc(100%-1.5rem)] max-w-2xl -translate-x-1/2 grid-cols-6 rounded-2xl border border-border/80 bg-card/90 p-1.5 shadow-[0_16px_50px_rgba(28,25,23,0.16)] backdrop-blur-xl supports-[padding:max(0px)]:bottom-[max(0.75rem,env(safe-area-inset-bottom))] min-[1180px]:hidden"
     >
       {mobileEntries.map((entry) => {
         const Icon = entry.icon;
