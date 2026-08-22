@@ -340,7 +340,10 @@ mod collect_tests {
 
         // DB fields
         assert_eq!(report.database.schema_version, 0);
-        assert_eq!(report.database.migrations_applied, 6);
+        assert_eq!(
+            report.database.migrations_applied,
+            lectorbit_db::migrations::embedded_migration_count()
+        );
         assert!(report.database.sqlite_version.starts_with("3."));
         // journal_mode is "memory" for in-memory DBs, not wal; we don't assert a value.
         assert!(report.database.foreign_keys);

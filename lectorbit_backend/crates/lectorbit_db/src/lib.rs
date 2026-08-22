@@ -22,6 +22,7 @@ pub mod repo;
 pub use error::{DbError, DbResult};
 pub use pool::Db;
 pub use redaction::{redact, redact_event_fields, RedactingMakeWriter};
+pub use repo::ai_requests::{AiRequestProvenance, CloudConsentSummary, Repo as AiRequestsRepo};
 pub use repo::analysis::{
     ModelInstallRow, ModelManifestRow, Repo as AnalysisRepo, SearchRow, TranscriptSegmentInput,
     TranscriptStateRow,

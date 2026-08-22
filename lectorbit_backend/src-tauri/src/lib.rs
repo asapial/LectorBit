@@ -4,7 +4,7 @@ use std::io::stderr;
 use std::sync::Arc;
 
 use lectorbit_db::{
-    AnalysisRepo, ChunksRepo, LearningRepo, LibraryRootsRepo, MediaRepo, PlansRepo,
+    AiRequestsRepo, AnalysisRepo, ChunksRepo, LearningRepo, LibraryRootsRepo, MediaRepo, PlansRepo,
     RedactingMakeWriter, StudyRepo,
 };
 use lectorbit_playback::MpvEngine;
@@ -21,6 +21,7 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::EnvFilter;
 
+mod ai_gateway;
 mod analysis_adapter;
 mod embedded_media;
 mod library_adapter;
@@ -30,6 +31,7 @@ mod openrouter_learning_adapter;
 mod planner_adapter;
 mod playback_adapter;
 mod update_adapter;
+use ai_gateway::{AiGateway, OpenRouterGateway};
 use analysis_adapter::AnalysisAdapter;
 use embedded_media::EmbeddedMediaRegistry;
 use library_adapter::LibraryAdapter;
@@ -110,13 +112,19 @@ pub fn run() {
                 PlansRepo::new(database.pool().clone()),
                 StudyRepo::new(database.pool().clone()),
             );
+            let ai_gateway: Arc<dyn AiGateway> = Arc::new(
+                OpenRouterGateway::new(AiRequestsRepo::new(database.pool().clone()))
+                    .map_err(|error| format!("initialize AI gateway: {}", error.message))?,
+            );
             let cloud_planning_adapter = Arc::new(OpenRouterPlanningAdapter::new(
+                ai_gateway.clone(),
                 chunks_repo,
                 LearningRepo::new(database.pool().clone()),
-            )?);
-            let learning_adapter = Arc::new(OpenRouterLearningAdapter::new(LearningRepo::new(
-                database.pool().clone(),
-            ))?);
+            ));
+            let learning_adapter = Arc::new(OpenRouterLearningAdapter::new(
+                ai_gateway,
+                LearningRepo::new(database.pool().clone()),
+            ));
             let mpv_path = resolve_mpv_path(
                 app.path().resource_dir().ok().as_deref(),
                 std::env::var_os("LECTORBIT_MPV_PATH"),

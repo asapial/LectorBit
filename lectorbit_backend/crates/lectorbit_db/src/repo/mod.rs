@@ -9,6 +9,7 @@
 //! the corresponding service modules operate on typed inputs that the
 //! Tauri command layer wires up.
 
+pub mod ai_requests;
 pub mod analysis;
 pub mod chunks;
 pub mod learning;

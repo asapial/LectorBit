@@ -8,5 +8,14 @@
 //! To skip the env var and keep the call site ergonomic, we hard-code the
 //! path here (`../../migrations` relative to the crate root).
 
+use sqlx::migrate::Migrator;
+
 /// Path to the workspace migrations directory, relative to the crate root.
 pub const MIGRATIONS_DIR: &str = "../../migrations";
+
+/// Compile-time embedded migration set used by both startup and diagnostics.
+pub static MIGRATOR: Migrator = sqlx::migrate!("../../migrations");
+
+pub fn embedded_migration_count() -> u32 {
+    u32::try_from(MIGRATOR.migrations.len()).expect("embedded migration count must fit in u32")
+}

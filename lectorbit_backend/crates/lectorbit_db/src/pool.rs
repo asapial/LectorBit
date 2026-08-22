@@ -97,7 +97,7 @@ impl Db {
 
     /// Run the embedded migrations. Idempotent.
     pub(crate) async fn migrate(&self) -> DbResult<()> {
-        sqlx::migrate!("../../migrations")
+        crate::migrations::MIGRATOR
             .run(&self.pool)
             .await
             .map_err(|e| DbError::Migrate(e.to_string()))
@@ -208,6 +208,7 @@ mod tests {
             "study_actions",
             "settings",
             "consent_events",
+            "ai_request_events",
             "audit_events",
             "chunks",
             "study_constraint_versions",

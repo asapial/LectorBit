@@ -1,7 +1,7 @@
 //! Black-box tests for `lectorbit_db` — opens an in-memory DB through the
 //! public API and asserts schema-level invariants.
 
-use lectorbit_db::Db;
+use lectorbit_db::{AiRequestProvenance, AiRequestsRepo, CloudConsentSummary, Db};
 
 #[tokio::test]
 async fn open_in_memory_inserts_and_reads_back() {
@@ -79,4 +79,98 @@ async fn persisted_file_survives_close_and_reopen() {
         .expect("read");
     assert_eq!(v, "v1");
     db2.close().await;
+}
+
+#[tokio::test]
+async fn cloud_request_audit_is_append_only_and_content_free() {
+    let db = Db::open_in_memory().await.expect("open");
+    let repo = AiRequestsRepo::new(db.pool().clone());
+    let consent_id = repo
+        .record_cloud_consent(
+            "companion_window",
+            &CloudConsentSummary {
+                request_id: "request-1",
+                provider: "OpenRouter",
+                data_categories: &["transcript_window"],
+                approximate_bytes: 512,
+                retention_policy: "provider_policy_applies; revoke stops future requests",
+            },
+        )
+        .await
+        .expect("consent");
+    repo.record_provenance(
+        &consent_id,
+        &AiRequestProvenance {
+            request_id: "request-1",
+            provider: "OpenRouter",
+            capability: "text_json",
+            prompt_id: "player-companion",
+            prompt_version: "player-companion-v1",
+            requested_model: "openrouter/free",
+            resolved_model: Some("provider/model"),
+            request_bytes: 512,
+            response_bytes: Some(128),
+            duration_ms: 42,
+            prompt_tokens: Some(100),
+            completion_tokens: Some(20),
+            total_tokens: Some(120),
+            result: "succeeded",
+            error_kind: None,
+        },
+    )
+    .await
+    .expect("provenance");
+
+    let (consent_count,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM consent_events WHERE id = ? AND scope = ?")
+            .bind(&consent_id)
+            .bind("companion_window")
+            .fetch_one(db.pool())
+            .await
+            .expect("count consent");
+    let (request_count,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM ai_request_events WHERE consent_event_id = ? AND result = 'succeeded'",
+    )
+    .bind(&consent_id)
+    .fetch_one(db.pool())
+    .await
+    .expect("count request");
+    assert_eq!(consent_count, 1);
+    assert_eq!(request_count, 1);
+
+    let (payload,): (String,) = sqlx::query_as("SELECT payload FROM consent_events WHERE id = ?")
+        .bind(&consent_id)
+        .fetch_one(db.pool())
+        .await
+        .expect("payload");
+    assert!(!payload.contains("lecture words"));
+    assert!(!payload.contains("api_key"));
+    db.close().await;
+}
+
+#[tokio::test]
+async fn ai_provenance_schema_cannot_store_user_content() {
+    let db = Db::open_in_memory().await.expect("open");
+    let columns =
+        sqlx::query_scalar::<_, String>("SELECT name FROM pragma_table_info('ai_request_events')")
+            .fetch_all(db.pool())
+            .await
+            .expect("columns");
+    for forbidden in [
+        "prompt",
+        "transcript",
+        "image",
+        "frame",
+        "path",
+        "credential",
+        "api_key",
+        "authorization",
+        "provider_body",
+    ] {
+        assert!(
+            !columns.iter().any(|column| column == forbidden),
+            "unsafe provenance column: {forbidden}"
+        );
+    }
+    db.close().await;
 }
