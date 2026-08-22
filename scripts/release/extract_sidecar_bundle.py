@@ -12,6 +12,7 @@ import zipfile
 from pathlib import Path
 
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+MAX_BUNDLE_FILES = 32
 
 
 def extract(archive: Path, expected_sha256: str, destination: Path) -> None:
@@ -23,8 +24,10 @@ def extract(archive: Path, expected_sha256: str, destination: Path) -> None:
     destination.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(archive) as bundle:
         files = [entry for entry in bundle.infolist() if not entry.is_dir()]
-        if not files or len(files) > 16:
-            raise ValueError("sidecar bundle must contain between 1 and 16 files")
+        if not files or len(files) > MAX_BUNDLE_FILES:
+            raise ValueError(
+                f"sidecar bundle must contain between 1 and {MAX_BUNDLE_FILES} files"
+            )
         seen: set[str] = set()
         for entry in files:
             name = Path(entry.filename)

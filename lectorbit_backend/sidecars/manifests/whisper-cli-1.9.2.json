@@ -8,10 +8,148 @@
   "license_spdx": "MIT",
   "license_note": "Package the upstream MIT license with every whisper-cli binary.",
   "supported_targets": [
-    "x86_64-pc-windows-msvc",
-    "x86_64-apple-darwin",
-    "aarch64-apple-darwin",
-    "x86_64-unknown-linux-gnu"
+    "x86_64-pc-windows-msvc"
   ],
-  "artifacts": []
+  "artifacts": [
+    {
+      "filename": "whisper-cli.exe",
+      "target_triple": "x86_64-pc-windows-msvc",
+      "architecture": "x86_64",
+      "sha256": "95e3c0b0e778ad9499eb0125f97c1dcf437dd9eb4ea77050b043574f93c2631d",
+      "size_bytes": 479232,
+      "license_spdx": "MIT",
+      "build_flags": "BUILD_SHARED_LIBS=ON;GGML_NATIVE=OFF;GGML_BACKEND_DL=ON;GGML_CPU_ALL_VARIANTS=ON",
+      "source": "https://github.com/ggml-org/whisper.cpp/releases/download/v1.9.2/whisper-bin-x64.zip"
+    },
+    {
+      "filename": "whisper.dll",
+      "target_triple": "x86_64-pc-windows-msvc",
+      "architecture": "x86_64",
+      "sha256": "792fc523c7ad16e6b9c348e30ad5e5f591165cbcf6a80ca8d0db02a38ce3eea2",
+      "size_bytes": 1368064,
+      "license_spdx": "MIT",
+      "build_flags": "BUILD_SHARED_LIBS=ON;GGML_NATIVE=OFF;GGML_BACKEND_DL=ON;GGML_CPU_ALL_VARIANTS=ON",
+      "source": "https://github.com/ggml-org/whisper.cpp/releases/download/v1.9.2/whisper-bin-x64.zip"
+    },
+    {
+      "filename": "ggml.dll",
+      "target_triple": "x86_64-pc-windows-msvc",
+      "architecture": "x86_64",
+      "sha256": "894c6237ee7849843213906a2b6a0b371aaa6234048d465f206d910ae846fafb",
+      "size_bytes": 67584,
+      "license_spdx": "MIT",
+      "build_flags": "BUILD_SHARED_LIBS=ON;GGML_NATIVE=OFF;GGML_BACKEND_DL=ON;GGML_CPU_ALL_VARIANTS=ON",
+      "source": "https://github.com/ggml-org/whisper.cpp/releases/download/v1.9.2/whisper-bin-x64.zip"
+    },
+    {
+      "filename": "ggml-base.dll",
+      "target_triple": "x86_64-pc-windows-msvc",
+      "architecture": "x86_64",
+      "sha256": "1482359d921b4c1b183d49db1d770f9b5e90d86a618b8b648d4845c2471ad6b0",
+      "size_bytes": 666624,
+      "license_spdx": "MIT",
+      "build_flags": "BUILD_SHARED_LIBS=ON;GGML_NATIVE=OFF;GGML_BACKEND_DL=ON;GGML_CPU_ALL_VARIANTS=ON",
+      "source": "https://github.com/ggml-org/whisper.cpp/releases/download/v1.9.2/whisper-bin-x64.zip"
+    },
+    {
+      "filename": "ggml-cpu-alderlake.dll",
+      "target_triple": "x86_64-pc-windows-msvc",
+      "architecture": "x86_64",
+      "sha256": "d1c5411561361f7ce71ff8455ecf01f666f581b0608fa91a1dfe7d3fd6a25bd1",
+      "size_bytes": 809984,
+      "license_spdx": "MIT",
+      "build_flags": "BUILD_SHARED_LIBS=ON;GGML_NATIVE=OFF;GGML_BACKEND_DL=ON;GGML_CPU_ALL_VARIANTS=ON",
+      "source": "https://github.com/ggml-org/whisper.cpp/releases/download/v1.9.2/whisper-bin-x64.zip"
+    },
+    {
+      "filename": "ggml-cpu-cannonlake.dll",
+      "target_triple": "x86_64-pc-windows-msvc",
+      "architecture": "x86_64",
+      "sha256": "2ef36f05fa252ff4fdcb8d42ebce1ceba4f3d3de12b93bed15bdee6237dccd63",
+      "size_bytes": 853504,
+      "license_spdx": "MIT",
+      "build_flags": "BUILD_SHARED_LIBS=ON;GGML_NATIVE=OFF;GGML_BACKEND_DL=ON;GGML_CPU_ALL_VARIANTS=ON",
+      "source": "https://github.com/ggml-org/whisper.cpp/releases/download/v1.9.2/whisper-bin-x64.zip"
+    },
+    {
+      "filename": "ggml-cpu-cascadelake.dll",
+      "target_triple": "x86_64-pc-windows-msvc",
+      "architecture": "x86_64",
+      "sha256": "505899aaf3f99c5d714361640f561458ea97f8a09eb0614568a66bead2115cb0",
+      "size_bytes": 850944,
+      "license_spdx": "MIT",
+      "build_flags": "BUILD_SHARED_LIBS=ON;GGML_NATIVE=OFF;GGML_BACKEND_DL=ON;GGML_CPU_ALL_VARIANTS=ON",
+      "source": "https://github.com/ggml-org/whisper.cpp/releases/download/v1.9.2/whisper-bin-x64.zip"
+    },
+    {
+      "filename": "ggml-cpu-haswell.dll",
+      "target_triple": "x86_64-pc-windows-msvc",
+      "architecture": "x86_64",
+      "sha256": "f8cf2f35a06498d783d77fde42004dd54d2f8236b0d42ac323b94bba65a603c4",
+      "size_bytes": 811008,
+      "license_spdx": "MIT",
+      "build_flags": "BUILD_SHARED_LIBS=ON;GGML_NATIVE=OFF;GGML_BACKEND_DL=ON;GGML_CPU_ALL_VARIANTS=ON",
+      "source": "https://github.com/ggml-org/whisper.cpp/releases/download/v1.9.2/whisper-bin-x64.zip"
+    },
+    {
+      "filename": "ggml-cpu-icelake.dll",
+      "target_triple": "x86_64-pc-windows-msvc",
+      "architecture": "x86_64",
+      "sha256": "78ad143ee2e674d037b4840ef33b5748a0659762a26e0ae2b621c4f9451cbde8",
+      "size_bytes": 850944,
+      "license_spdx": "MIT",
+      "build_flags": "BUILD_SHARED_LIBS=ON;GGML_NATIVE=OFF;GGML_BACKEND_DL=ON;GGML_CPU_ALL_VARIANTS=ON",
+      "source": "https://github.com/ggml-org/whisper.cpp/releases/download/v1.9.2/whisper-bin-x64.zip"
+    },
+    {
+      "filename": "ggml-cpu-sandybridge.dll",
+      "target_triple": "x86_64-pc-windows-msvc",
+      "architecture": "x86_64",
+      "sha256": "ee47db7dc40fb30eca73e62a05306059c2c3c42aecddf2e8d6ad7e530069b815",
+      "size_bytes": 803328,
+      "license_spdx": "MIT",
+      "build_flags": "BUILD_SHARED_LIBS=ON;GGML_NATIVE=OFF;GGML_BACKEND_DL=ON;GGML_CPU_ALL_VARIANTS=ON",
+      "source": "https://github.com/ggml-org/whisper.cpp/releases/download/v1.9.2/whisper-bin-x64.zip"
+    },
+    {
+      "filename": "ggml-cpu-skylakex.dll",
+      "target_triple": "x86_64-pc-windows-msvc",
+      "architecture": "x86_64",
+      "sha256": "164e2793897944a43ee071ce6c0b09018088bdf4dd8b14ac0755c58849cf8c50",
+      "size_bytes": 852992,
+      "license_spdx": "MIT",
+      "build_flags": "BUILD_SHARED_LIBS=ON;GGML_NATIVE=OFF;GGML_BACKEND_DL=ON;GGML_CPU_ALL_VARIANTS=ON",
+      "source": "https://github.com/ggml-org/whisper.cpp/releases/download/v1.9.2/whisper-bin-x64.zip"
+    },
+    {
+      "filename": "ggml-cpu-sse42.dll",
+      "target_triple": "x86_64-pc-windows-msvc",
+      "architecture": "x86_64",
+      "sha256": "7318a9a3b95a85b2453c437b274412bbbae89e5ecdf5babb19b99edc06ded063",
+      "size_bytes": 790016,
+      "license_spdx": "MIT",
+      "build_flags": "BUILD_SHARED_LIBS=ON;GGML_NATIVE=OFF;GGML_BACKEND_DL=ON;GGML_CPU_ALL_VARIANTS=ON",
+      "source": "https://github.com/ggml-org/whisper.cpp/releases/download/v1.9.2/whisper-bin-x64.zip"
+    },
+    {
+      "filename": "ggml-cpu-x64.dll",
+      "target_triple": "x86_64-pc-windows-msvc",
+      "architecture": "x86_64",
+      "sha256": "af0f1c2f28ff9e3f472481dd969907bda85fa39d4fde17617d4bb0b389301b60",
+      "size_bytes": 794112,
+      "license_spdx": "MIT",
+      "build_flags": "BUILD_SHARED_LIBS=ON;GGML_NATIVE=OFF;GGML_BACKEND_DL=ON;GGML_CPU_ALL_VARIANTS=ON",
+      "source": "https://github.com/ggml-org/whisper.cpp/releases/download/v1.9.2/whisper-bin-x64.zip"
+    },
+    {
+      "filename": "whisper.cpp-LICENSE.txt",
+      "target_triple": "x86_64-pc-windows-msvc",
+      "architecture": "x86_64",
+      "sha256": "94f29bbed6a22c35b992c5c6ebf0e7c92f13b836b90f36f461c9cf2f0f1d010d",
+      "size_bytes": 1078,
+      "license_spdx": "MIT",
+      "build_flags": "not applicable; exact upstream v1.9.2 license text",
+      "source": "https://raw.githubusercontent.com/ggml-org/whisper.cpp/v1.9.2/LICENSE"
+    }
+  ]
 }

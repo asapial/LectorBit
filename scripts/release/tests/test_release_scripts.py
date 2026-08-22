@@ -47,6 +47,34 @@ class ProvenanceTests(unittest.TestCase):
             with self.assertRaises(provenance.ProvenanceError):
                 provenance.verify_artifact(root, payload.name, 1, "0" * 64, "test")
 
+    def test_whisper_manifest_audits_only_the_packaged_windows_target(self):
+        manifest = json.loads(
+            (
+                ROOT
+                / "lectorbit_backend/sidecars/manifests/whisper-cli-1.9.2.json"
+            ).read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            manifest["supported_targets"], ["x86_64-pc-windows-msvc"]
+        )
+
+        artifacts = {
+            artifact["filename"]: artifact for artifact in manifest["artifacts"]
+        }
+        self.assertEqual(
+            artifacts["whisper.cpp-LICENSE.txt"],
+            {
+                "filename": "whisper.cpp-LICENSE.txt",
+                "target_triple": "x86_64-pc-windows-msvc",
+                "architecture": "x86_64",
+                "sha256": "94f29bbed6a22c35b992c5c6ebf0e7c92f13b836b90f36f461c9cf2f0f1d010d",
+                "size_bytes": 1078,
+                "license_spdx": "MIT",
+                "build_flags": "not applicable; exact upstream v1.9.2 license text",
+                "source": "https://raw.githubusercontent.com/ggml-org/whisper.cpp/v1.9.2/LICENSE",
+            },
+        )
+
 
 class UpdaterManifestTests(unittest.TestCase):
     def test_merge_rejects_duplicate_platforms(self):
@@ -71,15 +99,65 @@ class UpdaterManifestTests(unittest.TestCase):
 
 
 class SidecarBundleTests(unittest.TestCase):
-    def test_archive_path_traversal_is_rejected(self):
+    @staticmethod
+    def _write_bundle(archive: Path, filenames: list[str]) -> str:
         import zipfile
 
+        with zipfile.ZipFile(archive, "w") as bundle:
+            for filename in filenames:
+                bundle.writestr(filename, filename.encode("utf-8"))
+        return hashlib.sha256(archive.read_bytes()).hexdigest()
+
+    def test_complete_windows_sidecar_set_is_accepted(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             archive = root / "sidecars.zip"
-            with zipfile.ZipFile(archive, "w") as bundle:
-                bundle.writestr("../escape", b"bad")
-            digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+            filenames = [
+                "ffmpeg.exe",
+                "ffprobe.exe",
+                "mpv.exe",
+                "whisper-cli.exe",
+                "whisper.dll",
+                "ggml.dll",
+                "ggml-base.dll",
+                "ggml-cpu-alderlake.dll",
+                "ggml-cpu-cannonlake.dll",
+                "ggml-cpu-cascadelake.dll",
+                "ggml-cpu-haswell.dll",
+                "ggml-cpu-icelake.dll",
+                "ggml-cpu-sandybridge.dll",
+                "ggml-cpu-skylakex.dll",
+                "ggml-cpu-sse42.dll",
+                "ggml-cpu-x64.dll",
+                "whisper.cpp-LICENSE.txt",
+            ]
+            digest = self._write_bundle(archive, filenames)
+
+            destination = root / "output"
+            sidecars.extract(archive, digest, destination)
+
+            self.assertEqual(
+                sorted(path.name for path in destination.iterdir()), sorted(filenames)
+            )
+
+    def test_bundle_file_limit_remains_bounded(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive = root / "sidecars.zip"
+            filenames = [
+                f"runtime-{index}.bin"
+                for index in range(sidecars.MAX_BUNDLE_FILES + 1)
+            ]
+            digest = self._write_bundle(archive, filenames)
+
+            with self.assertRaisesRegex(ValueError, "between 1 and 32 files"):
+                sidecars.extract(archive, digest, root / "output")
+
+    def test_archive_path_traversal_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive = root / "sidecars.zip"
+            digest = self._write_bundle(archive, ["../escape"])
             with self.assertRaises(ValueError):
                 sidecars.extract(archive, digest, root / "output")
 
