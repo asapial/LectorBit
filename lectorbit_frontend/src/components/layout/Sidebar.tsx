@@ -1,5 +1,4 @@
 import CalendarDays from 'lucide-react/dist/esm/icons/calendar-days';
-import Film from 'lucide-react/dist/esm/icons/film';
 import Gauge from 'lucide-react/dist/esm/icons/gauge';
 import LibraryBig from 'lucide-react/dist/esm/icons/library-big';
 import ListChecks from 'lucide-react/dist/esm/icons/list-checks';
@@ -10,6 +9,7 @@ import Sparkles from 'lucide-react/dist/esm/icons/sparkles';
 import { NavLink } from 'react-router';
 import type { ComponentType, SVGProps } from 'react';
 import { cn } from '../../lib/cn';
+import { BrandLogo } from '../brand/BrandLogo';
 
 interface NavEntry {
   to: string;
@@ -106,9 +106,7 @@ export function Sidebar() {
               </span>
               <span className="flex min-w-0 flex-col leading-tight">
                 <span className="font-medium">{entry.label}</span>
-                <span className="truncate text-xs text-muted-foreground">
-                  {entry.description}
-                </span>
+                <span className="truncate text-xs text-muted-foreground">{entry.description}</span>
               </span>
             </NavLink>
           );
@@ -127,12 +125,8 @@ export function Sidebar() {
 
 function BrandMark() {
   return (
-    <span
-      aria-hidden="true"
-      className="brand-orbit relative grid size-9 place-items-center rounded-xl bg-gradient-to-br from-vermillion-400 to-vermillion-700 text-white shadow-[0_6px_18px_rgba(201,56,21,0.28)] dark:from-primary dark:to-vermillion-600 dark:text-primary-foreground"
-    >
-      <Film className="size-4" strokeWidth={2} />
-      <span className="absolute -right-0.5 -top-0.5 size-2 rounded-full border-2 border-sidebar bg-amber-300 shadow-[0_0_10px_rgba(252,211,77,0.75)]" />
+    <span aria-hidden="true" className="brand-orbit relative grid size-9 place-items-center">
+      <BrandLogo className="size-9 drop-shadow-[0_6px_12px_rgba(201,56,21,0.24)]" />
     </span>
   );
 }

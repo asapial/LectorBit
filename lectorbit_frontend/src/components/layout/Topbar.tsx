@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import { useEffect } from 'react';
 import CircleHelp from 'lucide-react/dist/esm/icons/circle-help';
 import Moon from 'lucide-react/dist/esm/icons/moon';
 import Sun from 'lucide-react/dist/esm/icons/sun';
@@ -6,11 +7,13 @@ import Search from 'lucide-react/dist/esm/icons/search';
 import { Link, useLocation } from 'react-router';
 import { useTheme } from '../../app/ThemeProvider';
 import { getAppVersion } from '../../ipc/app';
+import { BrandLogo } from '../brand/BrandLogo';
 import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
 
 export function Topbar() {
   const location = useLocation();
+  const currentPage = pageLabel(location.pathname);
   const { resolvedTheme, toggleTheme } = useTheme();
   const { data, isLoading, error } = useQuery({
     queryKey: ['app', 'version'],
@@ -19,18 +22,20 @@ export function Topbar() {
     retry: false,
   });
 
+  useEffect(() => {
+    document.title = `${currentPage} — LectorBit`;
+  }, [currentPage]);
+
   return (
     <header className="flex h-(--topbar-height) shrink-0 items-center justify-between border-b border-border/80 bg-background/80 px-4 backdrop-blur-xl sm:px-6">
       <div className="flex min-w-0 items-center gap-3">
-        <span className="grid size-8 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-vermillion-400 to-vermillion-600 text-sm font-bold text-white shadow-sm min-[1180px]:hidden">
-          L
-        </span>
+        <BrandLogo className="size-8 drop-shadow-sm min-[1180px]:hidden" />
         <div className="min-w-0">
           <p className="hidden text-[10px] font-medium uppercase tracking-[0.12em] text-muted-foreground sm:block min-[1180px]:hidden">
             LectorBit
           </p>
           <p className="truncate font-display text-sm font-semibold tracking-tight">
-            {pageLabel(location.pathname)}
+            {currentPage}
           </p>
         </div>
         <span className="hidden xl:inline">
