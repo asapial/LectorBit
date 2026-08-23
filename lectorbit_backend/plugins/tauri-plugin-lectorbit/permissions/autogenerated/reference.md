@@ -48,6 +48,10 @@ Default LectorBit permissions for the main window
 - `allow-learning-list-due-reviews`
 - `allow-learning-record-review`
 - `allow-learning-companion`
+- `allow-annotations-list`
+- `allow-annotations-create`
+- `allow-annotations-set-reviewed`
+- `allow-annotations-remove`
 - `allow-search-query`
 - `allow-updates-check`
 - `allow-updates-install`
@@ -161,6 +165,110 @@ Enables the analysis_start_transcription command without any pre-configured scop
 <td>
 
 Denies the analysis_start_transcription command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:allow-annotations-create`
+
+</td>
+<td>
+
+Enables the annotations_create command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:deny-annotations-create`
+
+</td>
+<td>
+
+Denies the annotations_create command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:allow-annotations-list`
+
+</td>
+<td>
+
+Enables the annotations_list command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:deny-annotations-list`
+
+</td>
+<td>
+
+Denies the annotations_list command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:allow-annotations-remove`
+
+</td>
+<td>
+
+Enables the annotations_remove command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:deny-annotations-remove`
+
+</td>
+<td>
+
+Denies the annotations_remove command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:allow-annotations-set-reviewed`
+
+</td>
+<td>
+
+Enables the annotations_set_reviewed command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:deny-annotations-set-reviewed`
+
+</td>
+<td>
+
+Denies the annotations_set_reviewed command without any pre-configured scope.
 
 </td>
 </tr>

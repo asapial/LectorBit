@@ -1,6 +1,7 @@
 //! Application use-cases for LectorBit's modular monolith.
 
 pub mod analysis;
+pub mod annotations;
 pub mod diagnostics;
 pub mod jobs;
 pub mod library;
@@ -15,6 +16,7 @@ pub use analysis::{
     AnalysisError, AnalysisService, JobEnqueue as AnalysisEnqueue, ModelDownloadPayload, ModelView,
     TranscriptState, TranscriptionPayload,
 };
+pub use annotations::{Annotation, AnnotationError, AnnotationKind, AnnotationService};
 pub use lectorbit_ai::TranscriptionLanguage;
 
 pub use diagnostics::{DiagnosticsReport, DiagnosticsService};

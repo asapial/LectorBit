@@ -4,18 +4,18 @@ use std::io::stderr;
 use std::sync::Arc;
 
 use lectorbit_db::{
-    AiRequestsRepo, AnalysisRepo, ChunksRepo, LearningRepo, LibraryRootsRepo, MediaRepo, PlansRepo,
-    RedactingMakeWriter, StudyRepo,
+    AiRequestsRepo, AnalysisRepo, AnnotationsRepo, ChunksRepo, LearningRepo, LibraryRootsRepo,
+    MediaRepo, PlansRepo, RedactingMakeWriter, StudyRepo,
 };
 use lectorbit_playback::MpvEngine;
 use lectorbit_services::{
-    AnalysisService, DiagnosticsService, LibraryService, MediaService, PlannerService,
-    PlaybackService, SearchService,
+    AnalysisService, AnnotationService, DiagnosticsService, LibraryService, MediaService,
+    PlannerService, PlaybackService, SearchService,
 };
 use tauri::Manager;
 use tauri_plugin_lectorbit::{
-    AnalysisOps, CloudPlanningOps, DiagnosticsProvider, LearningOps, LibraryOps, PlannerOps,
-    PlaybackOps, SearchOps, UpdateOps,
+    AnalysisOps, AnnotationOps, CloudPlanningOps, DiagnosticsProvider, LearningOps, LibraryOps,
+    PlannerOps, PlaybackOps, SearchOps, UpdateOps,
 };
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -23,6 +23,7 @@ use tracing_subscriber::EnvFilter;
 
 mod ai_gateway;
 mod analysis_adapter;
+mod annotation_adapter;
 mod embedded_media;
 mod library_adapter;
 mod media_adapter;
@@ -33,6 +34,7 @@ mod playback_adapter;
 mod update_adapter;
 use ai_gateway::{AiGateway, OpenRouterGateway};
 use analysis_adapter::AnalysisAdapter;
+use annotation_adapter::AnnotationAdapter;
 use embedded_media::EmbeddedMediaRegistry;
 use library_adapter::LibraryAdapter;
 use media_adapter::ProbeScheduler;
@@ -187,6 +189,9 @@ pub fn run() {
             app.manage(Arc::new(PlannerAdapter::new(planner_service)) as Arc<dyn PlannerOps>);
             app.manage(cloud_planning_adapter as Arc<dyn CloudPlanningOps>);
             app.manage(learning_adapter as Arc<dyn LearningOps>);
+            app.manage(Arc::new(AnnotationAdapter::new(AnnotationService::new(
+                AnnotationsRepo::new(database.pool().clone()),
+            ))) as Arc<dyn AnnotationOps>);
             let playback_work = app_data.join("playback-work");
             std::fs::create_dir_all(&playback_work)
                 .map_err(|error| format!("create playback work directory: {error}"))?;

@@ -27,6 +27,7 @@ pub use repo::analysis::{
     ModelInstallRow, ModelManifestRow, Repo as AnalysisRepo, SearchRow, TranscriptSegmentInput,
     TranscriptStateRow,
 };
+pub use repo::annotations::{AnnotationRow, Repo as AnnotationsRepo};
 pub use repo::chunks::{
     PlannerCandidatePage, PlannerCandidateRow, Repo as ChunksRepo, SchedulableMedia, StoredChunk,
 };

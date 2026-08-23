@@ -19,6 +19,7 @@ import Play from 'lucide-react/dist/esm/icons/play';
 import LoaderCircle from 'lucide-react/dist/esm/icons/loader-circle';
 import MessageCircle from 'lucide-react/dist/esm/icons/message-circle';
 import RefreshCcw from 'lucide-react/dist/esm/icons/refresh-ccw';
+import Repeat2 from 'lucide-react/dist/esm/icons/repeat-2';
 import Rewind from 'lucide-react/dist/esm/icons/rewind';
 import Scissors from 'lucide-react/dist/esm/icons/scissors';
 import Square from 'lucide-react/dist/esm/icons/square';
@@ -76,9 +77,25 @@ import {
   type LearningProgress,
   type StudyItem,
 } from '../../ipc/learning';
+import {
+  createLearningAnnotation,
+  listLearningAnnotations,
+  removeLearningAnnotation,
+  setLearningAnnotationReviewed,
+  type AnnotationKind,
+  type LearningAnnotation,
+} from '../../ipc/annotations';
 import { cn } from '../../lib/cn';
 
 type Phase = 'loading' | 'ready' | 'closed' | 'error';
+
+type LearningMarkerKind = AnnotationKind;
+type LearningMarker = LearningAnnotation;
+
+type ReplayLoop = {
+  start_ms: number;
+  end_ms: number;
+};
 
 const actionMessages: Record<StudyAction, string> = {
   complete: 'Marked complete.',
@@ -128,6 +145,10 @@ export function PlayerRoute() {
   const [shortcutsExpanded, setShortcutsExpanded] = useState(false);
   const [studyToolsExpanded, setStudyToolsExpanded] = useState(false);
   const [sessionGoal, setSessionGoal] = useState('');
+  const [markerDraft, setMarkerDraft] = useState('');
+  const [markerStatus, setMarkerStatus] = useState<string>();
+  const [markerError, setMarkerError] = useState<string>();
+  const [replayLoop, setReplayLoop] = useState<ReplayLoop>();
   const videoRef = useRef<HTMLVideoElement>(null);
   const lastVideoRef = useRef<HTMLVideoElement>(null);
   const viewRef = useRef<PlaybackView | undefined>(undefined);
@@ -156,6 +177,13 @@ export function PlayerRoute() {
     setCompanionResultMediaId(undefined);
     setStudyToolsExpanded(false);
   }, [itemId]);
+
+  useEffect(() => {
+    setMarkerDraft('');
+    setMarkerStatus(undefined);
+    setMarkerError(undefined);
+    setReplayLoop(undefined);
+  }, [itemId, view?.media_id, view?.plan_item_id, view?.raw_end_ms, view?.raw_start_ms]);
 
   useEffect(() => {
     const handleShortcut = (event: KeyboardEvent) => {
@@ -252,6 +280,12 @@ export function PlayerRoute() {
     queryFn: () => listStudyMaterials(view!.media_id),
     enabled: Boolean(view?.media_id),
   });
+  const learningTrailQuery = useQuery({
+    queryKey: ['annotations', 'learning-trail', view?.media_id] as const,
+    queryFn: () => listLearningAnnotations(view!.media_id),
+    enabled: Boolean(view?.media_id),
+  });
+  const learningMarkers = learningTrailQuery.data ?? [];
   const installTranscriptionModel = useMutation({
     mutationFn: async (model: LocalModel) => {
       setLearningError(undefined);
@@ -341,12 +375,14 @@ export function PlayerRoute() {
     mutationFn: async () => {
       if (!view) throw new Error('Open a lecture first.');
       setLearningError(undefined);
+      setLearningStatus('Queuing grounded lecture analysis…');
       assertLearningReady(transcriptQuery.data?.status, cloudLearningQuery.data?.configured);
       return startLectureUnderstanding(view.media_id, learningConsent, handleLearningProgress);
     },
     onSuccess: () => setLectureJobActive(true),
     onError: (cause) => {
       setLectureJobActive(false);
+      setLearningStatus(undefined);
       setLearningError(messageFrom(cause));
     },
   });
@@ -355,6 +391,7 @@ export function PlayerRoute() {
       const video = videoRef.current;
       if (!view || !video) throw new Error('Wait for the video frame to become available.');
       setLearningError(undefined);
+      setLearningStatus('Capturing this frame and its transcript context…');
       assertLearningReady(transcriptQuery.data?.status, cloudLearningQuery.data?.configured);
       const atMs = Math.max(
         view.raw_start_ms,
@@ -371,7 +408,10 @@ export function PlayerRoute() {
       setLearningStatus(`Saved “${note.title}” at ${formatTimestamp(note.at_ms)}.`);
       await notesQuery.refetch();
     },
-    onError: (cause) => setLearningError(messageFrom(cause)),
+    onError: (cause) => {
+      setLearningStatus(undefined);
+      setLearningError(messageFrom(cause));
+    },
   });
   const generateMaterials = useMutation({
     mutationFn: async () => {
@@ -385,7 +425,10 @@ export function PlayerRoute() {
       setLearningStatus('Study material is ready. Review dates are scheduled locally.');
       await studyQuery.refetch();
     },
-    onError: (cause) => setLearningError(messageFrom(cause)),
+    onError: (cause) => {
+      setLearningStatus(undefined);
+      setLearningError(messageFrom(cause));
+    },
   });
   const submitReview = useMutation({
     mutationFn: async ({ item, quality }: { item: StudyItem; quality: number }) =>
@@ -406,6 +449,7 @@ export function PlayerRoute() {
     mutationFn: async (action: CompanionAction) => {
       if (!view) throw new Error('Open a lecture first.');
       setLearningError(undefined);
+      setLearningStatus('Answering from the nearby transcript…');
       assertLearningReady(transcriptQuery.data?.status, cloudLearningQuery.data?.configured);
       return askCompanion({
         mediaId: view.media_id,
@@ -414,8 +458,82 @@ export function PlayerRoute() {
         consent: learningConsent,
       });
     },
-    onSuccess: () => setCompanionResultMediaId(view?.media_id),
-    onError: (cause) => setLearningError(messageFrom(cause)),
+    onSuccess: () => {
+      setLearningStatus(undefined);
+      setCompanionResultMediaId(view?.media_id);
+    },
+    onError: (cause) => {
+      setLearningStatus(undefined);
+      setLearningError(messageFrom(cause));
+    },
+  });
+  const createMarker = useMutation({
+    mutationFn: (input: Parameters<typeof createLearningAnnotation>[0]) =>
+      createLearningAnnotation(input),
+    onSuccess: (marker) => {
+      queryClient.setQueryData<LearningMarker[]>(
+        ['annotations', 'learning-trail', marker.media_id],
+        (current = []) =>
+          [marker, ...current.filter((item) => item.id !== marker.id)].slice(0, 100),
+      );
+      if (viewRef.current?.media_id === marker.media_id) {
+        setMarkerDraft('');
+        setMarkerError(undefined);
+        setMarkerStatus(
+          `${marker.kind === 'question' ? 'Question' : 'Takeaway'} saved privately at ${formatTimestamp(marker.at_ms)}.`,
+        );
+      }
+      void queryClient.invalidateQueries({ queryKey: ['search'] });
+    },
+    onError: (cause, variables) => {
+      if (viewRef.current?.media_id === variables.mediaId) {
+        setMarkerStatus(undefined);
+        setMarkerError(messageFrom(cause));
+      }
+    },
+  });
+  const reviewMarker = useMutation({
+    mutationFn: (input: Parameters<typeof setLearningAnnotationReviewed>[0]) =>
+      setLearningAnnotationReviewed(input),
+    onSuccess: (marker) => {
+      queryClient.setQueryData<LearningMarker[]>(
+        ['annotations', 'learning-trail', marker.media_id],
+        (current = []) => current.map((item) => (item.id === marker.id ? marker : item)),
+      );
+      if (viewRef.current?.media_id === marker.media_id) {
+        setMarkerStatus(undefined);
+        setMarkerError(undefined);
+      }
+    },
+    onError: (cause, variables) => {
+      if (viewRef.current?.media_id === variables.mediaId) {
+        setMarkerStatus(undefined);
+        setMarkerError(messageFrom(cause));
+      }
+    },
+  });
+  const deleteMarker = useMutation({
+    mutationFn: async (marker: LearningMarker) => {
+      await removeLearningAnnotation({ mediaId: marker.media_id, annotationId: marker.id });
+      return marker;
+    },
+    onSuccess: (marker) => {
+      queryClient.setQueryData<LearningMarker[]>(
+        ['annotations', 'learning-trail', marker.media_id],
+        (current = []) => current.filter((item) => item.id !== marker.id),
+      );
+      if (viewRef.current?.media_id === marker.media_id) {
+        setMarkerError(undefined);
+        setMarkerStatus('Marker removed from this device.');
+      }
+      void queryClient.invalidateQueries({ queryKey: ['search'] });
+    },
+    onError: (cause, marker) => {
+      if (viewRef.current?.media_id === marker.media_id) {
+        setMarkerStatus(undefined);
+        setMarkerError(messageFrom(cause));
+      }
+    },
   });
 
   useEffect(() => {
@@ -635,8 +753,9 @@ export function PlayerRoute() {
     }
   }
 
-  async function commitSeek(position = seekDraft) {
+  async function commitSeek(position = seekDraft, preserveReplayLoop = false) {
     if (position === undefined || !view) return;
+    if (!preserveReplayLoop) setReplayLoop(undefined);
     const clamped = Math.max(view.raw_start_ms, Math.min(view.raw_end_ms, position));
     if (videoRef.current) videoRef.current.currentTime = clamped / 1_000;
     await runControl(() => seekPlayback(clamped));
@@ -822,6 +941,54 @@ export function PlayerRoute() {
     saveSessionGoal(itemId, value);
   }
 
+  function saveLearningMarker(kind: LearningMarkerKind) {
+    if (!view) return;
+    const text = markerDraft.trim();
+    if (!text) return;
+    const atMs = currentPlaybackPosition(view, videoRef.current);
+    setMarkerStatus(undefined);
+    setMarkerError(undefined);
+    createMarker.mutate({
+      mediaId: view.media_id,
+      atMs,
+      kind,
+      text,
+    });
+  }
+
+  function toggleLearningMarker(markerId: string) {
+    const marker = learningMarkers.find((item) => item.id === markerId);
+    if (!view || !marker) return;
+    setMarkerError(undefined);
+    reviewMarker.mutate({
+      mediaId: view.media_id,
+      annotationId: marker.id,
+      reviewed: !marker.reviewed,
+    });
+  }
+
+  function removeLearningMarker(markerId: string) {
+    const marker = learningMarkers.find((item) => item.id === markerId);
+    if (!view || !marker) return;
+    setMarkerError(undefined);
+    deleteMarker.mutate(marker);
+  }
+
+  async function startReplayLoop(durationMs: number) {
+    if (!view) return;
+    const position = currentPlaybackPosition(view, videoRef.current);
+    const hasPreviousContext = position - view.raw_start_ms >= MIN_REPLAY_LOOP_MS;
+    const startMs = hasPreviousContext
+      ? Math.max(view.raw_start_ms, position - durationMs)
+      : view.raw_start_ms;
+    const endMs = hasPreviousContext
+      ? position
+      : Math.min(view.raw_end_ms, view.raw_start_ms + durationMs);
+    if (endMs - startMs < MIN_REPLAY_LOOP_MS) return;
+    setReplayLoop({ start_ms: startMs, end_ms: endMs });
+    await commitSeek(startMs, true);
+  }
+
   shortcutActionsRef.current = {
     togglePlayback: () => {
       if (!busy && phase === 'ready' && view) void togglePlayback();
@@ -976,6 +1143,13 @@ export function PlayerRoute() {
                   }}
                   onTimeUpdate={(event) => {
                     const position = enforceBlockBounds(event.currentTarget, view);
+                    if (replayLoop && position >= replayLoop.end_ms) {
+                      event.currentTarget.currentTime = replayLoop.start_ms / 1_000;
+                      setView((current) =>
+                        current ? { ...current, position_ms: replayLoop.start_ms } : current,
+                      );
+                      return;
+                    }
                     setView((current) =>
                       current ? { ...current, position_ms: position } : current,
                     );
@@ -1098,6 +1272,42 @@ export function PlayerRoute() {
                     </Button>
                   ) : null}
                 </div>
+
+                <section
+                  className="flex flex-wrap items-center gap-2 rounded-xl border bg-muted/20 p-3"
+                  aria-label="Concept replay"
+                >
+                  <div className="mr-auto min-w-[13rem]">
+                    <p className="flex items-center gap-2 text-sm font-semibold">
+                      <Repeat2 className="size-4 text-primary" /> Replay a concept
+                    </p>
+                    <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                      Repeat the context ending at the current moment until it clicks.
+                    </p>
+                  </div>
+                  {REPLAY_LOOP_DURATIONS_MS.map((durationMs) => (
+                    <Button
+                      key={durationMs}
+                      size="sm"
+                      variant="outline"
+                      disabled={busy || phase === 'closed'}
+                      onClick={() => void startReplayLoop(durationMs)}
+                    >
+                      Last {durationMs / 1_000}s
+                    </Button>
+                  ))}
+                  {replayLoop ? (
+                    <div className="flex w-full flex-wrap items-center justify-between gap-2 border-t pt-3">
+                      <Badge tone="primary">
+                        <Repeat2 className="size-3" /> Looping{' '}
+                        {formatTimestamp(replayLoop.start_ms)}–{formatTimestamp(replayLoop.end_ms)}
+                      </Badge>
+                      <Button size="sm" variant="ghost" onClick={() => setReplayLoop(undefined)}>
+                        Stop loop
+                      </Button>
+                    </div>
+                  ) : null}
+                </section>
               </CardContent>
             </Card>
 
@@ -1176,6 +1386,32 @@ export function PlayerRoute() {
                   ) : null}
                 </CardContent>
               </Card>
+
+              <LearningTrail
+                markers={learningMarkers}
+                draft={markerDraft}
+                status={markerStatus}
+                error={
+                  markerError ??
+                  (learningTrailQuery.isError ? messageFrom(learningTrailQuery.error) : undefined)
+                }
+                loading={learningTrailQuery.isLoading}
+                pending={
+                  learningTrailQuery.isLoading ||
+                  createMarker.isPending ||
+                  reviewMarker.isPending ||
+                  deleteMarker.isPending
+                }
+                onDraftChange={(value) => {
+                  setMarkerDraft(value);
+                  setMarkerStatus(undefined);
+                  setMarkerError(undefined);
+                }}
+                onSave={saveLearningMarker}
+                onSeek={(atMs) => void commitSeek(atMs)}
+                onToggleReviewed={toggleLearningMarker}
+                onRemove={removeLearningMarker}
+              />
 
               <StudyActions
                 actionsDisabled={actionsDisabled}
@@ -1555,9 +1791,19 @@ export function PlayerRoute() {
                             >
                               {formatTimestamp(note.at_ms)} · {note.title}
                             </button>
-                            <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-muted-foreground">
-                              {note.body_markdown}
-                            </p>
+                            <StudyNoteBody markdown={note.body_markdown} />
+                            {note.evidence.length > 0 ? (
+                              <div className="mt-3">
+                                <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.07em] text-muted-foreground">
+                                  Cited moments
+                                </p>
+                                <EvidenceButtons
+                                  label={`Evidence for ${note.title}`}
+                                  evidence={note.evidence}
+                                  onSeek={(atMs) => void commitSeek(atMs)}
+                                />
+                              </div>
+                            ) : null}
                             <p className="mt-3 font-mono text-[11px] text-muted-foreground">
                               {note.frame_grounded
                                 ? 'Frame + transcript grounded'
@@ -2168,6 +2414,169 @@ function SessionMetric({ label, value }: { label: string; value: string }) {
   );
 }
 
+function LearningTrail({
+  markers,
+  draft,
+  status,
+  error,
+  loading,
+  pending,
+  onDraftChange,
+  onSave,
+  onSeek,
+  onToggleReviewed,
+  onRemove,
+}: {
+  markers: LearningMarker[];
+  draft: string;
+  status?: string;
+  error?: string;
+  loading: boolean;
+  pending: boolean;
+  onDraftChange: (value: string) => void;
+  onSave: (kind: LearningMarkerKind) => void;
+  onSeek: (atMs: number) => void;
+  onToggleReviewed: (markerId: string) => void;
+  onRemove: (markerId: string) => void;
+}) {
+  const openCount = markers.filter((marker) => !marker.reviewed).length;
+  const canSave = draft.trim().length > 0;
+  return (
+    <Card className="overflow-hidden border-primary/15">
+      <CardHeader className="border-b border-border/70 bg-primary/[0.035]">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <CardTitle className="flex items-center gap-2">
+              <Flag className="size-4 text-primary" /> Learning trail
+            </CardTitle>
+            <CardDescription className="mt-1">
+              Pin a question or takeaway to this exact moment. It stays on this device and is
+              searchable across LectorBit.
+            </CardDescription>
+          </div>
+          <Badge tone={openCount > 0 ? 'warning' : 'neutral'}>{openCount} open</Badge>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-4 pt-5">
+        <div>
+          <label className="text-sm font-semibold" htmlFor="learning-marker-note">
+            What should future-you remember?
+          </label>
+          <textarea
+            id="learning-marker-note"
+            rows={2}
+            maxLength={MAX_LEARNING_MARKER_LENGTH}
+            value={draft}
+            onChange={(event) => onDraftChange(event.target.value)}
+            placeholder="A question, misconception, or key connection…"
+            className="mt-2 w-full resize-none rounded-lg border border-input bg-background px-3 py-2 text-sm leading-5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          />
+          <div className="mt-2 grid grid-cols-2 gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={!canSave || pending}
+              onClick={() => onSave('question')}
+            >
+              Save question
+            </Button>
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={!canSave || pending}
+              onClick={() => onSave('takeaway')}
+            >
+              Save takeaway
+            </Button>
+          </div>
+        </div>
+
+        {status ? (
+          <p className="text-xs leading-5 text-success" role="status">
+            {status}
+          </p>
+        ) : null}
+
+        {error ? (
+          <p className="text-xs leading-5 text-destructive" role="alert">
+            {error}
+          </p>
+        ) : null}
+
+        {loading ? (
+          <p className="rounded-lg border border-dashed p-3 text-xs leading-5 text-muted-foreground">
+            Loading your private learning trail…
+          </p>
+        ) : markers.length === 0 ? (
+          <p className="rounded-lg border border-dashed p-3 text-xs leading-5 text-muted-foreground">
+            No markers yet. Capture uncertainty while it is fresh, then return here before ending
+            the lecture.
+          </p>
+        ) : (
+          <div
+            className="max-h-80 space-y-2 overflow-auto pr-1"
+            aria-label="Saved learning markers"
+          >
+            {markers.map((marker) => (
+              <article
+                key={marker.id}
+                className={cn(
+                  'rounded-lg border bg-background p-3',
+                  marker.reviewed && 'opacity-65',
+                )}
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <Badge
+                    tone={
+                      marker.reviewed
+                        ? 'success'
+                        : marker.kind === 'question'
+                          ? 'warning'
+                          : 'primary'
+                    }
+                  >
+                    {marker.reviewed ? 'Reviewed' : learningMarkerLabel(marker.kind)}
+                  </Badge>
+                  <button
+                    type="button"
+                    className="font-mono text-[11px] font-semibold text-primary hover:underline"
+                    onClick={() => onSeek(marker.at_ms)}
+                  >
+                    Replay {formatTimestamp(marker.at_ms)}
+                  </button>
+                </div>
+                <p className="mt-2 whitespace-pre-wrap text-sm leading-6">{marker.text}</p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    disabled={pending}
+                    onClick={() => onToggleReviewed(marker.id)}
+                  >
+                    {marker.reviewed
+                      ? 'Reopen'
+                      : marker.kind === 'question'
+                        ? 'Mark understood'
+                        : 'Mark reviewed'}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    disabled={pending}
+                    onClick={() => onRemove(marker.id)}
+                  >
+                    Remove
+                  </Button>
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 function StudyActions({
   actionsDisabled,
   view,
@@ -2300,7 +2709,7 @@ function EvidenceButtons({
   onSeek: (atMs: number) => void;
 }) {
   return (
-    <div className="flex flex-wrap gap-1.5" aria-label={label}>
+    <div className="flex flex-wrap gap-1.5" aria-label={label} role="group">
       {evidence.map((item) => (
         <button
           key={item.segment_id}
@@ -2311,6 +2720,47 @@ function EvidenceButtons({
           {formatTimestamp(item.start_ms)}
         </button>
       ))}
+    </div>
+  );
+}
+
+function StudyNoteBody({ markdown }: { markdown: string }) {
+  const lines = markdown.split(/\r?\n/);
+  return (
+    <div className="mt-3 space-y-2 text-sm leading-6 text-muted-foreground">
+      {lines.map((rawLine, index) => {
+        const line = rawLine.trim();
+        if (!line) return <div key={`space-${index}`} className="h-1" aria-hidden="true" />;
+        const heading = /^(#{1,3})\s+(.+)$/.exec(line);
+        if (heading) {
+          return (
+            <h4 key={`heading-${index}`} className="pt-1 font-semibold text-foreground">
+              {plainStudyText(heading[2])}
+            </h4>
+          );
+        }
+        const bullet = /^[-*]\s+(.+)$/.exec(line);
+        if (bullet) {
+          return (
+            <p key={`bullet-${index}`} className="flex gap-2 pl-1">
+              <span className="text-primary" aria-hidden="true">
+                •
+              </span>
+              <span>{plainStudyText(bullet[1])}</span>
+            </p>
+          );
+        }
+        const numbered = /^(\d+)[.)]\s+(.+)$/.exec(line);
+        if (numbered) {
+          return (
+            <p key={`numbered-${index}`} className="flex gap-2 pl-1">
+              <span className="font-mono text-xs text-primary">{numbered[1]}.</span>
+              <span>{plainStudyText(numbered[2])}</span>
+            </p>
+          );
+        }
+        return <p key={`paragraph-${index}`}>{plainStudyText(line)}</p>;
+      })}
     </div>
   );
 }
@@ -2630,11 +3080,37 @@ function saveSessionGoal(itemId: string, value: string) {
   }
 }
 
+function currentPlaybackPosition(view: PlaybackView, video: HTMLVideoElement | null): number {
+  const livePosition =
+    video &&
+    video.readyState >= HTMLMediaElement.HAVE_METADATA &&
+    Number.isFinite(video.currentTime)
+      ? Math.round(video.currentTime * 1_000)
+      : view.position_ms;
+  return Math.max(view.raw_start_ms, Math.min(view.raw_end_ms, livePosition));
+}
+
+function learningMarkerLabel(kind: LearningMarkerKind): string {
+  return kind === 'question' ? 'Question' : 'Takeaway';
+}
+
+function plainStudyText(value: string): string {
+  return value
+    .replace(/\[([^\]]+)]\([^)]+\)/g, '$1')
+    .replace(/(\*\*|__)(.*?)\1/g, '$2')
+    .replace(/([*_])(.*?)\1/g, '$2')
+    .replace(/`([^`]+)`/g, '$1');
+}
+
 function localIsoDate(): string {
   const now = new Date();
   now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
   return now.toISOString().slice(0, 10);
 }
+
+const MAX_LEARNING_MARKER_LENGTH = 240;
+const MIN_REPLAY_LOOP_MS = 5_000;
+const REPLAY_LOOP_DURATIONS_MS = [15_000, 30_000, 60_000] as const;
 
 const backLinkClass =
   'inline-flex h-10 items-center justify-center gap-2 rounded-lg border bg-background px-4 text-sm font-semibold transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50';

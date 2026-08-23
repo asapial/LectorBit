@@ -733,6 +733,43 @@ pub trait LearningOps: Send + Sync + 'static {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AnnotationDto {
+    pub id: String,
+    pub media_id: String,
+    pub at_ms: u64,
+    pub kind: String,
+    pub text: String,
+    pub reviewed: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+pub trait AnnotationOps: Send + Sync + 'static {
+    fn list(
+        &self,
+        media_id: String,
+    ) -> BoxFuture<'_, Result<Vec<AnnotationDto>, AnnotationErrorCode>>;
+    fn create(
+        &self,
+        media_id: String,
+        at_ms: u64,
+        kind: String,
+        text: String,
+    ) -> BoxFuture<'_, Result<AnnotationDto, AnnotationErrorCode>>;
+    fn set_reviewed(
+        &self,
+        media_id: String,
+        annotation_id: String,
+        reviewed: bool,
+    ) -> BoxFuture<'_, Result<AnnotationDto, AnnotationErrorCode>>;
+    fn remove(
+        &self,
+        media_id: String,
+        annotation_id: String,
+    ) -> BoxFuture<'_, Result<(), AnnotationErrorCode>>;
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SearchHitDto {
     pub media_id: String,
     pub display_name: String,
@@ -964,6 +1001,33 @@ pub enum LearningErrorKind {
 
 impl LearningErrorCode {
     pub fn new(kind: LearningErrorKind, message: impl Into<String>) -> Self {
+        Self {
+            kind,
+            message: message.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, thiserror::Error)]
+#[error("{message}")]
+pub struct AnnotationErrorCode {
+    pub kind: AnnotationErrorKind,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AnnotationErrorKind {
+    InvalidInput,
+    MediaUnavailable,
+    NotFound,
+    LimitReached,
+    Database,
+    Internal,
+}
+
+impl AnnotationErrorCode {
+    pub fn new(kind: AnnotationErrorKind, message: impl Into<String>) -> Self {
         Self {
             kind,
             message: message.into(),
@@ -1209,6 +1273,32 @@ pub struct CompanionArgs {
     pub action: String,
     #[serde(default)]
     pub consent: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MediaAnnotationsArgs {
+    pub media_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateAnnotationArgs {
+    pub media_id: String,
+    pub at_ms: u64,
+    pub kind: String,
+    pub text: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SetAnnotationReviewedArgs {
+    pub media_id: String,
+    pub annotation_id: String,
+    pub reviewed: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RemoveAnnotationArgs {
+    pub media_id: String,
+    pub annotation_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1634,6 +1724,40 @@ mod commands {
     }
 
     #[tauri::command]
+    pub(crate) async fn annotations_list(
+        ops: State<'_, Arc<dyn AnnotationOps>>,
+        args: MediaAnnotationsArgs,
+    ) -> Result<Vec<AnnotationDto>, AnnotationErrorCode> {
+        ops.list(args.media_id).await
+    }
+
+    #[tauri::command]
+    pub(crate) async fn annotations_create(
+        ops: State<'_, Arc<dyn AnnotationOps>>,
+        args: CreateAnnotationArgs,
+    ) -> Result<AnnotationDto, AnnotationErrorCode> {
+        ops.create(args.media_id, args.at_ms, args.kind, args.text)
+            .await
+    }
+
+    #[tauri::command]
+    pub(crate) async fn annotations_set_reviewed(
+        ops: State<'_, Arc<dyn AnnotationOps>>,
+        args: SetAnnotationReviewedArgs,
+    ) -> Result<AnnotationDto, AnnotationErrorCode> {
+        ops.set_reviewed(args.media_id, args.annotation_id, args.reviewed)
+            .await
+    }
+
+    #[tauri::command]
+    pub(crate) async fn annotations_remove(
+        ops: State<'_, Arc<dyn AnnotationOps>>,
+        args: RemoveAnnotationArgs,
+    ) -> Result<(), AnnotationErrorCode> {
+        ops.remove(args.media_id, args.annotation_id).await
+    }
+
+    #[tauri::command]
     pub(crate) async fn search_query(
         ops: State<'_, Arc<dyn SearchOps>>,
         args: SearchArgs,
@@ -1721,6 +1845,10 @@ mod plugin_builder {
                 super::commands::learning_list_due_reviews,
                 super::commands::learning_record_review,
                 super::commands::learning_companion,
+                super::commands::annotations_list,
+                super::commands::annotations_create,
+                super::commands::annotations_set_reviewed,
+                super::commands::annotations_remove,
                 super::commands::search_query,
                 super::commands::updates_check,
                 super::commands::updates_install,

@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-annotations-list"
+description = "Enables the annotations_list command without any pre-configured scope."
+commands.allow = ["annotations_list"]
+
+[[permission]]
+identifier = "deny-annotations-list"
+description = "Denies the annotations_list command without any pre-configured scope."
+commands.deny = ["annotations_list"]

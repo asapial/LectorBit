@@ -11,6 +11,7 @@
 
 pub mod ai_requests;
 pub mod analysis;
+pub mod annotations;
 pub mod chunks;
 pub mod learning;
 pub mod library_roots;

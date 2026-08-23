@@ -265,6 +265,7 @@ impl Repo {
                       snippet(media_fts, 1, '<mark>', '</mark>', ' … ', 18) AS snippet, \
                       bm25(media_fts, 8.0) AS rank \
                FROM media_fts JOIN media_files m ON m.id = media_fts.media_id \
+               JOIN library_roots root ON root.id = m.root_id AND root.revoked_at IS NULL \
                WHERE media_fts MATCH ? \
                UNION ALL \
                SELECT m.id, m.display_name, \
@@ -280,6 +281,7 @@ impl Repo {
                JOIN transcript_segments s ON s.id = CAST(transcript_fts.segment_id AS INTEGER) \
                JOIN transcripts t ON t.id = s.transcript_id AND t.superseded_at IS NULL \
                JOIN media_files m ON m.id = s.media_id \
+               JOIN library_roots root ON root.id = m.root_id AND root.revoked_at IS NULL \
                WHERE transcript_fts MATCH ? \
                UNION ALL \
                SELECT m.id, m.display_name, \
@@ -294,6 +296,7 @@ impl Repo {
                FROM annotation_fts \
                JOIN annotations a ON a.id = annotation_fts.annotation_id \
                JOIN media_files m ON m.id = a.media_id \
+               JOIN library_roots root ON root.id = m.root_id AND root.revoked_at IS NULL \
                WHERE annotation_fts MATCH ? \
              ) ORDER BY rank ASC LIMIT ?",
         )
@@ -352,6 +355,8 @@ fn to_i64(value: u64) -> i64 {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use super::*;
 
     #[tokio::test]
@@ -409,5 +414,87 @@ mod tests {
         assert_eq!(state.language, "bn");
         assert_eq!(state.model_id, "whisper-base");
         assert_eq!(state.segment_count, 1);
+    }
+
+    #[tokio::test]
+    async fn search_never_returns_content_from_a_revoked_root() {
+        let db = crate::Db::open_in_memory().await.expect("database");
+        sqlx::query(
+            "INSERT INTO library_roots \
+             (id, display_name, canonical_path, registered_at, revoked_at) \
+             VALUES ('root', 'Lectures', 'C:/lectures', '2026-08-20T00:00:00Z', NULL)",
+        )
+        .execute(db.pool())
+        .await
+        .expect("root");
+        sqlx::query(
+            "INSERT INTO media_files \
+             (id, root_id, folder_id, path, size_bytes, mtime, discovered_at, display_name) \
+             VALUES ('media', 'root', NULL, 'C:/lectures/private.mp4', 1, \
+                     '2026-08-20T00:00:00Z', '2026-08-20T00:00:00Z', \
+                     'Secret private lecture')",
+        )
+        .execute(db.pool())
+        .await
+        .expect("media");
+        sqlx::query(
+            "INSERT INTO models \
+             (id, version, provider, source_url, expected_size_bytes, sha256, architecture, \
+              analyzer_compatibility, license) \
+             VALUES ('whisper-base', 'test', 'test', 'https://example.com/model', 1, \
+                     '0000000000000000000000000000000000000000000000000000000000000000', \
+                     'any', '1.9.2', 'MIT')",
+        )
+        .execute(db.pool())
+        .await
+        .expect("model");
+
+        let repo = Repo::new(db.pool().clone());
+        repo.save_transcript(
+            "media",
+            "whisper-base",
+            "1.9.2",
+            "en",
+            &[TranscriptSegmentInput {
+                start_ms: 0,
+                end_ms: 1_000,
+                text: "Secret transcript evidence".into(),
+            }],
+        )
+        .await
+        .expect("transcript");
+        sqlx::query(
+            "INSERT INTO annotations \
+             (id, media_id, at_ms, text, created_at, updated_at, kind, reviewed) \
+             VALUES ('annotation', 'media', 500, 'Secret private question', \
+                     '2026-08-20T00:00:00Z', '2026-08-20T00:00:00Z', 'question', 0)",
+        )
+        .execute(db.pool())
+        .await
+        .expect("annotation");
+
+        let visible = repo
+            .search("\"secret\"*", 20)
+            .await
+            .expect("visible search");
+        assert_eq!(
+            visible
+                .iter()
+                .map(|item| item.source.as_str())
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from(["annotation", "media", "transcript"])
+        );
+
+        sqlx::query(
+            "UPDATE library_roots SET revoked_at = '2026-08-20T01:00:00Z' WHERE id = 'root'",
+        )
+        .execute(db.pool())
+        .await
+        .expect("revoke root");
+        assert!(repo
+            .search("\"secret\"*", 20)
+            .await
+            .expect("revoked search")
+            .is_empty());
     }
 }

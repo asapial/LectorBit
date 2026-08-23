@@ -32,6 +32,10 @@ const mocks = vi.hoisted(() => ({
   listMaterials: vi.fn(),
   recordReview: vi.fn(),
   companion: vi.fn(),
+  listAnnotations: vi.fn(),
+  createAnnotation: vi.fn(),
+  setAnnotationReviewed: vi.fn(),
+  removeAnnotation: vi.fn(),
 }));
 
 vi.mock('../../ipc/playback', () => ({
@@ -66,6 +70,12 @@ vi.mock('../../ipc/learning', () => ({
   listStudyMaterials: mocks.listMaterials,
   recordReview: mocks.recordReview,
   askCompanion: mocks.companion,
+}));
+vi.mock('../../ipc/annotations', () => ({
+  listLearningAnnotations: mocks.listAnnotations,
+  createLearningAnnotation: mocks.createAnnotation,
+  setLearningAnnotationReviewed: mocks.setAnnotationReviewed,
+  removeLearningAnnotation: mocks.removeAnnotation,
 }));
 
 const view = {
@@ -273,6 +283,28 @@ describe('PlayerRoute', () => {
       evidence,
       model: 'openrouter/free',
     });
+    mocks.listAnnotations.mockResolvedValue([]);
+    mocks.createAnnotation.mockResolvedValue({
+      id: 'annotation-1',
+      media_id: 'media-1',
+      at_ms: 245_000,
+      kind: 'question',
+      text: 'Why does breadth-first search guarantee the shortest path?',
+      reviewed: false,
+      created_at: '2026-08-23T00:00:00Z',
+      updated_at: '2026-08-23T00:00:00Z',
+    });
+    mocks.setAnnotationReviewed.mockResolvedValue({
+      id: 'annotation-1',
+      media_id: 'media-1',
+      at_ms: 245_000,
+      kind: 'question',
+      text: 'Why does breadth-first search guarantee the shortest path?',
+      reviewed: true,
+      created_at: '2026-08-23T00:00:00Z',
+      updated_at: '2026-08-23T00:01:00Z',
+    });
+    mocks.removeAnnotation.mockResolvedValue(undefined);
     mocks.replan.mockResolvedValue({
       plan_id: 'plan',
       plan_version_id: 'version-2',
@@ -340,6 +372,146 @@ describe('PlayerRoute', () => {
     expect(await screen.findByRole('textbox', { name: 'Session intention' })).toHaveValue(
       'Understand shortest-path tradeoffs',
     );
+  });
+
+  it('keeps a private timestamped learning trail across study sessions', async () => {
+    const reviewedMarker = {
+      id: 'annotation-1',
+      media_id: 'media-1',
+      at_ms: 245_000,
+      kind: 'question',
+      text: 'Why does breadth-first search guarantee the shortest path?',
+      reviewed: true,
+      created_at: '2026-08-23T00:00:00Z',
+      updated_at: '2026-08-23T00:01:00Z',
+    };
+    mocks.listAnnotations.mockResolvedValueOnce([]).mockResolvedValueOnce([reviewedMarker]);
+    const firstRender = renderRoute();
+    const video = await screen.findByLabelText<HTMLVideoElement>('Playing Graph theory');
+    Object.defineProperties(video, {
+      currentTime: { configurable: true, writable: true, value: 245 },
+      readyState: { configurable: true, value: HTMLMediaElement.HAVE_CURRENT_DATA },
+    });
+
+    const markerNote = screen.getByRole('textbox', {
+      name: 'What should future-you remember?',
+    });
+    fireEvent.change(markerNote, {
+      target: { value: 'Why does breadth-first search guarantee the shortest path?' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save question' }));
+
+    expect(
+      await screen.findByText('Why does breadth-first search guarantee the shortest path?'),
+    ).toBeInTheDocument();
+    expect(screen.getByText('Question saved privately at 00:04:05.')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Replay 00:04:05' }));
+    await waitFor(() => expect(mocks.seek).toHaveBeenCalledWith(245_000));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Mark understood' }));
+    expect(await screen.findByText('Reviewed')).toBeInTheDocument();
+    expect(mocks.createAnnotation).toHaveBeenCalledWith({
+      mediaId: 'media-1',
+      atMs: 245_000,
+      kind: 'question',
+      text: 'Why does breadth-first search guarantee the shortest path?',
+    });
+    expect(mocks.setAnnotationReviewed).toHaveBeenCalledWith({
+      mediaId: 'media-1',
+      annotationId: 'annotation-1',
+      reviewed: true,
+    });
+
+    firstRender.unmount();
+    renderRoute();
+    expect(
+      await screen.findByText('Why does breadth-first search guarantee the shortest path?'),
+    ).toBeInTheDocument();
+    expect(screen.getByText('Reviewed')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
+    await waitFor(() =>
+      expect(
+        screen.queryByText('Why does breadth-first search guarantee the shortest path?'),
+      ).not.toBeInTheDocument(),
+    );
+    expect(mocks.removeAnnotation).toHaveBeenCalledWith({
+      mediaId: 'media-1',
+      annotationId: 'annotation-1',
+    });
+  });
+
+  it('does not overwrite a new lecture draft when an old marker request finishes late', async () => {
+    const oldMarker = {
+      id: 'annotation-late',
+      media_id: 'media-1',
+      at_ms: 245_000,
+      kind: 'question',
+      text: 'Old lecture question',
+      reviewed: false,
+      created_at: '2026-08-23T00:00:00Z',
+      updated_at: '2026-08-23T00:00:00Z',
+    } as const;
+    let finishCreate: (marker: typeof oldMarker) => void = () => undefined;
+    mocks.createAnnotation.mockReturnValue(
+      new Promise<typeof oldMarker>((resolve) => {
+        finishCreate = resolve;
+      }),
+    );
+
+    renderRoute();
+    await screen.findByRole('heading', { name: 'Graph theory' });
+    const draft = screen.getByRole('textbox', { name: 'What should future-you remember?' });
+    fireEvent.change(draft, { target: { value: oldMarker.text } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save question' }));
+
+    const playbackSink = mocks.open.mock.calls[0]?.[1] as (event: {
+      event: 'state';
+      data: typeof view;
+    }) => void;
+    act(() => {
+      playbackSink({
+        event: 'state',
+        data: {
+          ...view,
+          plan_item_id: 'item-2',
+          media_id: 'media-2',
+          display_name: 'A different lecture',
+        },
+      });
+    });
+    const newDraft = await screen.findByRole('textbox', {
+      name: 'What should future-you remember?',
+    });
+    fireEvent.change(newDraft, { target: { value: 'Keep this new lecture draft' } });
+
+    act(() => finishCreate(oldMarker));
+    await waitFor(() => expect(mocks.createAnnotation).toHaveBeenCalledTimes(1));
+    expect(newDraft).toHaveValue('Keep this new lecture draft');
+    expect(screen.queryByText(/Question saved privately/)).not.toBeInTheDocument();
+  });
+
+  it('replays a local concept window without leaving the scheduled block', async () => {
+    renderRoute();
+    const video = await screen.findByLabelText<HTMLVideoElement>('Playing Graph theory');
+    Object.defineProperties(video, {
+      currentTime: { configurable: true, writable: true, value: 120 },
+      readyState: { configurable: true, value: HTMLMediaElement.HAVE_CURRENT_DATA },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Last 30s' }));
+    await waitFor(() => expect(mocks.seek).toHaveBeenCalledWith(90_000));
+    expect(screen.getByText(/Looping 00:01:30–00:02:00/)).toBeInTheDocument();
+
+    video.currentTime = 120;
+    fireEvent.timeUpdate(video);
+    expect(video.currentTime).toBe(90);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Forward 10 seconds' }));
+    await waitFor(() => expect(mocks.seek).toHaveBeenLastCalledWith(100_000));
+    expect(screen.queryByText(/Looping 00:01:30–00:02:00/)).not.toBeInTheDocument();
+    video.currentTime = 120;
+    fireEvent.timeUpdate(video);
+    expect(video.currentTime).toBe(120);
   });
 
   it('keeps optional study tools collapsed until requested', async () => {
@@ -822,7 +994,7 @@ describe('PlayerRoute', () => {
     renderRoute();
     const video = await screen.findByLabelText('Playing Graph theory');
     Object.defineProperties(video, {
-      currentTime: { configurable: true, value: 321 },
+      currentTime: { configurable: true, writable: true, value: 321 },
       videoWidth: { configurable: true, value: 1280 },
       videoHeight: { configurable: true, value: 720 },
       readyState: { configurable: true, value: HTMLMediaElement.HAVE_CURRENT_DATA },
@@ -842,6 +1014,64 @@ describe('PlayerRoute', () => {
       }),
     );
     expect(await screen.findByText(/Saved “Traversal diagram”/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '00:02:00' }));
+    await waitFor(() => expect(mocks.seek).toHaveBeenCalledWith(120_000));
+  });
+
+  it('renders detailed frame-note sections as readable grounded prose', async () => {
+    mocks.listNotes.mockResolvedValue([
+      {
+        ...frameNote,
+        body_markdown:
+          '## Why it matters\n- The frontier separates visited nodes.\n1. Compare the next candidate.',
+      },
+    ]);
+    renderRoute();
+
+    expect(await screen.findByRole('heading', { name: 'Why it matters' })).toBeInTheDocument();
+    expect(screen.getByText('The frontier separates visited nodes.')).toBeInTheDocument();
+    expect(screen.getByText('Compare the next candidate.')).toBeInTheDocument();
+    expect(screen.queryByText(/## Why it matters/)).not.toBeInTheDocument();
+    expect(
+      screen.getByRole('group', { name: 'Evidence for Traversal diagram' }),
+    ).toBeInTheDocument();
+  });
+
+  it('does not leave a stale study-set success beside a later frame-note error', async () => {
+    mocks.listMaterials.mockResolvedValueOnce([]).mockResolvedValue([studyItem]);
+    mocks.explainFrame.mockRejectedValueOnce(new Error('Frame explanation failed.'));
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
+      drawImage: vi.fn(),
+    } as unknown as CanvasRenderingContext2D);
+    vi.spyOn(HTMLCanvasElement.prototype, 'toDataURL').mockReturnValue(
+      'data:image/jpeg;base64,cWEtZnJhbWU=',
+    );
+    renderRoute();
+    const video = await screen.findByLabelText('Playing Graph theory');
+    Object.defineProperties(video, {
+      currentTime: { configurable: true, value: 321 },
+      videoWidth: { configurable: true, value: 1280 },
+      videoHeight: { configurable: true, value: 720 },
+      readyState: { configurable: true, value: HTMLMediaElement.HAVE_CURRENT_DATA },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Open tools' }));
+    const consent = await screen.findByRole('checkbox');
+    await waitFor(() => expect(consent).not.toBeDisabled());
+    fireEvent.click(consent);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Generate study set' }));
+    expect(
+      await screen.findByText('Study material is ready. Review dates are scheduled locally.'),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Explain this frame and save note' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Frame explanation failed.');
+    expect(
+      screen.queryByText('Study material is ready. Review dates are scheduled locally.'),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText('Capturing this frame and its transcript context…'),
+    ).not.toBeInTheDocument();
   });
 
   it('generates review cards and records spaced-repetition feedback', async () => {
