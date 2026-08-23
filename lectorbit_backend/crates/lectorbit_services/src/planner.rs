@@ -10,6 +10,8 @@ use lectorbit_db::{
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::PLAYBACK_CLOCK_TOLERANCE_MS;
+
 pub use lectorbit_core::planning::*;
 
 const LOCAL_USER_ID: &str = "local";
@@ -330,11 +332,12 @@ fn adjusted_chunks(
     let mut result = Vec::new();
     for chunk in chunks {
         let mut boundaries = vec![chunk.start_ms, chunk.end_ms];
-        for (start, end) in state
-            .completed_ranges
-            .iter()
-            .chain(state.forced_ranges.iter())
-        {
+        let completed_ranges = normalized_completed_ranges(
+            &state.completed_ranges,
+            chunk.start_ms,
+            chunk.end_ms,
+        );
+        for (start, end) in completed_ranges.iter().chain(state.forced_ranges.iter()) {
             if *end > chunk.start_ms && *start < chunk.end_ms {
                 boundaries.push((*start).max(chunk.start_ms));
                 boundaries.push((*end).min(chunk.end_ms));
@@ -352,7 +355,7 @@ fn adjusted_chunks(
         for pair in boundaries.windows(2) {
             let start = pair[0];
             let end = pair[1];
-            let completed = range_contains(&state.completed_ranges, start, end);
+            let completed = range_contains(&completed_ranges, start, end);
             let forced = range_contains(&state.forced_ranges, start, end);
             if start < end && (!completed || forced) {
                 let ordinal = u32::try_from(result.len()).unwrap_or(u32::MAX);
@@ -367,6 +370,48 @@ fn adjusted_chunks(
         }
     }
     result
+}
+
+/// Produces a planning-only view of verified coverage. Checkpoints are recorded
+/// by two independent clocks, so sub-two-second seams are expected. Keeping
+/// them exact in the study repository protects coverage integrity; coalescing
+/// them here prevents replanning those seams as unplayable micro-sessions.
+fn normalized_completed_ranges(
+    ranges: &[(u64, u64)],
+    chunk_start: u64,
+    chunk_end: u64,
+) -> Vec<(u64, u64)> {
+    let mut clipped = ranges
+        .iter()
+        .filter_map(|(start, end)| {
+            let start = (*start).max(chunk_start);
+            let end = (*end).min(chunk_end);
+            (start < end).then_some((start, end))
+        })
+        .collect::<Vec<_>>();
+    clipped.sort_unstable_by_key(|(start, end)| (*start, *end));
+
+    let mut merged: Vec<(u64, u64)> = Vec::with_capacity(clipped.len());
+    for (start, end) in clipped {
+        if let Some((_, merged_end)) = merged.last_mut() {
+            if start.saturating_sub(*merged_end) <= PLAYBACK_CLOCK_TOLERANCE_MS {
+                *merged_end = (*merged_end).max(end);
+                continue;
+            }
+        }
+        merged.push((start, end));
+    }
+    if let Some(first) = merged.first_mut() {
+        if first.0.saturating_sub(chunk_start) <= PLAYBACK_CLOCK_TOLERANCE_MS {
+            first.0 = chunk_start;
+        }
+    }
+    if let Some(last) = merged.last_mut() {
+        if chunk_end.saturating_sub(last.1) <= PLAYBACK_CLOCK_TOLERANCE_MS {
+            last.1 = chunk_end;
+        }
+    }
+    merged
 }
 
 fn range_contains(ranges: &[(u64, u64)], start: u64, end: u64) -> bool {
@@ -636,6 +681,57 @@ mod tests {
                 (15 * 60_000, 20 * 60_000),
                 (50 * 60_000, 60 * 60_000),
             ]
+        );
+    }
+
+    #[test]
+    fn replan_coalesces_checkpoint_jitter_instead_of_creating_micro_blocks() {
+        let mut media = available().remove(0);
+        media.chunks[0].end_ms = 285_256;
+        let chunks = adjusted_chunks(
+            media.chunks,
+            Some(&ReplanMediaState {
+                media_id: "media".into(),
+                completed_ranges: vec![
+                    (23, 105_788),
+                    (106_591, 129_849),
+                    (130_081, 235_769),
+                    (236_011, 239_418),
+                ],
+                forced_ranges: Vec::new(),
+                split_points: Vec::new(),
+            }),
+        );
+
+        assert_eq!(
+            chunks
+                .iter()
+                .map(|chunk| (chunk.start_ms, chunk.end_ms))
+                .collect::<Vec<_>>(),
+            vec![(239_418, 285_256)]
+        );
+    }
+
+    #[test]
+    fn replan_keeps_forced_ranges_inside_coalesced_clock_noise() {
+        let mut media = available().remove(0);
+        media.chunks[0].end_ms = 10_000;
+        let chunks = adjusted_chunks(
+            media.chunks,
+            Some(&ReplanMediaState {
+                media_id: "media".into(),
+                completed_ranges: vec![(0, 4_900), (5_100, 10_000)],
+                forced_ranges: vec![(4_950, 5_050)],
+                split_points: Vec::new(),
+            }),
+        );
+
+        assert_eq!(
+            chunks
+                .iter()
+                .map(|chunk| (chunk.start_ms, chunk.end_ms))
+                .collect::<Vec<_>>(),
+            vec![(4_950, 5_050)]
         );
     }
 }

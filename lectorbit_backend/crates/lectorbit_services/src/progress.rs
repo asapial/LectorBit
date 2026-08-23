@@ -15,10 +15,9 @@ use thiserror::Error;
 use tokio::sync::{broadcast, Mutex};
 use uuid::Uuid;
 
-use crate::{MediaError, MediaService};
+use crate::{MediaError, MediaService, PLAYBACK_CLOCK_TOLERANCE_MS};
 
 const CHECKPOINT_INTERVAL: Duration = Duration::from_secs(5);
-const PLAYBACK_CLOCK_TOLERANCE: Duration = Duration::from_secs(2);
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PlaybackCapability {
@@ -560,7 +559,7 @@ fn plausible_watched_range(
     // playhead advance to real elapsed time instead of a fixed ten-second cap,
     // while retaining a small allowance for independent media/timer clocks.
     let plausible_ms = elapsed.as_secs_f64() * 1_000.0 * speed.clamp(0.5, 2.0)
-        + PLAYBACK_CLOCK_TOLERANCE.as_millis() as f64;
+        + PLAYBACK_CLOCK_TOLERANCE_MS as f64;
     (delta <= plausible_ms.ceil() as u64).then_some((previous_ms, current_ms))
 }
 

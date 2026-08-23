@@ -1306,10 +1306,14 @@ describe('PlayerRoute', () => {
     expect(mocks.open).not.toHaveBeenCalled();
   });
 
-  it('reports stream failures precisely and can retry the media element', async () => {
+  it('reports stream failures precisely and retries with a fresh stream grant', async () => {
+    const refreshedView = {
+      ...view,
+      stream_url: 'http://lector-media.localhost/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    };
+    mocks.open.mockResolvedValueOnce(view).mockResolvedValueOnce(refreshedView);
     renderRoute();
     const video = await screen.findByLabelText('Playing Graph theory');
-    const load = vi.spyOn(HTMLMediaElement.prototype, 'load').mockImplementation(() => undefined);
     Object.defineProperty(video, 'error', {
       configurable: true,
       value: { code: 2, message: 'network failure' },
@@ -1318,6 +1322,29 @@ describe('PlayerRoute', () => {
     fireEvent.error(video);
     expect(screen.getByText(/private local video stream could not be read/i)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /Retry stream/i }));
-    expect(load).toHaveBeenCalled();
+    await waitFor(() => expect(mocks.close).toHaveBeenCalled());
+    await waitFor(() => expect(mocks.open).toHaveBeenCalledTimes(2));
+    expect(await screen.findByLabelText('Playing Graph theory')).toHaveAttribute(
+      'src',
+      refreshedView.stream_url,
+    );
+  });
+
+  it('blocks legacy micro-sessions and repairs the remaining schedule', async () => {
+    mocks.open.mockResolvedValue({
+      ...view,
+      raw_start_ms: 105_788,
+      raw_end_ms: 106_591,
+      position_ms: 105_788,
+      item_duration_ms: 803,
+    });
+    renderRoute();
+
+    expect(
+      await screen.findByText('This legacy study block is too short to play'),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Play' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Repair schedule' }));
+    await waitFor(() => expect(mocks.replan).toHaveBeenCalled());
   });
 });

@@ -1,5 +1,9 @@
 //! Application use-cases for LectorBit's modular monolith.
 
+/// Small differences between the browser playhead and persisted checkpoints are
+/// clock noise, not meaningful unwatched study material.
+pub(crate) const PLAYBACK_CLOCK_TOLERANCE_MS: u64 = 2_000;
+
 pub mod analysis;
 pub mod annotations;
 pub mod diagnostics;

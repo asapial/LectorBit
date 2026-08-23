@@ -114,6 +114,10 @@ const companionActions: Array<{ action: CompanionAction; label: string }> = [
   { action: 'define_terms', label: 'Define the terms used here' },
 ];
 
+// Older plan versions could contain sub-second gaps between verified playback
+// checkpoints. They are not useful study sessions and appear to stop instantly.
+const LEGACY_MICRO_BLOCK_MS = 2_000;
+
 export function PlayerRoute() {
   const { itemId = '' } = useParams();
   const [searchParams] = useSearchParams();
@@ -123,6 +127,7 @@ export function PlayerRoute() {
   const [capability, setCapability] = useState<PlaybackCapability>();
   const [view, setView] = useState<PlaybackView>();
   const [error, setError] = useState<string>();
+  const [streamAttempt, setStreamAttempt] = useState(0);
   const [busy, setBusy] = useState(false);
   const [actionPending, setActionPending] = useState<StudyAction>();
   const [actionMessage, setActionMessage] = useState<string>();
@@ -674,7 +679,7 @@ export function PlayerRoute() {
       disposed = true;
       if (opened && !closeRequestedRef.current) void flushAndClosePlayback();
     };
-  }, [itemId, searchParams]);
+  }, [itemId, searchParams, streamAttempt]);
 
   useEffect(() => {
     if (phase !== 'ready' || !view) return;
@@ -784,7 +789,11 @@ export function PlayerRoute() {
 
   function retryMedia() {
     setError(undefined);
-    videoRef.current?.load();
+    setPhase('loading');
+    // Re-running the playback lifecycle closes the failed session and asks the
+    // backend for a fresh opaque stream grant. Reloading the revoked URL cannot
+    // recover from a local server or grant failure.
+    setStreamAttempt((attempt) => attempt + 1);
   }
 
   async function changeSpeed(speed: number) {
@@ -991,10 +1000,12 @@ export function PlayerRoute() {
 
   shortcutActionsRef.current = {
     togglePlayback: () => {
-      if (!busy && phase === 'ready' && view) void togglePlayback();
+      if (!busy && phase === 'ready' && view && !isLegacyMicroBlock(view)) {
+        void togglePlayback();
+      }
     },
     seekBy: (milliseconds) => {
-      if (!busy && phase === 'ready' && view) {
+      if (!busy && phase === 'ready' && view && !isLegacyMicroBlock(view)) {
         void commitSeek(view.position_ms + milliseconds);
       }
     },
@@ -1109,6 +1120,33 @@ export function PlayerRoute() {
             </div>
           ) : null}
 
+          {isLegacyMicroBlock(view) ? (
+            <div
+              className="flex flex-wrap items-start justify-between gap-4 rounded-xl border border-warning/30 bg-warning/10 p-4"
+              role="alert"
+            >
+              <div className="flex min-w-0 items-start gap-3">
+                <TriangleAlert className="mt-0.5 size-5 shrink-0 text-warning" />
+                <div>
+                  <p className="font-medium">This legacy study block is too short to play</p>
+                  <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
+                    A previous replan saved a playback timing seam as a block. Repair the remaining
+                    schedule to keep verified progress and remove these micro-blocks.
+                  </p>
+                </div>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={replanPending}
+                onClick={() => void replanRemaining()}
+              >
+                <RefreshCcw className={cn('size-3.5', replanPending && 'animate-spin')} />
+                {replanPending ? 'Repairing…' : 'Repair schedule'}
+              </Button>
+            </div>
+          ) : null}
+
           <section
             className="grid gap-4 min-[1320px]:grid-cols-[minmax(0,1.5fr)_minmax(18rem,0.5fr)]"
             aria-label="Playback controls"
@@ -1120,7 +1158,7 @@ export function PlayerRoute() {
                   ref={attachVideo}
                   src={view.stream_url}
                   className="size-full object-contain"
-                  controls
+                  controls={!isLegacyMicroBlock(view)}
                   crossOrigin="anonymous"
                   playsInline
                   preload="metadata"
@@ -1198,7 +1236,7 @@ export function PlayerRoute() {
                     step={1_000}
                     value={seekDraft ?? clampPosition(view)}
                     onChange={(event) => setSeekDraft(Number(event.target.value))}
-                    disabled={busy || phase === 'closed'}
+                    disabled={busy || phase === 'closed' || isLegacyMicroBlock(view)}
                   />
                   <div className="mt-2 flex items-center justify-between gap-3 text-xs text-muted-foreground">
                     <span>Block starts at {formatTimestamp(view.raw_start_ms)}</span>
@@ -1220,14 +1258,14 @@ export function PlayerRoute() {
                     aria-label="Rewind 10 seconds"
                     variant="outline"
                     size="icon"
-                    disabled={busy || phase === 'closed'}
+                    disabled={busy || phase === 'closed' || isLegacyMicroBlock(view)}
                     onClick={() => void commitSeek(view.position_ms - 10_000)}
                   >
                     <Rewind className="size-4" />
                   </Button>
                   <Button
                     className="min-w-0 sm:min-w-28"
-                    disabled={busy || phase === 'closed'}
+                    disabled={busy || phase === 'closed' || isLegacyMicroBlock(view)}
                     onClick={() => void togglePlayback()}
                   >
                     {view.paused ? <Play className="size-4" /> : <Pause className="size-4" />}
@@ -1237,7 +1275,7 @@ export function PlayerRoute() {
                     aria-label="Forward 10 seconds"
                     variant="outline"
                     size="icon"
-                    disabled={busy || phase === 'closed'}
+                    disabled={busy || phase === 'closed' || isLegacyMicroBlock(view)}
                     onClick={() => void commitSeek(view.position_ms + 10_000)}
                   >
                     <FastForward className="size-4" />
@@ -2846,6 +2884,10 @@ function PlayerSkeleton() {
 
 function clampPosition(view: PlaybackView): number {
   return Math.max(view.raw_start_ms, Math.min(view.raw_end_ms, view.position_ms));
+}
+
+function isLegacyMicroBlock(view: PlaybackView): boolean {
+  return view.raw_end_ms - view.raw_start_ms <= LEGACY_MICRO_BLOCK_MS;
 }
 
 function enforceBlockBounds(video: HTMLVideoElement, view: PlaybackView): number {
