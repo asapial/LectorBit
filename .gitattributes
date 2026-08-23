@@ -1,4 +1,5 @@
 # Applied SQL migrations are byte-locked. Do not normalize an intentional
 # trailing blank line after its checksum has been recorded.
-lectorbit_backend/migrations/*.sql text eol=lf whitespace=-blank-at-eof
+lectorbit_backend/migrations/*.sql text eol=lf
+lectorbit_backend/migrations/202608230009_learning_trail_annotations.sql whitespace=-blank-at-eof
 lectorbit_backend/migrations/checksums.sha384 text eol=lf
