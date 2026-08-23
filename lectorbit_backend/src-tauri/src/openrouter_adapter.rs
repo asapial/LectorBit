@@ -8,8 +8,6 @@ use crate::ai_gateway::{
     GatewayRequest,
 };
 use lectorbit_db::{ChunksRepo, LearningRepo};
-#[cfg(test)]
-use reqwest::StatusCode;
 use serde::Deserialize;
 use serde_json::json;
 use tauri_plugin_lectorbit::{
@@ -19,10 +17,6 @@ use tauri_plugin_lectorbit::{
 };
 
 const PROVIDER: &str = "OpenRouter";
-#[cfg(test)]
-const PRIMARY_MODELS: [&str; 2] = ["openai/gpt-oss-20b:free", "nvidia/nemotron-nano-9b-v2:free"];
-#[cfg(test)]
-const FALLBACK_MODEL: &str = "openrouter/free";
 const MODEL_LABEL: &str = "automatic free text-model fallback";
 const MAX_CANDIDATES: usize = 200;
 
@@ -113,7 +107,7 @@ impl OpenRouterPlanningAdapter {
         );
         let request = SuggestionRequest {
             prompt: format!(
-                "{prompt}\nReturn exactly one compact JSON object and no Markdown: {{\"title\":\"short title\",\"description\":\"short summary\",\"items\":[{{\"id\":0,\"priority\":3,\"dependencies\":[1]}}]}}. Always return priority 3. Dependencies must be earlier numeric ids from the same module. Do not add per-item explanations or any fields not shown."
+                "{prompt}\nReturn exactly one compact JSON object and no Markdown: {{\"title\":\"short title\",\"description\":\"short summary\",\"items\":[{{\"id\":0,\"priority\":3,\"dependencies\":[1],\"reason\":\"grounded rationale with an evidence timestamp\"}}]}}. Always return priority 3. Dependencies must be earlier numeric ids from the same module. Include a concise reason for every item and do not add fields that are not shown."
             ),
             max_tokens: candidates
                 .len()
@@ -133,6 +127,7 @@ impl OpenRouterPlanningAdapter {
                 prompt_version: spec.version,
                 system: spec.system,
                 user_content: json!(request.prompt),
+                allowed_reference_ids: (0..candidates.len()).map(|index| index as i64).collect(),
                 max_tokens: request.max_tokens,
                 temperature_milli: 200,
             })
@@ -159,6 +154,7 @@ impl OpenRouterPlanningAdapter {
                 prompt_version: spec.version,
                 system: spec.system,
                 user_content: json!(prompt),
+                allowed_reference_ids: Vec::new(),
                 max_tokens: 1_600,
                 temperature_milli: 100,
             })
@@ -167,101 +163,6 @@ impl OpenRouterPlanningAdapter {
         let generated: GeneratedPlanIntent = parse_generated_json(&completion.content)?;
         normalize_intent(generated, completion.model, today)
     }
-}
-
-#[cfg(test)]
-fn suggestion_request_body(request: &SuggestionRequest, model: &str) -> serde_json::Value {
-    json!({
-        "model": model,
-        "stream": false,
-        "temperature": 0.2,
-        "max_tokens": request.max_tokens,
-        "response_format": {"type": "json_object"},
-        "messages": [
-            {
-                "role": "system",
-                "content": "You are a careful prerequisite assistant. Always return valid JSON only. Preserve supplied course order and priority 3. Add a dependency only when grounded summaries support it and cite a supplied evidence timestamp in the reason. When unsure, use an empty dependency list. LectorBit's deterministic planner owns ordering, dates, priorities, and feasibility."
-            },
-            {"role": "user", "content": request.prompt}
-        ]
-    })
-}
-
-#[cfg(test)]
-fn classify_http_error(status: StatusCode, detail: Option<&str>) -> AttemptError {
-    let message = match status {
-        StatusCode::UNAUTHORIZED => {
-            "OpenRouter rejected the stored API key. Replace it in Settings."
-        }
-        StatusCode::PAYMENT_REQUIRED => {
-            // 402 means the model requires credits or the account tier does not
-            // cover this provider. Guide the user toward free-tier eligibility.
-            "This OpenRouter account cannot use the selected free model. Ensure your \
-             account has an active free-tier allowance at openrouter.ai."
-        }
-        StatusCode::FORBIDDEN => {
-            "OpenRouter account or provider privacy settings blocked this request."
-        }
-        StatusCode::TOO_MANY_REQUESTS => {
-            "The free model is currently rate-limited. Wait a moment and try again."
-        }
-        StatusCode::BAD_REQUEST | StatusCode::UNPROCESSABLE_ENTITY => {
-            "OpenRouter rejected the planning request parameters."
-        }
-        _ if status.is_server_error() => "OpenRouter is temporarily unavailable.",
-        _ => "OpenRouter could not create a planning suggestion.",
-    };
-    let message = detail
-        .and_then(|value| clean_generated_text(value, 240))
-        .map(|detail| format!("{message} OpenRouter said: {detail}"))
-        .unwrap_or_else(|| message.into());
-    let error = provider_error(&message);
-    if status == StatusCode::UNAUTHORIZED {
-        AttemptError::Fatal(error)
-    } else {
-        AttemptError::Retryable(error)
-    }
-}
-
-#[cfg(test)]
-fn openrouter_error_detail(body: &str) -> Option<String> {
-    let value: serde_json::Value = serde_json::from_str(body).ok()?;
-    value
-        .pointer("/error/message")
-        .and_then(serde_json::Value::as_str)
-        .and_then(|message| clean_generated_text(message, 240))
-}
-
-#[cfg(test)]
-fn classify_completion_error(error: &CompletionError) -> AttemptError {
-    let detail = clean_generated_text(&error.message, 240)
-        .unwrap_or_else(|| "The selected provider stopped before returning a plan.".into());
-    let failure = provider_error(&format!(
-        "OpenRouter could not finish the suggestion: {detail}"
-    ));
-    match error
-        .metadata
-        .as_ref()
-        .and_then(|metadata| metadata.error_type.as_deref())
-    {
-        Some("authentication") => AttemptError::Fatal(failure),
-        Some("provider_unavailable" | "provider_overloaded" | "timeout" | "server") => {
-            AttemptError::Retryable(failure)
-        }
-        _ => AttemptError::Retryable(failure),
-    }
-}
-
-#[cfg(test)]
-fn generated_content(message: &Message) -> Option<&str> {
-    [
-        message.content.as_deref(),
-        message.reasoning_content.as_deref(),
-        message.thinking.as_deref(),
-    ]
-    .into_iter()
-    .flatten()
-    .find(|content| !content.trim().is_empty())
 }
 
 impl CloudPlanningOps for OpenRouterPlanningAdapter {
@@ -444,39 +345,6 @@ fn grounded_summary(payload_json: &str) -> Option<GroundedSummary> {
 struct SuggestionRequest {
     prompt: String,
     max_tokens: usize,
-}
-
-#[cfg(test)]
-enum AttemptError {
-    Fatal(CloudPlanningErrorCode),
-    Retryable(CloudPlanningErrorCode),
-}
-
-#[derive(Deserialize)]
-#[cfg(test)]
-struct Message {
-    #[serde(default)]
-    content: Option<String>,
-    #[serde(default)]
-    reasoning_content: Option<String>,
-    #[serde(default)]
-    thinking: Option<String>,
-}
-
-#[derive(Deserialize)]
-#[cfg(test)]
-struct CompletionError {
-    #[serde(default)]
-    message: String,
-    #[serde(default)]
-    metadata: Option<CompletionErrorMetadata>,
-}
-
-#[derive(Deserialize)]
-#[cfg(test)]
-struct CompletionErrorMetadata {
-    #[serde(default)]
-    error_type: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -992,31 +860,10 @@ fn invalid_input(message: &str) -> CloudPlanningErrorCode {
     CloudPlanningErrorCode::new(CloudPlanningErrorKind::InvalidInput, message)
 }
 
-#[cfg(test)]
-fn provider_error(message: &str) -> CloudPlanningErrorCode {
-    CloudPlanningErrorCode::new(CloudPlanningErrorKind::Provider, message)
-}
-
 fn invalid_response() -> CloudPlanningErrorCode {
     CloudPlanningErrorCode::new(
         CloudPlanningErrorKind::InvalidResponse,
         "OpenRouter returned an invalid suggestion. No plan was changed.",
-    )
-}
-
-#[cfg(test)]
-fn retries_exhausted(last_error: CloudPlanningErrorCode) -> CloudPlanningErrorCode {
-    CloudPlanningErrorCode::new(
-        last_error.kind,
-        match last_error.kind {
-            CloudPlanningErrorKind::InvalidResponse =>
-                "OpenRouter's available free text models returned no usable suggestion. No plan was changed."
-                    .into(),
-            _ => format!(
-                "OpenRouter's available free text models failed. {}",
-                last_error.message
-            ),
-        },
     )
 }
 
@@ -1030,6 +877,8 @@ fn internal_error() -> CloudPlanningErrorCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const TEST_MODEL: &str = "test/model:free";
 
     fn candidates() -> Vec<CloudCandidate> {
         vec![
@@ -1078,8 +927,7 @@ mod tests {
                 },
             ],
         };
-        let result =
-            normalize_suggestion(suggestion, &candidates(), PRIMARY_MODELS[0].into()).unwrap();
+        let result = normalize_suggestion(suggestion, &candidates(), TEST_MODEL.into()).unwrap();
         assert!(result.items[0].dependencies.is_empty());
     }
 
@@ -1103,16 +951,9 @@ mod tests {
                 },
             ],
         };
-        let result =
-            normalize_suggestion(suggestion, &candidates(), PRIMARY_MODELS[0].into()).unwrap();
+        let result = normalize_suggestion(suggestion, &candidates(), TEST_MODEL.into()).unwrap();
         assert_eq!(result.items[0].media_id, "two");
         assert_eq!(result.items[1].dependencies, ["two"]);
-    }
-
-    #[test]
-    fn uses_text_models_with_a_maintained_router_fallback() {
-        assert_eq!(PRIMARY_MODELS[0], "openai/gpt-oss-20b:free");
-        assert_eq!(FALLBACK_MODEL, "openrouter/free");
     }
 
     #[test]
@@ -1149,8 +990,7 @@ mod tests {
                 reason: String::new(),
             }],
         };
-        let result =
-            normalize_suggestion(suggestion, &candidates(), PRIMARY_MODELS[0].into()).unwrap();
+        let result = normalize_suggestion(suggestion, &candidates(), TEST_MODEL.into()).unwrap();
         assert_eq!(result.title, "A calm path");
         assert_eq!(result.items.len(), 2);
         assert_eq!(result.items[0].priority, 3);
@@ -1196,8 +1036,7 @@ mod tests {
                 },
             ],
         };
-        let result =
-            normalize_suggestion(suggestion, &candidates, PRIMARY_MODELS[0].into()).unwrap();
+        let result = normalize_suggestion(suggestion, &candidates, TEST_MODEL.into()).unwrap();
         assert_eq!(
             result
                 .items
@@ -1211,22 +1050,6 @@ mod tests {
     }
 
     #[test]
-    fn request_body_uses_json_object_mode_without_reasoning() {
-        let request = SuggestionRequest {
-            prompt: "prompt".into(),
-            max_tokens: 4_000,
-        };
-        let body = suggestion_request_body(&request, PRIMARY_MODELS[0]);
-        assert_eq!(body["model"], PRIMARY_MODELS[0]);
-        assert!(
-            body.get("reasoning").is_none(),
-            "reasoning field must not be sent"
-        );
-        assert_eq!(body["response_format"]["type"], "json_object");
-        assert!(body.get("provider").is_none());
-    }
-
-    #[test]
     fn compact_candidates_hide_uuid_sized_provider_ids() {
         let candidates = candidates();
         let compact = compact_candidates(&candidates);
@@ -1236,130 +1059,14 @@ mod tests {
     }
 
     #[test]
-    fn accepts_string_priorities_and_dependencies() {
-        let suggestion = parse_suggested_plan(
-            r#"{"items":[{"media_id":"two","priority":"2","dependencies":"ten","reason":"First."}]}"#,
-        )
-        .unwrap();
-        assert_eq!(suggestion.items[0].priority, 2);
-        assert_eq!(suggestion.items[0].dependencies, ["ten"]);
-    }
-
-    #[test]
-    fn accepts_reasoning_content_when_provider_content_is_empty() {
-        let message = Message {
-            content: Some(String::new()),
-            reasoning_content: Some("{\"items\":[]}".into()),
-            thinking: None,
-        };
-        assert_eq!(generated_content(&message), Some("{\"items\":[]}"));
-    }
-
-    #[test]
-    fn oversized_priorities_do_not_wrap_during_deserialization() {
-        let suggestion = parse_suggested_plan(
-            r#"{"items":[{"media_id":"two","priority":260,"reason":"First."}]}"#,
-        )
-        .unwrap();
-        assert_eq!(suggestion.items[0].priority, default_priority());
-    }
-
-    #[test]
     fn accepts_compact_numeric_ids_and_maps_them_back_locally() {
         let suggestion = parse_suggested_plan(
             r#"{"title":"Compact","items":[{"id":1,"priority":4,"dependencies":[]},{"id":0,"priority":3,"dependencies":[1]}]}"#,
         )
         .unwrap();
-        let result =
-            normalize_suggestion(suggestion, &candidates(), PRIMARY_MODELS[0].into()).unwrap();
+        let result = normalize_suggestion(suggestion, &candidates(), TEST_MODEL.into()).unwrap();
         assert_eq!(result.items[0].media_id, "two");
         assert_eq!(result.items[1].media_id, "ten");
         assert!(result.items[0].dependencies.is_empty());
-    }
-
-    #[test]
-    fn repairs_common_free_model_json_defects() {
-        let suggestion = parse_suggested_plan(
-            "```json\n{“title”:“Repaired”,“items”:[{“id”:0,“priority”:3,“dependencies”:[],}],}\n```",
-        )
-        .unwrap();
-        assert_eq!(suggestion.title, "Repaired");
-        assert_eq!(suggestion.items[0].media_id, "0");
-    }
-
-    #[test]
-    fn extracts_safe_provider_error_details() {
-        let detail = openrouter_error_detail(
-            r#"{"error":{"message":"Provider is temporarily unavailable"}}"#,
-        );
-        assert_eq!(
-            detail.as_deref(),
-            Some("Provider is temporarily unavailable")
-        );
-    }
-
-    #[test]
-    fn exhausted_retries_preserve_invalid_response_failures() {
-        let error = retries_exhausted(invalid_response());
-        assert_eq!(error.kind, CloudPlanningErrorKind::InvalidResponse);
-        assert!(error.message.contains("free text models"));
-    }
-
-    #[test]
-    fn account_errors_are_not_retried_but_model_errors_are() {
-        assert!(matches!(
-            classify_http_error(StatusCode::UNAUTHORIZED, None),
-            AttemptError::Fatal(_)
-        ));
-        assert!(matches!(
-            classify_http_error(StatusCode::TOO_MANY_REQUESTS, None),
-            AttemptError::Retryable(_)
-        ));
-        assert!(matches!(
-            classify_http_error(StatusCode::BAD_REQUEST, None),
-            AttemptError::Retryable(_)
-        ));
-    }
-
-    #[test]
-    fn transient_provider_failures_are_retried() {
-        assert!(matches!(
-            classify_http_error(StatusCode::SERVICE_UNAVAILABLE, None),
-            AttemptError::Retryable(_)
-        ));
-    }
-
-    #[test]
-    fn embedded_provider_failures_are_not_misreported_as_invalid_json() {
-        let error = CompletionError {
-            message: "Provider disconnected".into(),
-            metadata: Some(CompletionErrorMetadata {
-                error_type: Some("provider_unavailable".into()),
-            }),
-        };
-        match classify_completion_error(&error) {
-            AttemptError::Retryable(error) => {
-                assert_eq!(error.kind, CloudPlanningErrorKind::Provider);
-                assert!(error.message.contains("Provider disconnected"));
-            }
-            AttemptError::Fatal(_) => panic!("provider availability errors should be retryable"),
-        }
-    }
-
-    #[test]
-    fn embedded_authentication_failures_are_fatal() {
-        let error = CompletionError {
-            message: "Invalid credentials".into(),
-            metadata: Some(CompletionErrorMetadata {
-                error_type: Some("authentication".into()),
-            }),
-        };
-        match classify_completion_error(&error) {
-            AttemptError::Fatal(error) => {
-                assert_eq!(error.kind, CloudPlanningErrorKind::Provider);
-                assert!(error.message.contains("Invalid credentials"));
-            }
-            AttemptError::Retryable(_) => panic!("authentication failures must be fatal"),
-        }
     }
 }
