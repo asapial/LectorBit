@@ -22,6 +22,10 @@ def load(name: str, path: Path):
 provenance = load("verify_provenance", ROOT / "scripts/release/verify_provenance.py")
 updater = load("generate_updater_manifest", ROOT / "scripts/release/generate_updater_manifest.py")
 sidecars = load("extract_sidecar_bundle", ROOT / "scripts/release/extract_sidecar_bundle.py")
+release_config = load(
+    "write_tauri_release_config",
+    ROOT / "scripts/release/write_tauri_release_config.py",
+)
 
 
 class ProvenanceTests(unittest.TestCase):
@@ -96,6 +100,20 @@ class UpdaterManifestTests(unittest.TestCase):
             second.write_text(json.dumps(document), encoding="utf-8")
             with self.assertRaises(updater.ManifestError):
                 updater.merge([first, second])
+
+
+class ReleaseConfigTests(unittest.TestCase):
+    def test_release_overlay_requires_an_updater_public_key(self):
+        with self.assertRaises(ValueError):
+            release_config.release_overlay("   ")
+
+    def test_release_overlay_enables_signed_updaters_only_for_release(self):
+        overlay = release_config.release_overlay("public-key", "ABC123")
+        self.assertTrue(overlay["bundle"]["createUpdaterArtifacts"])
+        self.assertEqual(overlay["plugins"]["updater"]["pubkey"], "public-key")
+        self.assertEqual(
+            overlay["bundle"]["windows"]["certificateThumbprint"], "ABC123"
+        )
 
 
 class SidecarBundleTests(unittest.TestCase):

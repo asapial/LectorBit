@@ -40,8 +40,28 @@
   },
   "bundle": {
     "active": true,
-    "createUpdaterArtifacts": true,
     "targets": "all",
-    "icon": ["icons/icon.png"]
+    "createUpdaterArtifacts": false,
+    "publisher": "LectorBit",
+    "copyright": "Copyright © 2026 LectorBit contributors",
+    "license": "MIT OR Apache-2.0",
+    "category": "Education",
+    "shortDescription": "A local-first video study planner.",
+    "longDescription": "Plan, watch, transcribe, and review lectures with private local media playback and optional grounded AI study tools.",
+    "icon": ["icons/icon.ico", "icons/icon.png"],
+    "windows": {
+      "allowDowngrades": false,
+      "webviewInstallMode": {
+        "type": "offlineInstaller",
+        "silent": true
+      },
+      "nsis": {
+        "installMode": "currentUser",
+        "installerIcon": "icons/icon.ico",
+        "compression": "lzma",
+        "startMenuFolder": "LectorBit",
+        "installerHooks": "windows/installer-hooks.nsh"
+      }
+    }
   }
 }

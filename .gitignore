@@ -26,6 +26,7 @@ __pycache__/
 lectorbit_backend/src-tauri/capabilities/e2e.json
 lectorbit_backend/src-tauri/resources/sidecars/
 lectorbit_backend/src-tauri/tauri.release.conf.json
+artifacts/windows-local/
 
 # Local env
 .env

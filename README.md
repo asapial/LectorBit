@@ -4,6 +4,8 @@
 
 Local-first desktop study planner. Authoritative setup: `project-docs/TECHNOLOGY_BASELINE_2026-08.md`. Full tree: `project-docs/FOLDER_STRUCTURE.txt`.
 
+Windows 10/11 x64 installation and packaging: [`project-docs/INSTALL_WINDOWS.md`](project-docs/INSTALL_WINDOWS.md).
+
 ## Layout
 
 - `lectorbit_frontend/` — React 19.2 + Vite + TS 6 desktop UI.

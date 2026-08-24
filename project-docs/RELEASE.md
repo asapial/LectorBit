@@ -19,7 +19,7 @@ Configure these environment secrets:
 - `WINDOWS_CERTIFICATE_BASE64` and `WINDOWS_CERTIFICATE_PASSWORD` for Authenticode.
 - `APPLE_CERTIFICATE_BASE64`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_ID`, `APPLE_PASSWORD`, and `APPLE_TEAM_ID` for signing and notarization.
 
-Never store signing keys, certificate archives, passwords, or temporary release config in Git. The updater public key is expected to be embedded in a public binary; the private key is not.
+Never store signing keys, certificate archives, passwords, or temporary release config in Git. The updater public key is embedded only by the generated release overlay; local/base builds disable updater artifacts. The private key is never embedded.
 
 ## Sidecar gate
 
