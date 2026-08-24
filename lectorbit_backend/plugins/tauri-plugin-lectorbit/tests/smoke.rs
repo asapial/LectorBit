@@ -3,8 +3,8 @@ use std::sync::Arc;
 use tauri_plugin_lectorbit::{
     current_app_version, BoxFuture, DiagnosticsProvider, LibraryErrorCode, LibraryErrorKind,
     LibraryOps, LibraryRootDto, MediaPageDto, MediaSummaryDto, PlanCommitResultDto, PlanPreviewDto,
-    PlanRequestDto, PlannerCandidateDto, PlannerCandidatePageDto, PlannerErrorCode, PlannerOps,
-    RoutinePlanDto, ScanEventSink, ScanJobDto,
+    PlanRequestDto, PlanVersionSummaryDto, PlannerCandidateDto, PlannerCandidatePageDto,
+    PlannerErrorCode, PlannerOps, RoutinePlanDto, ScanEventSink, ScanJobDto,
 };
 
 #[test]
@@ -15,6 +15,13 @@ fn app_version_is_available_without_a_runtime() {
 struct FakePlanner;
 
 impl PlannerOps for FakePlanner {
+    fn history(
+        &self,
+        _limit: u32,
+    ) -> BoxFuture<'_, Result<Vec<PlanVersionSummaryDto>, PlannerErrorCode>> {
+        Box::pin(async { Ok(Vec::new()) })
+    }
+
     fn list_candidates(
         &self,
         _module_id: Option<String>,
