@@ -68,13 +68,51 @@ export function AboutRoute() {
               <li>Replans from real study actions, not intentions.</li>
             </ul>
             <div className="mt-4">
-              <Link
-                to="/diagnostics"
-                className="text-sm font-medium text-primary hover:underline"
-              >
+              <Link to="/diagnostics" className="text-sm font-medium text-primary hover:underline">
                 Open diagnostics panel →
               </Link>
             </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Privacy architecture</CardTitle>
+            <CardDescription>Know where each category of data lives.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-2 text-sm text-muted-foreground">
+            <p>
+              <strong className="text-foreground">Local:</strong> media, paths, transcripts, plans,
+              progress, notes, and review dates.
+            </p>
+            <p>
+              <strong className="text-foreground">Consent-scoped:</strong> only the evidence
+              envelope required for an optional cloud request.
+            </p>
+            <Link
+              to="/settings"
+              className="inline-block pt-2 font-medium text-primary hover:underline"
+            >
+              Review privacy and AI settings →
+            </Link>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Support and release information</CardTitle>
+            <CardDescription>Everything needed to understand or report this build.</CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-wrap gap-3 text-sm">
+            <Link to="/diagnostics" className="font-medium text-primary hover:underline">
+              Diagnostics
+            </Link>
+            <Link to="/settings" className="font-medium text-primary hover:underline">
+              Updates
+            </Link>
+            <span className="text-muted-foreground">
+              Third-party notices are bundled with public releases.
+            </span>
           </CardContent>
         </Card>
       </div>

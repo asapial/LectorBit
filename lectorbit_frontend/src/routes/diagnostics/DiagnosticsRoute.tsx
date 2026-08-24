@@ -1,8 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
-import {
-  getDiagnostics,
-  type DiagnosticsReport,
-} from '../../ipc/diagnostics';
+import { useState } from 'react';
+import Copy from 'lucide-react/dist/esm/icons/copy';
+import { getDiagnostics, type DiagnosticsReport } from '../../ipc/diagnostics';
 import { PageHeader } from '../../components/layout/PageHeader';
 import { EmptyState } from '../../components/feedback/EmptyState';
 import { Spinner } from '../../components/ui/Spinner';
@@ -14,8 +13,10 @@ import {
   CardTitle,
 } from '../../components/ui/Card';
 import { Badge } from '../../components/ui/Badge';
+import { Button } from '../../components/ui/Button';
 
 export function DiagnosticsRoute() {
+  const [copyStatus, setCopyStatus] = useState<string>();
   const query = useQuery({
     queryKey: ['diagnostics'],
     queryFn: getDiagnostics,
@@ -31,15 +32,32 @@ export function DiagnosticsRoute() {
         title="Diagnostics"
         description="A redacted snapshot of the running app. Safe to share when filing a bug."
         actions={
-          <button
-            type="button"
-            onClick={() => void query.refetch()}
-            className="inline-flex items-center justify-center rounded-md border border-input bg-background px-3 py-2 text-sm font-medium shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-          >
-            Refresh
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" onClick={() => void query.refetch()}>
+              Refresh
+            </Button>
+            <Button
+              variant="outline"
+              disabled={!query.data}
+              onClick={() => {
+                if (!query.data) return;
+                void navigator.clipboard.writeText(JSON.stringify(query.data, null, 2)).then(
+                  () => setCopyStatus('Redacted diagnostics copied.'),
+                  () => setCopyStatus('Clipboard access was denied.'),
+                );
+              }}
+            >
+              <Copy className="size-4" /> Copy snapshot
+            </Button>
+          </div>
         }
       />
+
+      {copyStatus ? (
+        <p className="rounded-lg border bg-card px-4 py-3 text-sm" role="status">
+          {copyStatus}
+        </p>
+      ) : null}
 
       {query.isPending && (
         <div className="flex items-center gap-3 text-sm text-muted-foreground">
@@ -48,10 +66,7 @@ export function DiagnosticsRoute() {
       )}
 
       {query.isError && (
-        <EmptyState
-          title="Diagnostics unavailable"
-          description={String(query.error)}
-        />
+        <EmptyState title="Diagnostics unavailable" description={String(query.error)} />
       )}
 
       {query.data && <DiagnosticsPanel report={query.data} />}
@@ -60,8 +75,28 @@ export function DiagnosticsRoute() {
 }
 
 function DiagnosticsPanel({ report }: { report: DiagnosticsReport }) {
+  const healthIssues = [
+    !report.database.foreign_keys ? 'Database foreign keys are disabled' : null,
+    !report.ai.whisper_model_present ? 'No verified Whisper model is installed' : null,
+    report.recent_errors.length ? `${report.recent_errors.length} recent errors need review` : null,
+  ].filter(Boolean);
   return (
     <div className="grid gap-4 md:grid-cols-2">
+      <Card className="md:col-span-2">
+        <CardContent className="flex flex-col gap-3 pt-5 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="font-display text-lg font-semibold">System health</p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {healthIssues.length
+                ? healthIssues.join(' · ')
+                : 'Core local services report a healthy snapshot.'}
+            </p>
+          </div>
+          <Badge tone={healthIssues.length ? 'warning' : 'success'}>
+            {healthIssues.length ? `${healthIssues.length} need attention` : 'Healthy'}
+          </Badge>
+        </CardContent>
+      </Card>
       <KpiCard
         title="App"
         rows={[
@@ -93,9 +128,7 @@ function DiagnosticsPanel({ report }: { report: DiagnosticsReport }) {
           {
             label: 'Size',
             value:
-              report.database.size_bytes != null
-                ? formatBytes(report.database.size_bytes)
-                : '—',
+              report.database.size_bytes != null ? formatBytes(report.database.size_bytes) : '—',
           },
           {
             label: 'Path',
@@ -161,10 +194,7 @@ function DiagnosticsPanel({ report }: { report: DiagnosticsReport }) {
           ) : (
             <ul className="space-y-2 font-mono text-xs">
               {report.recent_errors.map((entry, i) => (
-                <li
-                  key={i}
-                  className="rounded-md border border-border bg-muted/30 px-3 py-2"
-                >
+                <li key={i} className="rounded-md border border-border bg-muted/30 px-3 py-2">
                   {entry}
                 </li>
               ))}
@@ -181,7 +211,12 @@ function KpiCard({
   rows,
 }: {
   title: string;
-  rows: Array<{ label: string; value: string; tone?: 'success' | 'danger' | 'neutral'; mono?: boolean }>;
+  rows: Array<{
+    label: string;
+    value: string;
+    tone?: 'success' | 'danger' | 'neutral';
+    mono?: boolean;
+  }>;
 }) {
   return (
     <Card>
@@ -191,16 +226,15 @@ function KpiCard({
       <CardContent>
         <dl className="space-y-0.5 text-sm">
           {rows.map((row) => (
-            <div key={row.label} className="flex flex-col gap-1 rounded-lg px-2 py-2 transition-colors hover:bg-muted/45 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
+            <div
+              key={row.label}
+              className="flex flex-col gap-1 rounded-lg px-2 py-2 transition-colors hover:bg-muted/45 sm:flex-row sm:items-center sm:justify-between sm:gap-6"
+            >
               <dt className="text-muted-foreground">{row.label}</dt>
               <dd className="flex min-w-0 items-center gap-2 sm:justify-end sm:text-right">
                 {row.tone && (
                   <Badge tone={row.tone} className="text-[10px]">
-                    {row.tone === 'success'
-                      ? 'ok'
-                      : row.tone === 'danger'
-                        ? 'fail'
-                        : '—'}
+                    {row.tone === 'success' ? 'ok' : row.tone === 'danger' ? 'fail' : '—'}
                   </Badge>
                 )}
                 <span className={row.mono ? 'break-all font-mono text-xs' : undefined}>

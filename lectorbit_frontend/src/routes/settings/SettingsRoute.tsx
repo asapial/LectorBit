@@ -156,7 +156,27 @@ export function SettingsRoute() {
         </div>
       ) : null}
 
-      <Card>
+      <nav
+        aria-label="Settings sections"
+        className="flex flex-wrap gap-2 rounded-xl border bg-card p-2"
+      >
+        {[
+          ['#local-models', 'Local models'],
+          ['#cloud-provider', 'Cloud provider'],
+          ['#app-updates', 'Updates'],
+          ['#privacy-boundary', 'Privacy'],
+        ].map(([href, label]) => (
+          <a
+            key={href}
+            href={href}
+            className="rounded-lg px-3 py-2 text-sm font-semibold text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+          >
+            {label}
+          </a>
+        ))}
+      </nav>
+
+      <Card id="local-models" className="scroll-mt-6">
         <CardHeader>
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
@@ -284,7 +304,10 @@ export function SettingsRoute() {
         </CardContent>
       </Card>
 
-      <Card className="ai-studio-card overflow-hidden border-primary/20">
+      <Card
+        id="cloud-provider"
+        className="ai-studio-card scroll-mt-6 overflow-hidden border-primary/20"
+      >
         <CardHeader>
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
@@ -354,14 +377,34 @@ export function SettingsRoute() {
               {saveCloudKey.isPending ? 'Securing…' : 'Save securely'}
             </Button>
             {cloudPlanning.data?.configured ? (
-              <Button
-                type="button"
-                variant="outline"
-                disabled={removeCloudKey.isPending}
-                onClick={() => removeCloudKey.mutate()}
-              >
-                {removeCloudKey.isPending ? 'Removing…' : 'Remove key'}
-              </Button>
+              <>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={cloudPlanning.isFetching}
+                  onClick={() =>
+                    void cloudPlanning
+                      .refetch()
+                      .then((result) =>
+                        setNotice(
+                          result.data?.configured
+                            ? 'Protected cloud credential is available.'
+                            : 'No cloud credential is configured.',
+                        ),
+                      )
+                  }
+                >
+                  {cloudPlanning.isFetching ? 'Checking…' : 'Recheck connection'}
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={removeCloudKey.isPending}
+                  onClick={() => removeCloudKey.mutate()}
+                >
+                  {removeCloudKey.isPending ? 'Removing…' : 'Remove key'}
+                </Button>
+              </>
             ) : null}
           </form>
           <p className="text-xs leading-relaxed text-muted-foreground">
@@ -374,7 +417,7 @@ export function SettingsRoute() {
         </CardContent>
       </Card>
 
-      <Card>
+      <Card id="app-updates" className="scroll-mt-6">
         <CardHeader>
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
@@ -418,7 +461,7 @@ export function SettingsRoute() {
         </CardContent>
       </Card>
 
-      <Card>
+      <Card id="privacy-boundary" className="scroll-mt-6">
         <CardHeader>
           <CardTitle>Privacy boundary</CardTitle>
           <CardDescription>
