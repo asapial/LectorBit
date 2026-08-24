@@ -12,6 +12,11 @@ const mocks = vi.hoisted(() => ({
   analysisCapability: vi.fn(),
   cloudStatus: vi.fn(),
   dueReviews: vi.fn(),
+  artifacts: vi.fn(),
+  requestActivity: vi.fn(),
+  allJobs: vi.fn(),
+  cancelJob: vi.fn(),
+  retryJob: vi.fn(),
 }));
 
 vi.mock('../../ipc/analysis', () => ({
@@ -22,6 +27,13 @@ vi.mock('../../ipc/analysis', () => ({
 }));
 vi.mock('../../ipc/learning', () => ({ listDueReviews: mocks.dueReviews }));
 vi.mock('../../ipc/planner', () => ({ getCloudPlanningStatus: mocks.cloudStatus }));
+vi.mock('../../ipc/aiStudio', () => ({
+  listAiArtifacts: mocks.artifacts,
+  listAiRequestActivity: mocks.requestActivity,
+  listAiStudioJobs: mocks.allJobs,
+  cancelAiStudioJob: mocks.cancelJob,
+  retryAiStudioJob: mocks.retryJob,
+}));
 
 function renderRoute() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -69,6 +81,11 @@ describe('AiStudioRoute', () => {
     });
     mocks.listAnalysisJobs.mockResolvedValue([]);
     mocks.dueReviews.mockResolvedValue([]);
+    mocks.artifacts.mockResolvedValue([]);
+    mocks.requestActivity.mockResolvedValue([]);
+    mocks.allJobs.mockResolvedValue([]);
+    mocks.cancelJob.mockResolvedValue({});
+    mocks.retryJob.mockResolvedValue({});
   });
 
   it('summarizes the evidence pipeline and routes users to operational workflows', async () => {
@@ -238,6 +255,37 @@ describe('AiStudioRoute', () => {
     expect(screen.getByText('Lecture transcription')).toBeInTheDocument();
     expect(screen.getByText('Audio stream could not be decoded.')).toBeInTheDocument();
     expect(screen.getByText('Needs help')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry Lecture transcription' }));
+    await waitFor(() => expect(mocks.retryJob).toHaveBeenCalledWith('transcribe-1'));
+  });
+
+  it('only offers cancellation for work that has not started', async () => {
+    mocks.allJobs.mockResolvedValue([
+      {
+        id: 'queued-1',
+        kind: 'lecture_understanding',
+        status: 'queued',
+        attempt: 0,
+        last_error: null,
+        created_at: '2026-08-20T10:00:00Z',
+        updated_at: '2026-08-20T10:00:00Z',
+      },
+      {
+        id: 'running-1',
+        kind: 'transcribe',
+        status: 'running',
+        attempt: 1,
+        last_error: null,
+        created_at: '2026-08-20T10:00:00Z',
+        updated_at: '2026-08-20T10:01:00Z',
+      },
+    ]);
+
+    renderRoute();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Cancel Lecture understanding' }));
+    await waitFor(() => expect(mocks.cancelJob).toHaveBeenCalledWith('queued-1'));
+    expect(screen.queryByRole('button', { name: 'Cancel Lecture transcription' })).toBeNull();
   });
 
   it('does not claim Bangla readiness from an English-only model', async () => {

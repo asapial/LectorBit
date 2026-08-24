@@ -3,6 +3,7 @@ import ArrowRight from 'lucide-react/dist/esm/icons/arrow-right';
 import BookOpen from 'lucide-react/dist/esm/icons/book-open';
 import CheckCircle2 from 'lucide-react/dist/esm/icons/circle-check-big';
 import Clock3 from 'lucide-react/dist/esm/icons/clock-3';
+import ClipboardCopy from 'lucide-react/dist/esm/icons/clipboard-copy';
 import Download from 'lucide-react/dist/esm/icons/download';
 import HardDrive from 'lucide-react/dist/esm/icons/hard-drive';
 import LibraryBig from 'lucide-react/dist/esm/icons/library-big';
@@ -13,6 +14,10 @@ import Settings2 from 'lucide-react/dist/esm/icons/settings-2';
 import ShieldCheck from 'lucide-react/dist/esm/icons/shield-check';
 import Sparkles from 'lucide-react/dist/esm/icons/sparkles';
 import TriangleAlert from 'lucide-react/dist/esm/icons/triangle-alert';
+import Database from 'lucide-react/dist/esm/icons/database';
+import Route from 'lucide-react/dist/esm/icons/route';
+import RotateCcw from 'lucide-react/dist/esm/icons/rotate-ccw';
+import X from 'lucide-react/dist/esm/icons/x';
 import { useRef, useState, type ComponentType, type ReactNode, type SVGProps } from 'react';
 import { Link } from 'react-router';
 import { PageHeader } from '../../components/layout/PageHeader';
@@ -36,6 +41,16 @@ import {
 } from '../../ipc/analysis';
 import { listDueReviews } from '../../ipc/learning';
 import { getCloudPlanningStatus } from '../../ipc/planner';
+import {
+  cancelAiStudioJob,
+  listAiArtifacts,
+  listAiRequestActivity,
+  listAiStudioJobs,
+  retryAiStudioJob,
+  type AiArtifactSummary,
+  type AiRequestEvent,
+  type AiStudioJob,
+} from '../../ipc/aiStudio';
 
 type Icon = ComponentType<SVGProps<SVGSVGElement>>;
 const activeStatuses = new Set(['queued', 'running', 'paused', 'retry_wait']);
@@ -79,6 +94,22 @@ export function AiStudioRoute() {
     queryFn: () => listDueReviews(new Date().toISOString(), 6),
     retry: false,
   });
+  const artifacts = useQuery({
+    queryKey: ['ai-studio', 'artifacts'] as const,
+    queryFn: () => listAiArtifacts(true, 100),
+    retry: false,
+  });
+  const requestActivity = useQuery({
+    queryKey: ['ai-studio', 'request-activity'] as const,
+    queryFn: () => listAiRequestActivity(100),
+    retry: false,
+  });
+  const allJobs = useQuery({
+    queryKey: ['ai-studio', 'jobs'] as const,
+    queryFn: () => listAiStudioJobs(100),
+    retry: false,
+    refetchInterval: activeJobInterval,
+  });
   const install = useMutation({
     mutationFn: (model: LocalModel) =>
       installModel(model.id, (event) => {
@@ -111,6 +142,24 @@ export function AiStudioRoute() {
     },
     onError: (error) => setNotice(messageFrom(error)),
   });
+  const cancelJob = useMutation({
+    mutationFn: (jobId: string) => cancelAiStudioJob(jobId),
+    onSuccess: async () => {
+      setNotice('Queued work was cancelled. Running work is never labelled cancelled prematurely.');
+      await queryClient.invalidateQueries({ queryKey: ['ai-studio', 'jobs'] });
+      await queryClient.invalidateQueries({ queryKey: ['analysis', 'jobs'] });
+    },
+    onError: (error) => setNotice(messageFrom(error)),
+  });
+  const retryJob = useMutation({
+    mutationFn: (jobId: string) => retryAiStudioJob(jobId),
+    onSuccess: async () => {
+      setNotice('The job was requeued with its original durable payload.');
+      await queryClient.invalidateQueries({ queryKey: ['ai-studio', 'jobs'] });
+      await queryClient.invalidateQueries({ queryKey: ['analysis', 'jobs'] });
+    },
+    onError: (error) => setNotice(messageFrom(error)),
+  });
 
   const engineReady = analysisCapability.data?.available === true;
   const englishReady = languageReady(models.data, analysisCapability.data, 'en');
@@ -119,7 +168,13 @@ export function AiStudioRoute() {
   const multilingualModel = models.data?.find(
     (model) => model.supported_languages.includes('en') && model.supported_languages.includes('bn'),
   );
-  const recentJobs = [...(transcriptionJobs.data ?? []), ...(modelJobs.data ?? [])]
+  const recentJobs: AiStudioJob[] = Array.from(
+    new Map(
+      [...(allJobs.data ?? []), ...(transcriptionJobs.data ?? []), ...(modelJobs.data ?? [])].map(
+        (job) => [job.id, job],
+      ),
+    ).values(),
+  )
     .sort((left, right) => right.updated_at.localeCompare(left.updated_at))
     .slice(0, 5);
   const activeJobs = recentJobs.filter((job) => activeStatuses.has(job.status)).length;
@@ -131,6 +186,7 @@ export function AiStudioRoute() {
     transcriptionJobs.isError ||
     modelJobs.isError ||
     dueReviews.isError;
+  const operationsUnavailable = artifacts.isError || requestActivity.isError || allJobs.isError;
   const transcriptionPending = models.isPending || analysisCapability.isPending;
   const isRefreshing =
     models.isFetching ||
@@ -139,6 +195,8 @@ export function AiStudioRoute() {
     transcriptionJobs.isFetching ||
     modelJobs.isFetching ||
     dueReviews.isFetching;
+  const operationsRefreshing =
+    artifacts.isFetching || requestActivity.isFetching || allJobs.isFetching;
   const installedModels = models.data?.filter((model) => model.state === 'ready') ?? [];
   const dueCount = dueReviews.data?.length ?? 0;
 
@@ -151,7 +209,39 @@ export function AiStudioRoute() {
       transcriptionJobs.refetch(),
       modelJobs.refetch(),
       dueReviews.refetch(),
+      artifacts.refetch(),
+      requestActivity.refetch(),
+      allJobs.refetch(),
     ]).then(() => setNotice('AI Studio status is up to date.'));
+  };
+
+  const exportRequestAudit = async () => {
+    const events = requestActivity.data ?? [];
+    if (events.length === 0) {
+      setNotice('There is no cloud request history to export yet.');
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(
+        JSON.stringify(
+          {
+            schema: 'lectorbit.ai-request-audit.v1',
+            exported_at: new Date().toISOString(),
+            contains_user_content: false,
+            requests: events,
+          },
+          null,
+          2,
+        ),
+      );
+      setNotice(
+        'A redacted AI request audit was copied. It contains no prompts or transcript text.',
+      );
+    } catch {
+      setNotice(
+        'The redacted audit could not be copied. Check clipboard permissions and try again.',
+      );
+    }
   };
 
   return (
@@ -269,9 +359,43 @@ export function AiStudioRoute() {
         />
         <ActivityCard
           jobs={recentJobs}
-          pending={transcriptionJobs.isPending || modelJobs.isPending}
+          pending={allJobs.isPending && (transcriptionJobs.isPending || modelJobs.isPending)}
+          pendingJobId={
+            cancelJob.isPending
+              ? cancelJob.variables
+              : retryJob.isPending
+                ? retryJob.variables
+                : undefined
+          }
+          onCancel={(jobId) => cancelJob.mutate(jobId)}
+          onRetry={(jobId) => retryJob.mutate(jobId)}
         />
       </section>
+
+      <section className="grid gap-4 xl:grid-cols-2" aria-label="AI operations">
+        <ArtifactHealthCard artifacts={artifacts.data ?? []} pending={artifacts.isPending} />
+        <RequestActivityCard
+          events={requestActivity.data ?? []}
+          pending={requestActivity.isPending}
+          onExport={() => void exportRequestAudit()}
+        />
+      </section>
+
+      {operationsUnavailable ? (
+        <p
+          className="rounded-xl border border-warning/25 bg-warning/10 p-4 text-sm text-muted-foreground"
+          role="status"
+        >
+          Artifact or provenance history is temporarily unavailable. Generation and local study
+          workflows remain unchanged.
+        </p>
+      ) : null}
+
+      <CapabilityRoutingCard
+        localReady={whisperReady}
+        cloudReady={cloud.data?.configured === true}
+        pending={transcriptionPending || cloud.isPending || operationsRefreshing}
+      />
 
       <section className="grid gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(20rem,0.65fr)]">
         <Card className="ai-studio-card overflow-hidden border-primary/20">
@@ -609,7 +733,19 @@ function ActionCard({
   );
 }
 
-function ActivityCard({ jobs, pending }: { jobs: AnalysisJob[]; pending: boolean }) {
+function ActivityCard({
+  jobs,
+  pending,
+  pendingJobId,
+  onCancel,
+  onRetry,
+}: {
+  jobs: AiStudioJob[];
+  pending: boolean;
+  pendingJobId?: string;
+  onCancel: (jobId: string) => void;
+  onRetry: (jobId: string) => void;
+}) {
   const activeCount = jobs.filter((job) => activeStatuses.has(job.status)).length;
   return (
     <Card>
@@ -618,7 +754,7 @@ function ActivityCard({ jobs, pending }: { jobs: AnalysisJob[]; pending: boolean
           <div>
             <CardTitle>Recent local work</CardTitle>
             <CardDescription className="mt-1">
-              Transcripts and verified model downloads.
+              Scans, probes, models, transcripts, and lecture understanding.
             </CardDescription>
           </div>
           <Badge tone={activeCount ? 'primary' : 'neutral'}>{activeCount} active</Badge>
@@ -635,9 +771,7 @@ function ActivityCard({ jobs, pending }: { jobs: AnalysisJob[]; pending: boolean
                 className="flex items-center justify-between gap-3 py-3 first:pt-0 last:pb-0"
               >
                 <div className="min-w-0">
-                  <p className="truncate text-sm font-medium">
-                    {job.kind === 'transcribe' ? 'Lecture transcription' : 'Model verification'}
-                  </p>
+                  <p className="truncate text-sm font-medium">{jobKindLabel(job.kind)}</p>
                   <p className="mt-0.5 text-xs text-muted-foreground">
                     {formatTimestamp(job.updated_at)} · attempt {job.attempt + 1}
                   </p>
@@ -650,7 +784,33 @@ function ActivityCard({ jobs, pending }: { jobs: AnalysisJob[]; pending: boolean
                     </p>
                   ) : null}
                 </div>
-                <Badge tone={jobTone(job.status)}>{jobLabel(job.status)}</Badge>
+                <div className="flex shrink-0 items-center gap-2">
+                  {matchesPendingCancellation(job.status) ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      disabled={pendingJobId === job.id}
+                      onClick={() => onCancel(job.id)}
+                      aria-label={`Cancel ${jobKindLabel(job.kind)}`}
+                    >
+                      <X className="size-3.5" /> Cancel
+                    </Button>
+                  ) : null}
+                  {job.status === 'failed' || job.status === 'cancelled' ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      disabled={pendingJobId === job.id}
+                      onClick={() => onRetry(job.id)}
+                      aria-label={`Retry ${jobKindLabel(job.kind)}`}
+                    >
+                      <RotateCcw className="size-3.5" /> Retry
+                    </Button>
+                  ) : null}
+                  <Badge tone={jobTone(job.status)}>{jobLabel(job.status)}</Badge>
+                </div>
               </li>
             ))}
           </ul>
@@ -666,6 +826,235 @@ function ActivityCard({ jobs, pending }: { jobs: AnalysisJob[]; pending: boolean
       </CardContent>
     </Card>
   );
+}
+
+function matchesPendingCancellation(status: AiStudioJob['status']) {
+  return status === 'queued' || status === 'paused' || status === 'retry_wait';
+}
+
+function ArtifactHealthCard({
+  artifacts,
+  pending,
+}: {
+  artifacts: AiArtifactSummary[];
+  pending: boolean;
+}) {
+  const current = artifacts.filter((artifact) => !artifact.superseded_at);
+  const stale = artifacts.filter((artifact) => artifact.stale).length;
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <CardTitle className="flex items-center gap-2">
+              <Database className="size-4 text-primary" /> Artifact health
+            </CardTitle>
+            <CardDescription className="mt-1">
+              Versioned learning outputs and their source health.
+            </CardDescription>
+          </div>
+          <Badge tone={stale ? 'warning' : 'success'}>{stale ? `${stale} stale` : 'Current'}</Badge>
+        </div>
+      </CardHeader>
+      <CardContent>
+        {pending ? (
+          <div className="h-32 animate-pulse rounded-xl bg-muted motion-reduce:animate-none" />
+        ) : current.length === 0 ? (
+          <p className="rounded-xl border border-dashed p-4 text-sm text-muted-foreground">
+            Analyze a transcribed lecture or generate a study set to create the first artifact.
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {current.slice(0, 6).map((artifact) => (
+              <div
+                key={artifact.id}
+                className="flex items-start justify-between gap-3 rounded-lg border bg-background p-3"
+              >
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium">{artifact.display_name}</p>
+                  <p className="mt-1 truncate font-mono text-[10px] text-muted-foreground">
+                    {artifactLabel(artifact.kind)} · {artifact.model}
+                  </p>
+                </div>
+                <Badge tone={artifact.stale ? 'warning' : 'success'}>
+                  {artifact.stale ? 'Stale' : 'Current'}
+                </Badge>
+              </div>
+            ))}
+            <Link
+              to="/study"
+              className="inline-flex items-center gap-1.5 text-sm font-semibold text-primary hover:underline"
+            >
+              Open Study Hub <ArrowRight className="size-3.5" />
+            </Link>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function RequestActivityCard({
+  events,
+  pending,
+  onExport,
+}: {
+  events: AiRequestEvent[];
+  pending: boolean;
+  onExport: () => void;
+}) {
+  const failures = events.filter((event) => event.result === 'failed').length;
+  const totalTokens = events.reduce((sum, event) => sum + (event.total_tokens ?? 0), 0);
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <CardTitle className="flex items-center gap-2">
+              <ShieldCheck className="size-4 text-primary" /> Cloud request ledger
+            </CardTitle>
+            <CardDescription className="mt-1">
+              Content-free provenance for explicitly approved requests.
+            </CardDescription>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={pending || events.length === 0}
+              onClick={onExport}
+            >
+              <ClipboardCopy className="size-3.5" /> Copy audit
+            </Button>
+            <Badge tone={failures ? 'warning' : 'success'}>
+              {failures ? `${failures} failed` : 'Healthy'}
+            </Badge>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent>
+        {pending ? (
+          <div className="h-32 animate-pulse rounded-xl bg-muted motion-reduce:animate-none" />
+        ) : events.length === 0 ? (
+          <p className="rounded-xl border border-dashed p-4 text-sm text-muted-foreground">
+            No cloud requests have been made on this device.
+          </p>
+        ) : (
+          <div className="space-y-2">
+            <div className="grid grid-cols-3 gap-2">
+              <MiniMetric label="Requests" value={events.length.toLocaleString()} />
+              <MiniMetric label="Tokens" value={totalTokens ? totalTokens.toLocaleString() : '—'} />
+              <MiniMetric label="Failures" value={failures.toLocaleString()} />
+            </div>
+            {events.slice(0, 4).map((event) => (
+              <div
+                key={event.id}
+                className="flex items-center justify-between gap-3 rounded-lg border bg-background p-3 text-xs"
+              >
+                <div className="min-w-0">
+                  <p className="truncate font-medium">{artifactLabel(event.prompt_id)}</p>
+                  <p className="mt-1 truncate text-muted-foreground">
+                    {event.consent_scope} · {event.resolved_model ?? event.requested_model}
+                  </p>
+                </div>
+                <div className="shrink-0 text-right">
+                  <Badge tone={event.result === 'succeeded' ? 'success' : 'danger'}>
+                    {event.result}
+                  </Badge>
+                  <p className="mt-1 font-mono text-[10px] text-muted-foreground">
+                    {event.duration_ms.toLocaleString()} ms
+                  </p>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function CapabilityRoutingCard({
+  localReady,
+  cloudReady,
+  pending,
+}: {
+  localReady: boolean;
+  cloudReady: boolean;
+  pending: boolean;
+}) {
+  const routes = [
+    ['Transcription', 'Local only', localReady ? 'Available' : 'Unavailable'],
+    [
+      'Planning interpretation',
+      'Cloud with local validation',
+      cloudReady ? 'Available' : 'Optional',
+    ],
+    ['Lecture understanding', 'Cloud, evidence-scoped', cloudReady ? 'Available' : 'Unavailable'],
+    ['Review scheduling', 'Deterministic local', 'Available'],
+    ['OCR and semantic retrieval', 'Local models', 'Roadmap'],
+  ];
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Route className="size-4 text-primary" /> Capability routing
+        </CardTitle>
+        <CardDescription>Every task has an explicit execution and trust boundary.</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div className="responsive-table-shell">
+          <table className="w-full min-w-[620px] text-sm">
+            <thead>
+              <tr className="border-b text-left text-xs uppercase tracking-[0.08em] text-muted-foreground">
+                <th className="py-2 pr-4">Task</th>
+                <th className="py-2 pr-4">Execution</th>
+                <th className="py-2">Status</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y">
+              {routes.map(([task, execution, status]) => (
+                <tr key={task}>
+                  <td className="py-3 pr-4 font-medium">{task}</td>
+                  <td className="py-3 pr-4 text-muted-foreground">{execution}</td>
+                  <td className="py-3">
+                    <Badge
+                      tone={
+                        status === 'Available'
+                          ? 'success'
+                          : status === 'Roadmap'
+                            ? 'neutral'
+                            : 'warning'
+                      }
+                    >
+                      {pending && status !== 'Roadmap' ? 'Checking…' : status}
+                    </Badge>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function MiniMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg border bg-muted/20 p-2">
+      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</p>
+      <p className="mt-1 font-mono text-sm font-semibold">{value}</p>
+    </div>
+  );
+}
+
+function artifactLabel(value: string) {
+  return value
+    .replaceAll('-', ' ')
+    .replaceAll('_', ' ')
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
 function ReadinessCard({
@@ -798,7 +1187,7 @@ function transcriptionReadinessDetail(
   return 'The local engine is ready. Install a verified transcription model.';
 }
 
-function activeJobInterval(query: { state: { data?: AnalysisJob[] } }) {
+function activeJobInterval(query: { state: { data?: Array<{ status: string }> } }) {
   return query.state.data?.some((job) => activeStatuses.has(job.status)) ? 1_500 : false;
 }
 
@@ -825,8 +1214,22 @@ function jobLabel(status: AnalysisJob['status']) {
   return labels[status];
 }
 
+function jobKindLabel(kind: string) {
+  return (
+    (
+      {
+        transcribe: 'Lecture transcription',
+        model_download: 'Model verification',
+        lecture_understanding: 'Lecture understanding',
+        scan: 'Library scan',
+        probe: 'Media inspection',
+      } as Record<string, string>
+    )[kind] ?? artifactLabel(kind)
+  );
+}
+
 function jobTone(
-  status: AnalysisJob['status'],
+  status: AiStudioJob['status'],
 ): 'neutral' | 'primary' | 'success' | 'warning' | 'danger' {
   if (status === 'completed') return 'success';
   if (status === 'failed') return 'danger';
