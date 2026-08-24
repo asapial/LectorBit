@@ -71,6 +71,25 @@ const TranscriptStateSchema = z.object({
   job: JobSchema.nullable(),
 });
 
+const TranscriptDocumentSchema = z.object({
+  id: z.string().min(1),
+  media_id: z.string().min(1),
+  language: z.string().min(1),
+  model_id: z.string().min(1),
+  analyzer_version: z.string().min(1),
+  created_at: z.string().min(1),
+  segments: z.array(
+    z.object({
+      id: z.number().int().positive(),
+      ordinal: z.number().int().nonnegative(),
+      start_ms: z.number().int().nonnegative(),
+      end_ms: z.number().int().positive(),
+      text: z.string().min(1),
+      confidence_milli: z.number().int().min(0).max(1000).nullable().default(null),
+    }),
+  ),
+});
+
 const AnalysisErrorSchema = z.object({
   kind: z.enum([
     'invalid_input',
@@ -90,6 +109,7 @@ export type AnalysisJob = z.infer<typeof JobSchema>;
 export type LocalModel = z.infer<typeof ModelSchema>;
 export type AnalysisProgress = z.infer<typeof ProgressSchema>;
 export type TranscriptState = z.infer<typeof TranscriptStateSchema>;
+export type TranscriptDocument = z.infer<typeof TranscriptDocumentSchema>;
 export type TranscriptionLanguage = z.infer<typeof TranscriptionLanguageSchema>;
 export type AnalysisCapability = z.infer<typeof AnalysisCapabilitySchema>;
 export type AnalysisErrorKind = z.infer<typeof AnalysisErrorSchema>['kind'];
@@ -153,6 +173,32 @@ export async function getTranscriptState(mediaId: string): Promise<TranscriptSta
   return TranscriptStateSchema.parse(
     await invoke<unknown>('plugin:lectorbit|analysis_get_transcript_state', {
       args: { media_id: mediaId },
+    }).catch(wrapAnalysisError),
+  );
+}
+
+export async function getTranscriptDocument(mediaId: string): Promise<TranscriptDocument | null> {
+  return TranscriptDocumentSchema.nullable().parse(
+    await invoke<unknown>('plugin:lectorbit|analysis_get_transcript_document', {
+      args: { media_id: mediaId },
+    }).catch(wrapAnalysisError),
+  );
+}
+
+export async function correctTranscriptSegment(input: {
+  mediaId: string;
+  transcriptId: string;
+  segmentId: number;
+  text: string;
+}): Promise<TranscriptDocument> {
+  return TranscriptDocumentSchema.parse(
+    await invoke<unknown>('plugin:lectorbit|analysis_correct_transcript_segment', {
+      args: {
+        media_id: input.mediaId,
+        transcript_id: input.transcriptId,
+        segment_id: input.segmentId,
+        text: input.text,
+      },
     }).catch(wrapAnalysisError),
   );
 }

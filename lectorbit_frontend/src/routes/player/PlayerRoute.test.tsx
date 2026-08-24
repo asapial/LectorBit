@@ -17,12 +17,15 @@ const mocks = vi.hoisted(() => ({
   sync: vi.fn(),
   state: vi.fn(),
   action: vi.fn(),
+  routine: vi.fn(),
   replan: vi.fn(),
   cloudStatus: vi.fn(),
   analysisCapability: vi.fn(),
   models: vi.fn(),
   installModel: vi.fn(),
   transcriptState: vi.fn(),
+  transcriptDocument: vi.fn(),
+  correctTranscript: vi.fn(),
   transcribe: vi.fn(),
   getLecture: vi.fn(),
   startLecture: vi.fn(),
@@ -51,6 +54,7 @@ vi.mock('../../ipc/playback', () => ({
   recordStudyAction: mocks.action,
 }));
 vi.mock('../../ipc/planner', () => ({
+  getRoutine: mocks.routine,
   replanActive: mocks.replan,
   getCloudPlanningStatus: mocks.cloudStatus,
 }));
@@ -59,6 +63,8 @@ vi.mock('../../ipc/analysis', () => ({
   listModels: mocks.models,
   installModel: mocks.installModel,
   getTranscriptState: mocks.transcriptState,
+  getTranscriptDocument: mocks.transcriptDocument,
+  correctTranscriptSegment: mocks.correctTranscript,
   startTranscription: mocks.transcribe,
 }));
 vi.mock('../../ipc/learning', () => ({
@@ -197,6 +203,36 @@ describe('PlayerRoute', () => {
     mocks.sync.mockResolvedValue(view);
     mocks.state.mockResolvedValue(view);
     mocks.action.mockResolvedValue(undefined);
+    mocks.routine.mockResolvedValue({
+      plan_id: 'plan',
+      plan_version_id: 'version',
+      title: 'Study plan',
+      horizon_start: '2026-08-14',
+      horizon_end: '2026-08-14',
+      created_at: '2026-08-14T00:00:00Z',
+      days: [
+        {
+          id: 'day-1',
+          date: '2026-08-14',
+          effective_content_ms: 1_500_000,
+          break_ms: 0,
+          items: [
+            {
+              id: 'item-1',
+              media_id: 'media-1',
+              display_name: 'Graph theory',
+              chunk_id: 'chunk-1',
+              sequence: 0,
+              raw_start_ms: 60_000,
+              raw_end_ms: 1_560_000,
+              effective_duration_ms: 1_500_000,
+              break_after_ms: 0,
+              status: 'in_progress',
+            },
+          ],
+        },
+      ],
+    });
     mocks.cloudStatus.mockResolvedValue({
       configured: true,
       provider: 'OpenRouter',
@@ -227,6 +263,8 @@ describe('PlayerRoute', () => {
         supported_languages: ['en', 'bn'],
       },
     ]);
+    mocks.transcriptDocument.mockResolvedValue(null);
+    mocks.correctTranscript.mockResolvedValue(undefined);
     mocks.transcriptState.mockResolvedValue({
       media_id: 'media-1',
       status: 'completed',
@@ -345,6 +383,75 @@ describe('PlayerRoute', () => {
 
     fireEvent.keyDown(window, { key: 'f' });
     expect(screen.getByRole('button', { name: 'Exit focus' })).toBeInTheDocument();
+  });
+
+  it('moves to the previous or next scheduled video and saves the current position', async () => {
+    mocks.routine.mockResolvedValue({
+      plan_id: 'plan',
+      plan_version_id: 'version',
+      title: 'Study plan',
+      horizon_start: '2026-08-14',
+      horizon_end: '2026-08-16',
+      created_at: '2026-08-14T00:00:00Z',
+      days: [
+        {
+          id: 'day-1',
+          date: '2026-08-14',
+          effective_content_ms: 4_500_000,
+          break_ms: 0,
+          items: [
+            {
+              id: 'item-previous',
+              media_id: 'media-previous',
+              display_name: 'Sets',
+              chunk_id: 'chunk-previous',
+              sequence: 0,
+              raw_start_ms: 0,
+              raw_end_ms: 1_500_000,
+              effective_duration_ms: 1_500_000,
+              break_after_ms: 0,
+              status: 'done',
+            },
+            {
+              id: 'item-1',
+              media_id: 'media-1',
+              display_name: 'Graph theory',
+              chunk_id: 'chunk-1',
+              sequence: 1,
+              raw_start_ms: 60_000,
+              raw_end_ms: 1_560_000,
+              effective_duration_ms: 1_500_000,
+              break_after_ms: 0,
+              status: 'in_progress',
+            },
+            {
+              id: 'item-next',
+              media_id: 'media-next',
+              display_name: 'Trees',
+              chunk_id: 'chunk-next',
+              sequence: 2,
+              raw_start_ms: 0,
+              raw_end_ms: 1_500_000,
+              effective_duration_ms: 1_500_000,
+              break_after_ms: 0,
+              status: 'pending',
+            },
+          ],
+        },
+      ],
+    });
+
+    renderRoute();
+    await screen.findByRole('heading', { name: 'Graph theory' });
+    expect(screen.getByRole('button', { name: 'Previous video' })).toHaveAttribute('title', 'Sets');
+    expect(screen.getByText('Study block 2 of 3')).toBeInTheDocument();
+    const next = screen.getByRole('button', { name: 'Next video' });
+    expect(next).toHaveAttribute('title', 'Trees');
+
+    fireEvent.click(next);
+    await waitFor(() => expect(mocks.sync).toHaveBeenCalled());
+    await waitFor(() => expect(mocks.close).toHaveBeenCalled());
+    await waitFor(() => expect(mocks.open).toHaveBeenCalledWith('item-next', expect.any(Function)));
   });
 
   it('supports keyboard playback and seeking shortcuts outside form controls', async () => {

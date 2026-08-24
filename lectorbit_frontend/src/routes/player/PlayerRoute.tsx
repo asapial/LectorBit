@@ -8,6 +8,8 @@ import CheckCircle2 from 'lucide-react/dist/esm/icons/circle-check-big';
 import Captions from 'lucide-react/dist/esm/icons/captions';
 import Clock3 from 'lucide-react/dist/esm/icons/clock-3';
 import ChevronDown from 'lucide-react/dist/esm/icons/chevron-down';
+import ChevronLeft from 'lucide-react/dist/esm/icons/chevron-left';
+import ChevronRight from 'lucide-react/dist/esm/icons/chevron-right';
 import Download from 'lucide-react/dist/esm/icons/download';
 import FastForward from 'lucide-react/dist/esm/icons/fast-forward';
 import Flag from 'lucide-react/dist/esm/icons/flag';
@@ -52,7 +54,12 @@ import {
   type PlaybackView,
   type StudyAction,
 } from '../../ipc/playback';
-import { getCloudPlanningStatus, replanActive } from '../../ipc/planner';
+import {
+  getCloudPlanningStatus,
+  getRoutine,
+  replanActive,
+  type RoutinePlan,
+} from '../../ipc/planner';
 import {
   getAnalysisCapability,
   getTranscriptState,
@@ -86,6 +93,7 @@ import {
   type LearningAnnotation,
 } from '../../ipc/annotations';
 import { cn } from '../../lib/cn';
+import { TranscriptPanel } from './TranscriptPanel';
 
 type Phase = 'loading' | 'ready' | 'closed' | 'error';
 
@@ -235,6 +243,10 @@ export function PlayerRoute() {
     staleTime: 5_000,
     refetchInterval: (query) =>
       query.state.data?.some((model) => model.state === 'downloading') ? 1_500 : false,
+  });
+  const routineQuery = useQuery({
+    queryKey: ['planner', 'routine'] as const,
+    queryFn: () => getRoutine(60),
   });
   const analysisCapabilityQuery = useQuery({
     queryKey: ['analysis', 'capability'] as const,
@@ -740,6 +752,10 @@ export function PlayerRoute() {
   const cloudLearningReady = cloudLearningQuery.data?.configured === true;
   const learningReady = transcriptReady && cloudLearningReady;
   const actionsDisabled = busy || replanPending || phase !== 'ready' || Boolean(actionPending);
+  const routineNeighbors = useMemo(
+    () => findRoutineNeighbors(routineQuery.data, view?.plan_item_id),
+    [routineQuery.data, view?.plan_item_id],
+  );
 
   async function runControl(operation: () => Promise<PlaybackView>) {
     setBusy(true);
@@ -876,6 +892,25 @@ export function PlayerRoute() {
       await queryClient.invalidateQueries({ queryKey: ['planner', 'routine'] });
       await closePlayback();
       void navigate('/');
+    } catch (cause) {
+      closeRequestedRef.current = false;
+      setError(messageFrom(cause));
+      setBusy(false);
+    }
+  }
+
+  async function navigateToRoutineItem(planItemId: string) {
+    if (busy || phase !== 'ready' || planItemId === view?.plan_item_id) return;
+    setBusy(true);
+    setError(undefined);
+    closeRequestedRef.current = true;
+    try {
+      if (videoRef.current) {
+        videoRef.current.pause();
+        setView(await syncCurrentVideo(videoRef.current));
+      }
+      await closePlayback();
+      void navigate(`/player/${encodeURIComponent(planItemId)}`);
     } catch (cause) {
       closeRequestedRef.current = false;
       setError(messageFrom(cause));
@@ -1222,6 +1257,40 @@ export function PlayerRoute() {
                 </div>
               </CardHeader>
               <CardContent className="space-y-5">
+                <nav
+                  className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-muted/20 p-3"
+                  aria-label="Study video navigation"
+                >
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={!routineNeighbors.previous || busy || phase !== 'ready'}
+                    title={routineNeighbors.previous?.display_name}
+                    onClick={() =>
+                      routineNeighbors.previous &&
+                      void navigateToRoutineItem(routineNeighbors.previous.id)
+                    }
+                  >
+                    <ChevronLeft className="size-4" /> Previous video
+                  </Button>
+                  <span className="text-center text-xs font-medium text-muted-foreground">
+                    {routineNeighbors.position === undefined
+                      ? 'Scheduled study sequence'
+                      : `Study block ${routineNeighbors.position + 1} of ${routineNeighbors.total}`}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={!routineNeighbors.next || busy || phase !== 'ready'}
+                    title={routineNeighbors.next?.display_name}
+                    onClick={() =>
+                      routineNeighbors.next && void navigateToRoutineItem(routineNeighbors.next.id)
+                    }
+                  >
+                    Next video <ChevronRight className="size-4" />
+                  </Button>
+                </nav>
+
                 <div>
                   <div className="mb-2 flex items-center justify-between gap-3 font-mono text-xs text-muted-foreground">
                     <span>{formatTimestamp(seekDraft ?? view.position_ms)}</span>
@@ -1465,6 +1534,14 @@ export function PlayerRoute() {
               />
             </aside>
           </section>
+
+          {!focusMode ? (
+            <TranscriptPanel
+              mediaId={view.media_id}
+              positionMs={view.position_ms}
+              onSeek={(atMs) => void commitSeek(atMs)}
+            />
+          ) : null}
 
           {!focusMode ? (
             <Card className="overflow-hidden border-primary/20">
@@ -3130,6 +3207,23 @@ function currentPlaybackPosition(view: PlaybackView, video: HTMLVideoElement | n
       ? Math.round(video.currentTime * 1_000)
       : view.position_ms;
   return Math.max(view.raw_start_ms, Math.min(view.raw_end_ms, livePosition));
+}
+
+function findRoutineNeighbors(routine: RoutinePlan | null | undefined, planItemId?: string) {
+  const items =
+    routine?.days.flatMap((day) =>
+      [...day.items].sort((left, right) => left.sequence - right.sequence),
+    ) ?? [];
+  const position = planItemId ? items.findIndex((item) => item.id === planItemId) : -1;
+  if (position < 0) {
+    return { previous: undefined, next: undefined, position: undefined, total: items.length };
+  }
+  return {
+    previous: items[position - 1],
+    next: items[position + 1],
+    position,
+    total: items.length,
+  };
 }
 
 function learningMarkerLabel(kind: LearningMarkerKind): string {
