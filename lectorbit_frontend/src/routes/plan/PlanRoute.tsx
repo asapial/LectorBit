@@ -8,6 +8,8 @@ import LoaderCircle from 'lucide-react/dist/esm/icons/loader-circle';
 import Search from 'lucide-react/dist/esm/icons/search';
 import Sparkles from 'lucide-react/dist/esm/icons/sparkles';
 import TriangleAlert from 'lucide-react/dist/esm/icons/triangle-alert';
+import Brain from 'lucide-react/dist/esm/icons/brain';
+import History from 'lucide-react/dist/esm/icons/history';
 import { Link, useSearchParams } from 'react-router';
 import { PageHeader } from '../../components/layout/PageHeader';
 import { Badge } from '../../components/ui/Badge';
@@ -22,6 +24,7 @@ import {
 import {
   commitPlan,
   getCloudPlanningStatus,
+  listPlanHistory,
   listPlanningCandidates,
   parsePlanIntent,
   previewPlan,
@@ -34,8 +37,10 @@ import {
   type PlannerCandidate,
   type PlanningConstraints,
   type PlanningSelection,
+  type PlanVersionSummary,
 } from '../../ipc/planner';
 import { cn } from '../../lib/cn';
+import { listDueReviews } from '../../ipc/learning';
 
 const weekdays = [
   ['M', 0],
@@ -64,6 +69,16 @@ export function PlanRoute() {
   const queryClient = useQueryClient();
   const [searchParams] = useSearchParams();
   const moduleFilter = searchParams.get('module')?.trim() || undefined;
+  const dueReviewsQuery = useQuery({
+    queryKey: ['learning', 'due-reviews', 'plan-builder'] as const,
+    queryFn: () => listDueReviews(new Date().toISOString(), 500),
+    retry: false,
+  });
+  const planHistoryQuery = useQuery({
+    queryKey: ['planner', 'history'] as const,
+    queryFn: () => listPlanHistory(8),
+    retry: false,
+  });
   const [constraints, setConstraints] = useState(defaultConstraints);
   const [selections, setSelections] = useState<Record<string, PlanningSelection>>({});
   const [title, setTitle] = useState('My study plan');
@@ -184,6 +199,7 @@ export function PlanRoute() {
     onSuccess: () => {
       setCommitMessage('Plan committed. Your Routine is ready.');
       void queryClient.invalidateQueries({ queryKey: ['planner', 'routine'] });
+      void queryClient.invalidateQueries({ queryKey: ['planner', 'history'] });
     },
     onError: (error: Error) => setFormError(error.message),
   });
@@ -422,6 +438,31 @@ export function PlanRoute() {
         studyDayCount={constraints.allowed_weekdays.length}
         preview={preview}
       />
+
+      <PlanHistoryPanel
+        versions={planHistoryQuery.data ?? []}
+        pending={planHistoryQuery.isPending}
+      />
+
+      {!dueReviewsQuery.isPending && (dueReviewsQuery.data?.length ?? 0) > 0 ? (
+        <div className="mt-4 flex flex-col gap-3 rounded-xl border border-warning/25 bg-warning/10 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-start gap-3">
+            <Brain className="mt-0.5 size-5 shrink-0 text-warning" />
+            <div>
+              <p className="text-sm font-semibold">
+                Reserve time for {dueReviewsQuery.data!.length} due reviews
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Review work is not silently converted into video time. Keep a small buffer inside
+                the daily budget.
+              </p>
+            </div>
+          </div>
+          <Link to="/study" className="shrink-0 text-sm font-semibold text-primary hover:underline">
+            Open Study Hub
+          </Link>
+        </div>
+      ) : null}
 
       <div className="mt-6 grid min-w-0 items-start gap-6 xl:grid-cols-[minmax(0,1fr)_22rem]">
         <div className="space-y-6">
@@ -939,6 +980,67 @@ export function PlanRoute() {
         />
       </div>
     </>
+  );
+}
+
+function PlanHistoryPanel({
+  versions,
+  pending,
+}: {
+  versions: PlanVersionSummary[];
+  pending: boolean;
+}) {
+  return (
+    <Card className="mt-4">
+      <CardHeader className="pb-3">
+        <CardTitle className="flex items-center gap-2">
+          <History className="size-4 text-primary" /> Plan history
+        </CardTitle>
+        <CardDescription>
+          Immutable versions make every commit and automatic replan auditable.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        {pending ? (
+          <div className="h-16 animate-pulse rounded-lg bg-muted motion-reduce:animate-none" />
+        ) : versions.length === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            Your first committed plan will create the initial version.
+          </p>
+        ) : (
+          <ol className="grid gap-2 lg:grid-cols-2">
+            {versions.slice(0, 4).map((version) => {
+              const changes = version.added_count + version.removed_count + version.moved_count;
+              return (
+                <li key={version.id} className="rounded-xl border bg-background p-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold">
+                        {version.is_active
+                          ? 'Current plan'
+                          : formatPlanVersionTime(version.created_at)}
+                      </p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {formatDay(version.horizon_start)}–{formatDay(version.horizon_end)} ·{' '}
+                        {version.item_count} blocks · {formatDuration(version.effective_content_ms)}
+                      </p>
+                    </div>
+                    <Badge tone={version.is_active ? 'primary' : 'neutral'}>
+                      {version.is_active ? 'Active' : `${version.day_count} days`}
+                    </Badge>
+                  </div>
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    {changes === 0
+                      ? 'Initial version'
+                      : `+${version.added_count} added · −${version.removed_count} removed · ${version.moved_count} moved`}
+                  </p>
+                </li>
+              );
+            })}
+          </ol>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -1539,6 +1641,17 @@ function formatDay(date: string): string {
     day: 'numeric',
     timeZone: 'UTC',
   }).format(new Date(`${date}T00:00:00Z`));
+}
+
+function formatPlanVersionTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'Previous plan';
+  return new Intl.DateTimeFormat(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(date);
 }
 
 const inputClass = 'form-control mt-1 h-10 font-normal text-foreground';

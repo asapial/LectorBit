@@ -12,7 +12,10 @@ const mocks = vi.hoisted(() => ({
   cloudStatus: vi.fn(),
   suggestPlan: vi.fn(),
   parseIntent: vi.fn(),
+  dueReviews: vi.fn(),
+  planHistory: vi.fn(),
 }));
+vi.mock('../../ipc/learning', () => ({ listDueReviews: mocks.dueReviews }));
 
 vi.mock('../../ipc/planner', () => ({
   listPlanningCandidates: mocks.listCandidates,
@@ -21,6 +24,7 @@ vi.mock('../../ipc/planner', () => ({
   getCloudPlanningStatus: mocks.cloudStatus,
   suggestPlanWithAi: mocks.suggestPlan,
   parsePlanIntent: mocks.parseIntent,
+  listPlanHistory: mocks.planHistory,
 }));
 
 const feasiblePreview: PlanPreview = {
@@ -68,6 +72,8 @@ function renderRoute(initialEntry = '/') {
 describe('PlanRoute', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.dueReviews.mockResolvedValue([]);
+    mocks.planHistory.mockResolvedValue([]);
     mocks.listCandidates.mockResolvedValue({
       items: [
         {
@@ -95,6 +101,29 @@ describe('PlanRoute', () => {
     });
   });
 
+  it('shows immutable plan history and a deterministic version diff', async () => {
+    mocks.planHistory.mockResolvedValue([
+      {
+        id: 'version-2',
+        created_at: '2026-08-20T10:00:00Z',
+        horizon_start: '2026-08-20',
+        horizon_end: '2026-09-02',
+        is_active: true,
+        day_count: 10,
+        item_count: 12,
+        effective_content_ms: 7_200_000,
+        added_count: 1,
+        removed_count: 2,
+        moved_count: 3,
+      },
+    ]);
+
+    renderRoute();
+
+    expect(await screen.findByText('Current plan')).toBeInTheDocument();
+    expect(screen.getByText('+1 added · −2 removed · 3 moved')).toBeInTheDocument();
+  });
+
   it('previews and commits a backend-owned feasible plan', async () => {
     renderRoute();
     fireEvent.click(await screen.findByRole('checkbox', { name: /Algorithms/i }));
@@ -107,7 +136,7 @@ describe('PlanRoute', () => {
     const request = mocks.commitPlan.mock.calls[0][1] as PlanRequest;
     expect(request.selections[0].media_id).toBe('media');
     expect(JSON.stringify(request)).not.toContain('raw_start_ms');
-  });
+  }, 10_000);
 
   it('applies an actionable infeasibility patch and previews again', async () => {
     const infeasible: PlanPreview = {

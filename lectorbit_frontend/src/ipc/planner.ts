@@ -149,6 +149,20 @@ const RoutinePlanSchema = z.object({
   days: z.array(RoutineDaySchema),
 });
 
+const PlanVersionSummarySchema = z.object({
+  id: z.string().min(1),
+  created_at: z.string().min(1),
+  horizon_start: z.iso.date(),
+  horizon_end: z.iso.date(),
+  is_active: z.boolean(),
+  day_count: z.number().int().nonnegative(),
+  item_count: z.number().int().nonnegative(),
+  effective_content_ms: z.number().int().nonnegative(),
+  added_count: z.number().int().nonnegative(),
+  removed_count: z.number().int().nonnegative(),
+  moved_count: z.number().int().nonnegative(),
+});
+
 const PlannerErrorSchema = z.object({
   kind: z.enum(['invalid_input', 'media_unavailable', 'infeasible', 'database', 'internal']),
   message: z.string(),
@@ -211,6 +225,7 @@ export type PlanAlternative = z.infer<typeof PlanAlternativeSchema>;
 export type AlternativePatch = z.infer<typeof AlternativePatchSchema>;
 export type PlanCommitResult = z.infer<typeof PlanCommitResultSchema>;
 export type RoutinePlan = z.infer<typeof RoutinePlanSchema>;
+export type PlanVersionSummary = z.infer<typeof PlanVersionSummarySchema>;
 export type CloudPlanningStatus = z.infer<typeof CloudPlanningStatusSchema>;
 export type AiPlanSuggestion = z.infer<typeof AiPlanSuggestionSchema>;
 export type AiPlanIntent = z.infer<typeof AiPlanIntentSchema>;
@@ -270,6 +285,14 @@ export async function commitPlan(title: string, request: PlanRequest): Promise<P
 
 export async function getRoutine(dayLimit = 14): Promise<RoutinePlan | null> {
   return call('plan_get_routine', { args: { day_limit: dayLimit } }, RoutinePlanSchema.nullable());
+}
+
+export async function listPlanHistory(limit = 12): Promise<PlanVersionSummary[]> {
+  return call(
+    'plan_list_history',
+    { args: { limit: z.number().int().min(1).max(50).parse(limit) } },
+    z.array(PlanVersionSummarySchema),
+  );
 }
 
 export async function replanActive(horizonStart: string): Promise<PlanCommitResult> {
