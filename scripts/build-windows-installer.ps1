@@ -324,6 +324,17 @@ $artifactName = "LectorBit_$($baseConfig.version)_x64$profileLabel-UNSIGNED-setu
 $artifactPath = Join-Path $artifactRoot $artifactName
 Copy-Item -LiteralPath $builtInstaller.FullName -Destination $artifactPath -Force
 Copy-Item -LiteralPath $receiptPath -Destination (Join-Path $artifactRoot 'sidecar-receipt.json') -Force
+
+# A release artifact is the handoff build. Remove the older debug setup so the
+# adjacent checksum cannot be mistaken as applying to both executables.
+if (-not $DebugBuild) {
+    $supersededDebugArtifact = Join-Path $artifactRoot "LectorBit_$($baseConfig.version)_x64-DEBUG-UNSIGNED-setup.exe"
+    Assert-OwnedPath -Path $supersededDebugArtifact -OwnedRoot $artifactRoot
+    if (Test-Path -LiteralPath $supersededDebugArtifact -PathType Leaf) {
+        Remove-Item -LiteralPath $supersededDebugArtifact -Force
+    }
+}
+
 $artifactHash = Get-Sha256 -Path $artifactPath
 [IO.File]::WriteAllText(
     (Join-Path $artifactRoot 'SHA256SUMS.txt'),

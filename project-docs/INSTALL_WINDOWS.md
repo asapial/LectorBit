@@ -64,7 +64,7 @@ The script (offline WebView2 by default):
 - stages resources under the ignored backend target directory and re-hashes every copied byte;
 - writes `sidecar-receipt.json` without local usernames or secrets;
 - builds a current-user NSIS installer with offline WebView2 in an isolated Cargo target (using practical zlib compression for the large local FFmpeg binaries); and
-- copies the setup executable, receipt, and checksum into `artifacts/windows-local/`.
+- copies the setup executable, receipt, and checksum into `artifacts/windows-local/`. A completed release build removes a superseded debug setup from that handoff folder so the checksum is unambiguous.
 
 For a fast provenance check without compiling:
 
