@@ -22,18 +22,20 @@ pub mod repo;
 pub use error::{DbError, DbResult};
 pub use pool::Db;
 pub use redaction::{redact, redact_event_fields, RedactingMakeWriter};
-pub use repo::ai_requests::{AiRequestProvenance, CloudConsentSummary, Repo as AiRequestsRepo};
+pub use repo::ai_requests::{
+    AiRequestEventRow, AiRequestProvenance, CloudConsentSummary, Repo as AiRequestsRepo,
+};
 pub use repo::analysis::{
-    ModelInstallRow, ModelManifestRow, Repo as AnalysisRepo, SearchRow, TranscriptSegmentInput,
-    TranscriptStateRow,
+    ModelInstallRow, ModelManifestRow, Repo as AnalysisRepo, SearchRow, TranscriptDocumentRow,
+    TranscriptSegmentInput, TranscriptSegmentRow, TranscriptStateRow,
 };
 pub use repo::annotations::{AnnotationRow, Repo as AnnotationsRepo};
 pub use repo::chunks::{
     PlannerCandidatePage, PlannerCandidateRow, Repo as ChunksRepo, SchedulableMedia, StoredChunk,
 };
 pub use repo::learning::{
-    ExplanationNoteRow, LearningArtifactRow, Repo as LearningRepo, ReviewStateRow, StudyItemInput,
-    StudyItemRow, TranscriptContextRow, TranscriptEvidenceRow,
+    ExplanationNoteRow, LearningArtifactRow, LearningArtifactSummaryRow, Repo as LearningRepo,
+    ReviewStateRow, StudyItemInput, StudyItemRow, TranscriptContextRow, TranscriptEvidenceRow,
 };
 pub use repo::library_roots::{InsertOutcome, LibraryRoot, Repo as LibraryRootsRepo};
 pub use repo::media::{
@@ -41,7 +43,8 @@ pub use repo::media::{
     Repo as MediaRepo, StoredProbe, StoredStream,
 };
 pub use repo::plans::{
-    ActivePlanSeed, CommittedPlan, Repo as PlansRepo, RoutineDay, RoutineItem, RoutinePlan,
+    ActivePlanSeed, CommittedPlan, PlanVersionSummaryRow, Repo as PlansRepo, RoutineDay,
+    RoutineItem, RoutinePlan,
 };
 pub use repo::study::{
     CheckpointResult, PlaybackItem, ProgressSnapshot, ReplanMediaState, Repo as StudyRepo,

@@ -58,6 +58,21 @@ pub struct RoutinePlan {
     pub days: Vec<RoutineDay>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlanVersionSummaryRow {
+    pub id: String,
+    pub created_at: String,
+    pub horizon_start: String,
+    pub horizon_end: String,
+    pub is_active: bool,
+    pub day_count: u32,
+    pub item_count: u32,
+    pub effective_content_ms: u64,
+    pub added_count: u32,
+    pub removed_count: u32,
+    pub moved_count: u32,
+}
+
 #[derive(Clone)]
 pub struct Repo {
     pool: SqlitePool,
@@ -255,6 +270,101 @@ impl Repo {
             })
         })
         .transpose()
+    }
+
+    pub async fn list_version_summaries(
+        &self,
+        user_id: &str,
+        limit: u32,
+    ) -> DbResult<Vec<PlanVersionSummaryRow>> {
+        let rows = sqlx::query(
+            "SELECT pv.id, pv.horizon_start, pv.horizon_end, pv.created_at, \
+                    CASE WHEN p.active_version_id = pv.id THEN 1 ELSE 0 END AS is_active, \
+                    (SELECT COUNT(*) FROM plan_version_days d WHERE d.plan_version_id = pv.id) AS day_count, \
+                    (SELECT COALESCE(SUM(d.effective_content_ms), 0) FROM plan_version_days d \
+                     WHERE d.plan_version_id = pv.id) AS effective_content_ms \
+             FROM plans p JOIN plan_versions pv ON pv.plan_id = p.id \
+             WHERE p.user_id = ? AND p.archived_at IS NULL \
+             ORDER BY is_active DESC, pv.created_at DESC, pv.id DESC LIMIT ?",
+        )
+        .bind(user_id)
+        .bind(i64::from(limit.clamp(1, 50)))
+        .fetch_all(&self.pool)
+        .await?;
+
+        struct VersionWork {
+            summary: PlanVersionSummaryRow,
+            schedule: BTreeMap<String, String>,
+        }
+        let mut versions = Vec::with_capacity(rows.len());
+        for row in rows {
+            let id: String = row.try_get("id")?;
+            let schedule_rows = sqlx::query(
+                "SELECT i.media_id, i.chunk_id, d.date \
+                 FROM plan_version_items i JOIN plan_version_days d ON d.id = i.plan_version_day_id \
+                 WHERE i.plan_version_id = ? ORDER BY i.sequence",
+            )
+            .bind(&id)
+            .fetch_all(&self.pool)
+            .await?;
+            let schedule = schedule_rows
+                .into_iter()
+                .map(|item| {
+                    Ok((
+                        format!(
+                            "{}:{}",
+                            item.try_get::<String, _>("media_id")?,
+                            item.try_get::<String, _>("chunk_id")?
+                        ),
+                        item.try_get("date")?,
+                    ))
+                })
+                .collect::<DbResult<BTreeMap<_, _>>>()?;
+            versions.push(VersionWork {
+                summary: PlanVersionSummaryRow {
+                    id,
+                    created_at: row.try_get("created_at")?,
+                    horizon_start: row.try_get("horizon_start")?,
+                    horizon_end: row.try_get("horizon_end")?,
+                    is_active: row.try_get::<i64, _>("is_active")? != 0,
+                    day_count: nonnegative_u32(row.try_get("day_count")?),
+                    item_count: schedule.len().min(u32::MAX as usize) as u32,
+                    effective_content_ms: nonnegative_u64(row.try_get("effective_content_ms")?),
+                    added_count: 0,
+                    removed_count: 0,
+                    moved_count: 0,
+                },
+                schedule,
+            });
+        }
+        for index in 0..versions.len() {
+            let Some(previous) = versions.get(index + 1).map(|version| &version.schedule) else {
+                continue;
+            };
+            let current = &versions[index].schedule;
+            let added_count = current
+                .keys()
+                .filter(|key| !previous.contains_key(*key))
+                .count()
+                .min(u32::MAX as usize) as u32;
+            let removed_count = previous
+                .keys()
+                .filter(|key| !current.contains_key(*key))
+                .count()
+                .min(u32::MAX as usize) as u32;
+            let moved_count = current
+                .iter()
+                .filter(|(key, date)| previous.get(*key).is_some_and(|old_date| old_date != *date))
+                .count()
+                .min(u32::MAX as usize) as u32;
+            versions[index].summary.added_count = added_count;
+            versions[index].summary.removed_count = removed_count;
+            versions[index].summary.moved_count = moved_count;
+        }
+        Ok(versions
+            .into_iter()
+            .map(|version| version.summary)
+            .collect())
     }
 
     pub async fn get_active_routine(
@@ -462,6 +572,48 @@ mod tests {
             .execute(db.pool())
             .await;
         assert!(mutation.is_err(), "immutable plan version was updated");
+    }
+
+    #[tokio::test]
+    async fn version_history_reports_blocks_moved_by_a_replan() {
+        let db = Db::open_in_memory().await.expect("database");
+        let repo = Repo::new(db.pool().clone());
+        repo.commit(
+            "local",
+            "Algorithms",
+            &PlanningConstraints::default(),
+            "[]",
+            &draft(),
+        )
+        .await
+        .expect("initial commit");
+
+        let mut moved = draft();
+        let next_day = NaiveDate::from_ymd_opt(2026, 8, 12).unwrap();
+        moved.horizon_start = next_day;
+        moved.horizon_end = next_day;
+        moved.items[0].scheduled_for = next_day;
+        moved.days[0].date = next_day;
+        repo.commit(
+            "local",
+            "Algorithms",
+            &PlanningConstraints::default(),
+            "[]",
+            &moved,
+        )
+        .await
+        .expect("replan commit");
+
+        let history = repo
+            .list_version_summaries("local", 10)
+            .await
+            .expect("history");
+        assert_eq!(history.len(), 2);
+        assert!(history[0].is_active);
+        assert_eq!(history[0].moved_count, 1);
+        assert_eq!(history[0].added_count, 0);
+        assert_eq!(history[0].removed_count, 0);
+        assert_eq!(history[0].item_count, 1);
     }
 
     #[tokio::test]

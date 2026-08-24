@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-plan-list-history"
+description = "Enables the plan_list_history command without any pre-configured scope."
+commands.allow = ["plan_list_history"]
+
+[[permission]]
+identifier = "deny-plan-list-history"
+description = "Denies the plan_list_history command without any pre-configured scope."
+commands.deny = ["plan_list_history"]

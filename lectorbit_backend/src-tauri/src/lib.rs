@@ -14,14 +14,15 @@ use lectorbit_services::{
 };
 use tauri::Manager;
 use tauri_plugin_lectorbit::{
-    AnalysisOps, AnnotationOps, CloudPlanningOps, DiagnosticsProvider, LearningOps, LibraryOps,
-    PlannerOps, PlaybackOps, SearchOps, UpdateOps,
+    AiStudioOps, AnalysisOps, AnnotationOps, CloudPlanningOps, DiagnosticsProvider, LearningOps,
+    LibraryOps, PlannerOps, PlaybackOps, SearchOps, UpdateOps,
 };
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::EnvFilter;
 
 mod ai_gateway;
+mod ai_studio_adapter;
 mod analysis_adapter;
 mod annotation_adapter;
 mod embedded_media;
@@ -33,6 +34,7 @@ mod planner_adapter;
 mod playback_adapter;
 mod update_adapter;
 use ai_gateway::{AiGateway, OpenRouterGateway};
+use ai_studio_adapter::AiStudioAdapter;
 use analysis_adapter::AnalysisAdapter;
 use annotation_adapter::AnnotationAdapter;
 use embedded_media::EmbeddedMediaRegistry;
@@ -183,6 +185,15 @@ pub fn run() {
                 .map_err(|error| format!("recover analysis jobs: {error}"))?;
             tauri::async_runtime::block_on(learning_adapter.recover_and_resume())
                 .map_err(|error| format!("recover learning jobs: {}", error.message))?;
+
+            app.manage(Arc::new(AiStudioAdapter::new(
+                LearningRepo::new(database.pool().clone()),
+                AiRequestsRepo::new(database.pool().clone()),
+                analysis_adapter.clone(),
+                learning_adapter.clone(),
+                library_adapter.clone(),
+                probe_scheduler,
+            )) as Arc<dyn AiStudioOps>);
 
             app.manage(Arc::new(DiagnosticsAdapter(diagnostics)) as Arc<dyn DiagnosticsProvider>);
             app.manage(library_adapter as Arc<dyn LibraryOps>);

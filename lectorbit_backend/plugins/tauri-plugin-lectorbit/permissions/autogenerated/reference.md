@@ -16,6 +16,7 @@ Default LectorBit permissions for the main window
 - `allow-planner-preview`
 - `allow-plan-commit`
 - `allow-plan-get-routine`
+- `allow-plan-list-history`
 - `allow-plan-replan`
 - `allow-cloud-planning-get-status`
 - `allow-cloud-planning-save-key`
@@ -38,6 +39,8 @@ Default LectorBit permissions for the main window
 - `allow-analysis-get-capability`
 - `allow-analysis-start-transcription`
 - `allow-analysis-get-transcript-state`
+- `allow-analysis-get-transcript-document`
+- `allow-analysis-correct-transcript-segment`
 - `allow-analysis-list-jobs`
 - `allow-learning-start-lecture-understanding`
 - `allow-learning-get-lecture-understanding`
@@ -46,6 +49,13 @@ Default LectorBit permissions for the main window
 - `allow-learning-generate-study-materials`
 - `allow-learning-list-study-materials`
 - `allow-learning-list-due-reviews`
+- `allow-learning-list-study-library`
+- `allow-learning-update-study-item`
+- `allow-ai-studio-list-artifacts`
+- `allow-ai-studio-list-request-activity`
+- `allow-ai-studio-list-jobs`
+- `allow-ai-studio-cancel-job`
+- `allow-ai-studio-retry-job`
 - `allow-learning-record-review`
 - `allow-learning-companion`
 - `allow-annotations-list`
@@ -64,6 +74,162 @@ Default LectorBit permissions for the main window
 <th>Description</th>
 </tr>
 
+
+<tr>
+<td>
+
+`lectorbit:allow-ai-studio-cancel-job`
+
+</td>
+<td>
+
+Enables the ai_studio_cancel_job command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:deny-ai-studio-cancel-job`
+
+</td>
+<td>
+
+Denies the ai_studio_cancel_job command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:allow-ai-studio-list-artifacts`
+
+</td>
+<td>
+
+Enables the ai_studio_list_artifacts command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:deny-ai-studio-list-artifacts`
+
+</td>
+<td>
+
+Denies the ai_studio_list_artifacts command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:allow-ai-studio-list-jobs`
+
+</td>
+<td>
+
+Enables the ai_studio_list_jobs command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:deny-ai-studio-list-jobs`
+
+</td>
+<td>
+
+Denies the ai_studio_list_jobs command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:allow-ai-studio-list-request-activity`
+
+</td>
+<td>
+
+Enables the ai_studio_list_request_activity command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:deny-ai-studio-list-request-activity`
+
+</td>
+<td>
+
+Denies the ai_studio_list_request_activity command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:allow-ai-studio-retry-job`
+
+</td>
+<td>
+
+Enables the ai_studio_retry_job command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:deny-ai-studio-retry-job`
+
+</td>
+<td>
+
+Denies the ai_studio_retry_job command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:allow-analysis-correct-transcript-segment`
+
+</td>
+<td>
+
+Enables the analysis_correct_transcript_segment command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:deny-analysis-correct-transcript-segment`
+
+</td>
+<td>
+
+Denies the analysis_correct_transcript_segment command without any pre-configured scope.
+
+</td>
+</tr>
 
 <tr>
 <td>
@@ -87,6 +253,32 @@ Enables the analysis_get_capability command without any pre-configured scope.
 <td>
 
 Denies the analysis_get_capability command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:allow-analysis-get-transcript-document`
+
+</td>
+<td>
+
+Enables the analysis_get_transcript_document command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:deny-analysis-get-transcript-document`
+
+</td>
+<td>
+
+Denies the analysis_get_transcript_document command without any pre-configured scope.
 
 </td>
 </tr>
@@ -614,6 +806,32 @@ Denies the learning_list_explanation_notes command without any pre-configured sc
 <tr>
 <td>
 
+`lectorbit:allow-learning-list-study-library`
+
+</td>
+<td>
+
+Enables the learning_list_study_library command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:deny-learning-list-study-library`
+
+</td>
+<td>
+
+Denies the learning_list_study_library command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `lectorbit:allow-learning-list-study-materials`
 
 </td>
@@ -685,6 +903,32 @@ Enables the learning_start_lecture_understanding command without any pre-configu
 <td>
 
 Denies the learning_start_lecture_understanding command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:allow-learning-update-study-item`
+
+</td>
+<td>
+
+Enables the learning_update_study_item command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:deny-learning-update-study-item`
+
+</td>
+<td>
+
+Denies the learning_update_study_item command without any pre-configured scope.
 
 </td>
 </tr>
@@ -971,6 +1215,32 @@ Enables the plan_get_routine command without any pre-configured scope.
 <td>
 
 Denies the plan_get_routine command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:allow-plan-list-history`
+
+</td>
+<td>
+
+Enables the plan_list_history command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`lectorbit:deny-plan-list-history`
+
+</td>
+<td>
+
+Denies the plan_list_history command without any pre-configured scope.
 
 </td>
 </tr>

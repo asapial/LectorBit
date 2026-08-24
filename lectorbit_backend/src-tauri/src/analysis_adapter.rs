@@ -13,7 +13,7 @@ use lectorbit_services::{
 use tauri_plugin_lectorbit::{
     AnalysisCapabilityDto, AnalysisErrorCode, AnalysisErrorKind, AnalysisEventSink, AnalysisJobDto,
     AnalysisOps, AnalysisProgressDto, BoxFuture, ModelDto, SearchErrorCode, SearchErrorKind,
-    SearchHitDto, SearchOps, TranscriptStateDto,
+    SearchHitDto, SearchOps, TranscriptDocumentDto, TranscriptSegmentDto, TranscriptStateDto,
 };
 use tokio::sync::{Mutex, RwLock, Semaphore};
 
@@ -154,6 +154,15 @@ impl AnalysisAdapter {
             .filter(|job| job.status == JobStatus::Queued)
         {
             self.spawn_transcription(job, Arc::new(|_| {}));
+        }
+        Ok(())
+    }
+
+    pub fn resume_job(&self, job: Job) -> Result<(), String> {
+        match job.kind.as_str() {
+            "model_download" => self.spawn_model_download(job, Arc::new(|_| {})),
+            "transcribe" => self.spawn_transcription(job, Arc::new(|_| {})),
+            _ => return Err("unsupported analysis job kind".into()),
         }
         Ok(())
     }
@@ -554,6 +563,35 @@ impl AnalysisOps for AnalysisAdapter {
         })
     }
 
+    fn transcript_document(
+        &self,
+        media_id: String,
+    ) -> BoxFuture<'_, Result<Option<TranscriptDocumentDto>, AnalysisErrorCode>> {
+        Box::pin(async move {
+            self.service
+                .transcript_document(&media_id)
+                .await
+                .map(|document| document.map(transcript_document_dto))
+                .map_err(map_analysis_error)
+        })
+    }
+
+    fn correct_transcript_segment(
+        &self,
+        media_id: String,
+        transcript_id: String,
+        segment_id: i64,
+        text: String,
+    ) -> BoxFuture<'_, Result<TranscriptDocumentDto, AnalysisErrorCode>> {
+        Box::pin(async move {
+            self.service
+                .correct_transcript_segment(&media_id, &transcript_id, segment_id, &text)
+                .await
+                .map(transcript_document_dto)
+                .map_err(map_analysis_error)
+        })
+    }
+
     fn list_jobs(
         &self,
         kind: String,
@@ -565,6 +603,29 @@ impl AnalysisOps for AnalysisAdapter {
                 .map(|jobs| jobs.iter().map(job_dto).collect())
                 .map_err(map_analysis_error)
         })
+    }
+}
+
+fn transcript_document_dto(document: lectorbit_db::TranscriptDocumentRow) -> TranscriptDocumentDto {
+    TranscriptDocumentDto {
+        id: document.id,
+        media_id: document.media_id,
+        language: document.language,
+        model_id: document.model_id,
+        analyzer_version: document.analyzer_version,
+        created_at: document.created_at,
+        segments: document
+            .segments
+            .into_iter()
+            .map(|segment| TranscriptSegmentDto {
+                id: segment.id,
+                ordinal: segment.ordinal,
+                start_ms: segment.start_ms,
+                end_ms: segment.end_ms,
+                text: segment.text,
+                confidence_milli: segment.confidence_milli,
+            })
+            .collect(),
     }
 }
 

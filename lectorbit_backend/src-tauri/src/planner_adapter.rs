@@ -8,7 +8,7 @@ use lectorbit_services::{
 };
 use tauri_plugin_lectorbit::{
     AlternativePatchDto, BoxFuture, PlanAlternativeDto, PlanCommitResultDto, PlanDayDto,
-    PlanPreviewDto, PlanPreviewItemDto, PlanRequestDto, PlannerCandidateDto,
+    PlanPreviewDto, PlanPreviewItemDto, PlanRequestDto, PlanVersionSummaryDto, PlannerCandidateDto,
     PlannerCandidatePageDto, PlannerErrorCode, PlannerErrorKind, PlannerOps, RoutineDayDto,
     RoutineItemDto, RoutinePlanDto, UnscheduledWorkDto,
 };
@@ -131,6 +131,42 @@ impl PlannerOps for PlannerAdapter {
                             })
                             .collect(),
                     })
+                })
+                .map_err(map_error)
+        })
+    }
+
+    fn history(
+        &self,
+        limit: u32,
+    ) -> BoxFuture<'_, Result<Vec<PlanVersionSummaryDto>, PlannerErrorCode>> {
+        Box::pin(async move {
+            if limit == 0 || limit > 50 {
+                return Err(PlannerErrorCode::new(
+                    PlannerErrorKind::InvalidInput,
+                    "Choose between 1 and 50 plan versions.",
+                ));
+            }
+            self.service
+                .history(limit)
+                .await
+                .map(|versions| {
+                    versions
+                        .into_iter()
+                        .map(|version| PlanVersionSummaryDto {
+                            id: version.id,
+                            created_at: version.created_at,
+                            horizon_start: version.horizon_start,
+                            horizon_end: version.horizon_end,
+                            is_active: version.is_active,
+                            day_count: version.day_count,
+                            item_count: version.item_count,
+                            effective_content_ms: version.effective_content_ms,
+                            added_count: version.added_count,
+                            removed_count: version.removed_count,
+                            moved_count: version.moved_count,
+                        })
+                        .collect()
                 })
                 .map_err(map_error)
         })

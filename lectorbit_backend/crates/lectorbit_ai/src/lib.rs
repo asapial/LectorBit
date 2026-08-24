@@ -108,6 +108,7 @@ pub struct TranscriptSegment {
     pub start_ms: u64,
     pub end_ms: u64,
     pub text: String,
+    pub confidence_milli: Option<u16>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -485,6 +486,14 @@ struct WhisperResult {
 struct WhisperSegment {
     offsets: WhisperOffsets,
     text: String,
+    #[serde(default)]
+    tokens: Vec<WhisperToken>,
+}
+
+#[derive(Deserialize)]
+struct WhisperToken {
+    #[serde(default)]
+    p: Option<f64>,
 }
 
 #[derive(Deserialize)]
@@ -501,11 +510,22 @@ pub fn parse_whisper_json(bytes: &[u8]) -> Result<TranscriptOutput, AiError> {
         .into_iter()
         .filter_map(|segment| {
             let text = segment.text.trim().to_string();
+            let probabilities = segment
+                .tokens
+                .iter()
+                .filter_map(|token| token.p)
+                .filter(|probability| probability.is_finite() && (0.0..=1.0).contains(probability))
+                .collect::<Vec<_>>();
+            let confidence_milli = (!probabilities.is_empty()).then(|| {
+                let average = probabilities.iter().sum::<f64>() / probabilities.len() as f64;
+                (average * 1000.0).round().clamp(0.0, 1000.0) as u16
+            });
             (segment.offsets.to > segment.offsets.from && !text.is_empty()).then_some(
                 TranscriptSegment {
                     start_ms: segment.offsets.from,
                     end_ms: segment.offsets.to,
                     text,
+                    confidence_milli,
                 },
             )
         })
@@ -551,7 +571,7 @@ mod tests {
             br#"{
               "result":{"language":"en"},
               "transcription":[
-                {"offsets":{"from":120,"to":980},"text":" Hello world "},
+                {"offsets":{"from":120,"to":980},"text":" Hello world ","tokens":[{"p":0.8},{"p":0.9}]},
                 {"offsets":{"from":980,"to":1100},"text":"   "}
               ]
             }"#,
@@ -561,6 +581,7 @@ mod tests {
         assert_eq!(output.segments.len(), 1);
         assert_eq!(output.segments[0].start_ms, 120);
         assert_eq!(output.segments[0].text, "Hello world");
+        assert_eq!(output.segments[0].confidence_milli, Some(850));
     }
 
     #[test]
@@ -601,6 +622,7 @@ mod tests {
         let output = parse_whisper_json(document.as_bytes()).expect("parse Bangla transcript");
         assert_eq!(output.language, "bn");
         assert_eq!(output.segments[0].text, "মেশিন লার্নিং কী?");
+        assert_eq!(output.segments[0].confidence_milli, None);
     }
 
     #[test]

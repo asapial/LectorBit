@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-learning-update-study-item"
+description = "Enables the learning_update_study_item command without any pre-configured scope."
+commands.allow = ["learning_update_study_item"]
+
+[[permission]]
+identifier = "deny-learning-update-study-item"
+description = "Denies the learning_update_study_item command without any pre-configured scope."
+commands.deny = ["learning_update_study_item"]

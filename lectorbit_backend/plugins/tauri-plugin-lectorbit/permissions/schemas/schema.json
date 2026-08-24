@@ -295,6 +295,78 @@
       "type": "string",
       "oneOf": [
         {
+          "description": "Enables the ai_studio_cancel_job command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-ai-studio-cancel-job",
+          "markdownDescription": "Enables the ai_studio_cancel_job command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the ai_studio_cancel_job command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-ai-studio-cancel-job",
+          "markdownDescription": "Denies the ai_studio_cancel_job command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the ai_studio_list_artifacts command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-ai-studio-list-artifacts",
+          "markdownDescription": "Enables the ai_studio_list_artifacts command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the ai_studio_list_artifacts command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-ai-studio-list-artifacts",
+          "markdownDescription": "Denies the ai_studio_list_artifacts command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the ai_studio_list_jobs command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-ai-studio-list-jobs",
+          "markdownDescription": "Enables the ai_studio_list_jobs command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the ai_studio_list_jobs command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-ai-studio-list-jobs",
+          "markdownDescription": "Denies the ai_studio_list_jobs command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the ai_studio_list_request_activity command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-ai-studio-list-request-activity",
+          "markdownDescription": "Enables the ai_studio_list_request_activity command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the ai_studio_list_request_activity command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-ai-studio-list-request-activity",
+          "markdownDescription": "Denies the ai_studio_list_request_activity command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the ai_studio_retry_job command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-ai-studio-retry-job",
+          "markdownDescription": "Enables the ai_studio_retry_job command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the ai_studio_retry_job command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-ai-studio-retry-job",
+          "markdownDescription": "Denies the ai_studio_retry_job command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the analysis_correct_transcript_segment command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-analysis-correct-transcript-segment",
+          "markdownDescription": "Enables the analysis_correct_transcript_segment command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the analysis_correct_transcript_segment command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-analysis-correct-transcript-segment",
+          "markdownDescription": "Denies the analysis_correct_transcript_segment command without any pre-configured scope."
+        },
+        {
           "description": "Enables the analysis_get_capability command without any pre-configured scope.",
           "type": "string",
           "const": "allow-analysis-get-capability",
@@ -305,6 +377,18 @@
           "type": "string",
           "const": "deny-analysis-get-capability",
           "markdownDescription": "Denies the analysis_get_capability command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the analysis_get_transcript_document command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-analysis-get-transcript-document",
+          "markdownDescription": "Enables the analysis_get_transcript_document command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the analysis_get_transcript_document command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-analysis-get-transcript-document",
+          "markdownDescription": "Denies the analysis_get_transcript_document command without any pre-configured scope."
         },
         {
           "description": "Enables the analysis_get_transcript_state command without any pre-configured scope.",
@@ -547,6 +631,18 @@
           "markdownDescription": "Denies the learning_list_explanation_notes command without any pre-configured scope."
         },
         {
+          "description": "Enables the learning_list_study_library command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-learning-list-study-library",
+          "markdownDescription": "Enables the learning_list_study_library command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the learning_list_study_library command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-learning-list-study-library",
+          "markdownDescription": "Denies the learning_list_study_library command without any pre-configured scope."
+        },
+        {
           "description": "Enables the learning_list_study_materials command without any pre-configured scope.",
           "type": "string",
           "const": "allow-learning-list-study-materials",
@@ -581,6 +677,18 @@
           "type": "string",
           "const": "deny-learning-start-lecture-understanding",
           "markdownDescription": "Denies the learning_start_lecture_understanding command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the learning_update_study_item command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-learning-update-study-item",
+          "markdownDescription": "Enables the learning_update_study_item command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the learning_update_study_item command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-learning-update-study-item",
+          "markdownDescription": "Denies the learning_update_study_item command without any pre-configured scope."
         },
         {
           "description": "Enables the library_enqueue_scan command without any pre-configured scope.",
@@ -713,6 +821,18 @@
           "type": "string",
           "const": "deny-plan-get-routine",
           "markdownDescription": "Denies the plan_get_routine command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the plan_list_history command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-plan-list-history",
+          "markdownDescription": "Enables the plan_list_history command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the plan_list_history command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-plan-list-history",
+          "markdownDescription": "Denies the plan_list_history command without any pre-configured scope."
         },
         {
           "description": "Enables the plan_replan command without any pre-configured scope.",
@@ -907,10 +1027,10 @@
           "markdownDescription": "Denies the updates_install command without any pre-configured scope."
         },
         {
-          "description": "Default LectorBit permissions for the main window\n#### This default permission set includes:\n\n- `allow-app-get-version`\n- `allow-app-get-diagnostics`\n- `allow-library-list-roots`\n- `allow-library-pick-and-register-root`\n- `allow-library-revoke-root`\n- `allow-library-enqueue-scan`\n- `allow-library-list-scan-jobs`\n- `allow-library-list-media`\n- `allow-planner-list-candidates`\n- `allow-planner-preview`\n- `allow-plan-commit`\n- `allow-plan-get-routine`\n- `allow-plan-replan`\n- `allow-cloud-planning-get-status`\n- `allow-cloud-planning-save-key`\n- `allow-cloud-planning-remove-key`\n- `allow-cloud-planning-suggest`\n- `allow-cloud-planning-parse-intent`\n- `allow-playback-get-capability`\n- `allow-playback-open`\n- `allow-playback-play`\n- `allow-playback-pause`\n- `allow-playback-seek`\n- `allow-playback-set-speed`\n- `allow-playback-get-state`\n- `allow-playback-sync`\n- `allow-playback-close`\n- `allow-study-record-action`\n- `allow-models-list`\n- `allow-models-install`\n- `allow-models-remove`\n- `allow-analysis-get-capability`\n- `allow-analysis-start-transcription`\n- `allow-analysis-get-transcript-state`\n- `allow-analysis-list-jobs`\n- `allow-learning-start-lecture-understanding`\n- `allow-learning-get-lecture-understanding`\n- `allow-learning-explain-frame`\n- `allow-learning-list-explanation-notes`\n- `allow-learning-generate-study-materials`\n- `allow-learning-list-study-materials`\n- `allow-learning-list-due-reviews`\n- `allow-learning-record-review`\n- `allow-learning-companion`\n- `allow-annotations-list`\n- `allow-annotations-create`\n- `allow-annotations-set-reviewed`\n- `allow-annotations-remove`\n- `allow-search-query`\n- `allow-updates-check`\n- `allow-updates-install`",
+          "description": "Default LectorBit permissions for the main window\n#### This default permission set includes:\n\n- `allow-app-get-version`\n- `allow-app-get-diagnostics`\n- `allow-library-list-roots`\n- `allow-library-pick-and-register-root`\n- `allow-library-revoke-root`\n- `allow-library-enqueue-scan`\n- `allow-library-list-scan-jobs`\n- `allow-library-list-media`\n- `allow-planner-list-candidates`\n- `allow-planner-preview`\n- `allow-plan-commit`\n- `allow-plan-get-routine`\n- `allow-plan-list-history`\n- `allow-plan-replan`\n- `allow-cloud-planning-get-status`\n- `allow-cloud-planning-save-key`\n- `allow-cloud-planning-remove-key`\n- `allow-cloud-planning-suggest`\n- `allow-cloud-planning-parse-intent`\n- `allow-playback-get-capability`\n- `allow-playback-open`\n- `allow-playback-play`\n- `allow-playback-pause`\n- `allow-playback-seek`\n- `allow-playback-set-speed`\n- `allow-playback-get-state`\n- `allow-playback-sync`\n- `allow-playback-close`\n- `allow-study-record-action`\n- `allow-models-list`\n- `allow-models-install`\n- `allow-models-remove`\n- `allow-analysis-get-capability`\n- `allow-analysis-start-transcription`\n- `allow-analysis-get-transcript-state`\n- `allow-analysis-get-transcript-document`\n- `allow-analysis-correct-transcript-segment`\n- `allow-analysis-list-jobs`\n- `allow-learning-start-lecture-understanding`\n- `allow-learning-get-lecture-understanding`\n- `allow-learning-explain-frame`\n- `allow-learning-list-explanation-notes`\n- `allow-learning-generate-study-materials`\n- `allow-learning-list-study-materials`\n- `allow-learning-list-due-reviews`\n- `allow-learning-list-study-library`\n- `allow-learning-update-study-item`\n- `allow-ai-studio-list-artifacts`\n- `allow-ai-studio-list-request-activity`\n- `allow-ai-studio-list-jobs`\n- `allow-ai-studio-cancel-job`\n- `allow-ai-studio-retry-job`\n- `allow-learning-record-review`\n- `allow-learning-companion`\n- `allow-annotations-list`\n- `allow-annotations-create`\n- `allow-annotations-set-reviewed`\n- `allow-annotations-remove`\n- `allow-search-query`\n- `allow-updates-check`\n- `allow-updates-install`",
           "type": "string",
           "const": "default",
-          "markdownDescription": "Default LectorBit permissions for the main window\n#### This default permission set includes:\n\n- `allow-app-get-version`\n- `allow-app-get-diagnostics`\n- `allow-library-list-roots`\n- `allow-library-pick-and-register-root`\n- `allow-library-revoke-root`\n- `allow-library-enqueue-scan`\n- `allow-library-list-scan-jobs`\n- `allow-library-list-media`\n- `allow-planner-list-candidates`\n- `allow-planner-preview`\n- `allow-plan-commit`\n- `allow-plan-get-routine`\n- `allow-plan-replan`\n- `allow-cloud-planning-get-status`\n- `allow-cloud-planning-save-key`\n- `allow-cloud-planning-remove-key`\n- `allow-cloud-planning-suggest`\n- `allow-cloud-planning-parse-intent`\n- `allow-playback-get-capability`\n- `allow-playback-open`\n- `allow-playback-play`\n- `allow-playback-pause`\n- `allow-playback-seek`\n- `allow-playback-set-speed`\n- `allow-playback-get-state`\n- `allow-playback-sync`\n- `allow-playback-close`\n- `allow-study-record-action`\n- `allow-models-list`\n- `allow-models-install`\n- `allow-models-remove`\n- `allow-analysis-get-capability`\n- `allow-analysis-start-transcription`\n- `allow-analysis-get-transcript-state`\n- `allow-analysis-list-jobs`\n- `allow-learning-start-lecture-understanding`\n- `allow-learning-get-lecture-understanding`\n- `allow-learning-explain-frame`\n- `allow-learning-list-explanation-notes`\n- `allow-learning-generate-study-materials`\n- `allow-learning-list-study-materials`\n- `allow-learning-list-due-reviews`\n- `allow-learning-record-review`\n- `allow-learning-companion`\n- `allow-annotations-list`\n- `allow-annotations-create`\n- `allow-annotations-set-reviewed`\n- `allow-annotations-remove`\n- `allow-search-query`\n- `allow-updates-check`\n- `allow-updates-install`"
+          "markdownDescription": "Default LectorBit permissions for the main window\n#### This default permission set includes:\n\n- `allow-app-get-version`\n- `allow-app-get-diagnostics`\n- `allow-library-list-roots`\n- `allow-library-pick-and-register-root`\n- `allow-library-revoke-root`\n- `allow-library-enqueue-scan`\n- `allow-library-list-scan-jobs`\n- `allow-library-list-media`\n- `allow-planner-list-candidates`\n- `allow-planner-preview`\n- `allow-plan-commit`\n- `allow-plan-get-routine`\n- `allow-plan-list-history`\n- `allow-plan-replan`\n- `allow-cloud-planning-get-status`\n- `allow-cloud-planning-save-key`\n- `allow-cloud-planning-remove-key`\n- `allow-cloud-planning-suggest`\n- `allow-cloud-planning-parse-intent`\n- `allow-playback-get-capability`\n- `allow-playback-open`\n- `allow-playback-play`\n- `allow-playback-pause`\n- `allow-playback-seek`\n- `allow-playback-set-speed`\n- `allow-playback-get-state`\n- `allow-playback-sync`\n- `allow-playback-close`\n- `allow-study-record-action`\n- `allow-models-list`\n- `allow-models-install`\n- `allow-models-remove`\n- `allow-analysis-get-capability`\n- `allow-analysis-start-transcription`\n- `allow-analysis-get-transcript-state`\n- `allow-analysis-get-transcript-document`\n- `allow-analysis-correct-transcript-segment`\n- `allow-analysis-list-jobs`\n- `allow-learning-start-lecture-understanding`\n- `allow-learning-get-lecture-understanding`\n- `allow-learning-explain-frame`\n- `allow-learning-list-explanation-notes`\n- `allow-learning-generate-study-materials`\n- `allow-learning-list-study-materials`\n- `allow-learning-list-due-reviews`\n- `allow-learning-list-study-library`\n- `allow-learning-update-study-item`\n- `allow-ai-studio-list-artifacts`\n- `allow-ai-studio-list-request-activity`\n- `allow-ai-studio-list-jobs`\n- `allow-ai-studio-cancel-job`\n- `allow-ai-studio-retry-job`\n- `allow-learning-record-review`\n- `allow-learning-companion`\n- `allow-annotations-list`\n- `allow-annotations-create`\n- `allow-annotations-set-reviewed`\n- `allow-annotations-remove`\n- `allow-search-query`\n- `allow-updates-check`\n- `allow-updates-install`"
         }
       ]
     }

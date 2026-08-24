@@ -92,6 +92,20 @@ impl ProbeScheduler {
         Ok(())
     }
 
+    pub fn resume_job(&self, job: Job) -> Result<(), String> {
+        if job.kind != "probe" {
+            return Err("unsupported media job kind".into());
+        }
+        self.spawn_probe(
+            job,
+            Arc::new(|_| {}),
+            1,
+            Arc::new(AtomicU64::new(0)),
+            Arc::new(AtomicU64::new(0)),
+        );
+        Ok(())
+    }
+
     pub async fn enqueue_candidates(
         &self,
         candidates: Vec<ProbeCandidate>,

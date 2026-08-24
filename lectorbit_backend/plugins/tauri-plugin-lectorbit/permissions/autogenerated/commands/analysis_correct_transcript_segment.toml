@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-analysis-correct-transcript-segment"
+description = "Enables the analysis_correct_transcript_segment command without any pre-configured scope."
+commands.allow = ["analysis_correct_transcript_segment"]
+
+[[permission]]
+identifier = "deny-analysis-correct-transcript-segment"
+description = "Denies the analysis_correct_transcript_segment command without any pre-configured scope."
+commands.deny = ["analysis_correct_transcript_segment"]

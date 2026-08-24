@@ -63,6 +63,14 @@ impl OpenRouterLearningAdapter {
         Ok(())
     }
 
+    pub fn resume_job(&self, job: Job) -> Result<(), LearningErrorCode> {
+        if job.kind != "lecture_understanding" {
+            return Err(invalid_input("Unsupported learning job kind."));
+        }
+        self.spawn_lecture(job, Arc::new(|_| {}));
+        Ok(())
+    }
+
     fn spawn_lecture(&self, job: Job, sink: LearningEventSink) {
         let adapter = self.clone();
         tauri::async_runtime::spawn(async move {
@@ -479,6 +487,46 @@ impl LearningOps for OpenRouterLearningAdapter {
                 .into_iter()
                 .map(study_item_to_dto)
                 .collect()
+        })
+    }
+
+    fn list_study_library(
+        &self,
+        include_archived: bool,
+        limit: u32,
+    ) -> BoxFuture<'_, Result<Vec<StudyItemDto>, LearningErrorCode>> {
+        Box::pin(async move {
+            if limit == 0 || limit > 1000 {
+                return Err(invalid_input("Choose between 1 and 1000 study items."));
+            }
+            self.repo
+                .list_study_library(include_archived, limit)
+                .await
+                .map_err(database_error)?
+                .into_iter()
+                .map(study_item_to_dto)
+                .collect()
+        })
+    }
+
+    fn update_study_item(
+        &self,
+        study_item_id: String,
+        prompt: String,
+        answer: String,
+        hint: Option<String>,
+        archived: bool,
+    ) -> BoxFuture<'_, Result<StudyItemDto, LearningErrorCode>> {
+        Box::pin(async move {
+            if study_item_id.trim().is_empty() {
+                return Err(invalid_input("The study item identifier is required."));
+            }
+            self.repo
+                .update_study_item(&study_item_id, &prompt, &answer, hint.as_deref(), archived)
+                .await
+                .map_err(database_error)?
+                .ok_or_else(|| invalid_input("That study item is no longer available."))
+                .and_then(study_item_to_dto)
         })
     }
 
@@ -983,6 +1031,8 @@ fn study_item_to_dto(item: StudyItemRow) -> Result<StudyItemDto, LearningErrorCo
         repetitions: item.repetitions,
         ease_milli: item.ease_milli,
         last_quality: item.last_quality,
+        archived: item.archived,
+        user_edited: item.user_edited,
     })
 }
 

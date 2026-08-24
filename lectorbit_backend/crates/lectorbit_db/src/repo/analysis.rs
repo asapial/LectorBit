@@ -35,6 +35,7 @@ pub struct TranscriptSegmentInput {
     pub start_ms: u64,
     pub end_ms: u64,
     pub text: String,
+    pub confidence_milli: Option<u16>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -43,6 +44,27 @@ pub struct TranscriptStateRow {
     pub segment_count: u64,
     pub language: String,
     pub model_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TranscriptSegmentRow {
+    pub id: i64,
+    pub ordinal: u32,
+    pub start_ms: u64,
+    pub end_ms: u64,
+    pub text: String,
+    pub confidence_milli: Option<u16>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TranscriptDocumentRow {
+    pub id: String,
+    pub media_id: String,
+    pub language: String,
+    pub model_id: String,
+    pub analyzer_version: String,
+    pub created_at: String,
+    pub segments: Vec<TranscriptSegmentRow>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -215,8 +237,8 @@ impl Repo {
         for (ordinal, segment) in segments.iter().enumerate() {
             sqlx::query(
                 "INSERT INTO transcript_segments \
-                 (transcript_id, media_id, ordinal, start_ms, end_ms, text) \
-                 VALUES (?, ?, ?, ?, ?, ?)",
+                 (transcript_id, media_id, ordinal, start_ms, end_ms, text, confidence_milli) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?)",
             )
             .bind(&transcript_id)
             .bind(media_id)
@@ -224,6 +246,7 @@ impl Repo {
             .bind(to_i64(segment.start_ms))
             .bind(to_i64(segment.end_ms))
             .bind(segment.text.trim())
+            .bind(segment.confidence_milli.map(i64::from))
             .execute(&mut *transaction)
             .await?;
         }
@@ -250,6 +273,110 @@ impl Repo {
             })
         })
         .transpose()
+    }
+
+    pub async fn active_transcript_document(
+        &self,
+        media_id: &str,
+    ) -> DbResult<Option<TranscriptDocumentRow>> {
+        let transcript = sqlx::query(
+            "SELECT id, media_id, language, model_id, analyzer_version, created_at \
+             FROM transcripts WHERE media_id = ? AND superseded_at IS NULL \
+             ORDER BY created_at DESC, id DESC LIMIT 1",
+        )
+        .bind(media_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        let Some(transcript) = transcript else {
+            return Ok(None);
+        };
+        let transcript_id: String = transcript.try_get("id")?;
+        let rows = sqlx::query(
+            "SELECT id, ordinal, start_ms, end_ms, text, confidence_milli FROM transcript_segments \
+             WHERE transcript_id = ? ORDER BY ordinal",
+        )
+        .bind(&transcript_id)
+        .fetch_all(&self.pool)
+        .await?;
+        let segments = rows
+            .into_iter()
+            .map(|row| {
+                Ok(TranscriptSegmentRow {
+                    id: row.try_get("id")?,
+                    ordinal: nonnegative_u32(row.try_get("ordinal")?),
+                    start_ms: nonnegative_u64(row.try_get("start_ms")?),
+                    end_ms: nonnegative_u64(row.try_get("end_ms")?),
+                    text: row.try_get("text")?,
+                    confidence_milli: row
+                        .try_get::<Option<i64>, _>("confidence_milli")?
+                        .and_then(|value| u16::try_from(value).ok()),
+                })
+            })
+            .collect::<DbResult<Vec<_>>>()?;
+        Ok(Some(TranscriptDocumentRow {
+            id: transcript_id,
+            media_id: transcript.try_get("media_id")?,
+            language: transcript.try_get("language")?,
+            model_id: transcript.try_get("model_id")?,
+            analyzer_version: transcript.try_get("analyzer_version")?,
+            created_at: transcript.try_get("created_at")?,
+            segments,
+        }))
+    }
+
+    pub async fn correct_transcript_segment(
+        &self,
+        media_id: &str,
+        transcript_id: &str,
+        segment_id: i64,
+        text: &str,
+    ) -> DbResult<TranscriptDocumentRow> {
+        let text = text.trim();
+        if text.is_empty() || text.chars().count() > 8_000 {
+            return Err(DbError::Pool("invalid transcript correction".into()));
+        }
+        let current = self
+            .active_transcript_document(media_id)
+            .await?
+            .ok_or_else(|| DbError::Pool("transcript not found".into()))?;
+        if current.id != transcript_id {
+            return Err(DbError::Pool("transcript changed before correction".into()));
+        }
+        let mut found = false;
+        let segments = current
+            .segments
+            .iter()
+            .map(|segment| {
+                let next_text = if segment.id == segment_id {
+                    found = true;
+                    text.to_owned()
+                } else {
+                    segment.text.clone()
+                };
+                TranscriptSegmentInput {
+                    start_ms: segment.start_ms,
+                    end_ms: segment.end_ms,
+                    text: next_text,
+                    confidence_milli: (segment.id != segment_id)
+                        .then_some(segment.confidence_milli)
+                        .flatten(),
+                }
+            })
+            .collect::<Vec<_>>();
+        if !found {
+            return Err(DbError::Pool("transcript segment not found".into()));
+        }
+        self.save_transcript(
+            media_id,
+            &current.model_id,
+            "manual-correction-v1",
+            &current.language,
+            &segments,
+        )
+        .await?;
+        self.active_transcript_document(media_id)
+            .await?
+            .ok_or_else(|| DbError::Pool("corrected transcript missing".into()))
     }
 
     pub async fn search(&self, query: &str, limit: u32) -> DbResult<Vec<SearchRow>> {
@@ -353,6 +480,14 @@ fn to_i64(value: u64) -> i64 {
     value.min(i64::MAX as u64) as i64
 }
 
+fn nonnegative_u64(value: i64) -> u64 {
+    u64::try_from(value.max(0)).unwrap_or_default()
+}
+
+fn nonnegative_u32(value: i64) -> u32 {
+    u32::try_from(value.max(0)).unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeSet;
@@ -401,6 +536,7 @@ mod tests {
                 start_ms: 0,
                 end_ms: 1_000,
                 text: "মেশিন লার্নিং".into(),
+                confidence_milli: Some(910),
             }],
         )
         .await
@@ -414,6 +550,91 @@ mod tests {
         assert_eq!(state.language, "bn");
         assert_eq!(state.model_id, "whisper-base");
         assert_eq!(state.segment_count, 1);
+    }
+
+    #[tokio::test]
+    async fn transcript_correction_creates_a_new_active_version() {
+        let db = crate::Db::open_in_memory().await.expect("database");
+        sqlx::query(
+            "INSERT INTO library_roots \
+             (id, display_name, canonical_path, registered_at, revoked_at) \
+             VALUES ('root', 'Lectures', 'C:/lectures', '2026-08-20T00:00:00Z', NULL)",
+        )
+        .execute(db.pool())
+        .await
+        .expect("root");
+        sqlx::query(
+            "INSERT INTO media_files \
+             (id, root_id, folder_id, path, size_bytes, mtime, discovered_at, display_name) \
+             VALUES ('media', 'root', NULL, 'C:/lectures/demo.mp4', 1, \
+                     '2026-08-20T00:00:00Z', '2026-08-20T00:00:00Z', 'demo.mp4')",
+        )
+        .execute(db.pool())
+        .await
+        .expect("media");
+        sqlx::query(
+            "INSERT INTO models \
+             (id, version, provider, source_url, expected_size_bytes, sha256, architecture, \
+              analyzer_compatibility, license) \
+             VALUES ('whisper-base', 'test', 'test', 'https://example.com/model', 1, \
+                     '0000000000000000000000000000000000000000000000000000000000000000', \
+                     'any', '1.9.2', 'MIT')",
+        )
+        .execute(db.pool())
+        .await
+        .expect("model");
+
+        let repo = Repo::new(db.pool().clone());
+        repo.save_transcript(
+            "media",
+            "whisper-base",
+            "1.9.2",
+            "en",
+            &[
+                TranscriptSegmentInput {
+                    start_ms: 0,
+                    end_ms: 1_000,
+                    text: "A graph has vertexes.".into(),
+                    confidence_milli: Some(620),
+                },
+                TranscriptSegmentInput {
+                    start_ms: 1_000,
+                    end_ms: 2_000,
+                    text: "Edges connect them.".into(),
+                    confidence_milli: Some(900),
+                },
+            ],
+        )
+        .await
+        .expect("save transcript");
+        let original = repo
+            .active_transcript_document("media")
+            .await
+            .expect("document")
+            .expect("active transcript");
+
+        let corrected = repo
+            .correct_transcript_segment(
+                "media",
+                &original.id,
+                original.segments[0].id,
+                "A graph has vertices.",
+            )
+            .await
+            .expect("correct transcript");
+
+        assert_ne!(corrected.id, original.id);
+        assert_eq!(corrected.segments[0].text, "A graph has vertices.");
+        assert_eq!(corrected.segments[0].confidence_milli, None);
+        assert_eq!(corrected.segments[1].text, "Edges connect them.");
+        assert_eq!(corrected.segments[1].confidence_milli, Some(900));
+        let original_superseded_at: Option<String> =
+            sqlx::query_scalar("SELECT superseded_at FROM transcripts WHERE id = ?")
+                .bind(&original.id)
+                .fetch_one(db.pool())
+                .await
+                .expect("original supersession state");
+        assert!(original_superseded_at.is_some());
     }
 
     #[tokio::test]
@@ -459,6 +680,7 @@ mod tests {
                 start_ms: 0,
                 end_ms: 1_000,
                 text: "Secret transcript evidence".into(),
+                confidence_milli: None,
             }],
         )
         .await

@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-ai-studio-list-request-activity"
+description = "Enables the ai_studio_list_request_activity command without any pre-configured scope."
+commands.allow = ["ai_studio_list_request_activity"]
+
+[[permission]]
+identifier = "deny-ai-studio-list-request-activity"
+description = "Denies the ai_studio_list_request_activity command without any pre-configured scope."
+commands.deny = ["ai_studio_list_request_activity"]

@@ -25,8 +25,9 @@ pub use lectorbit_ai::TranscriptionLanguage;
 
 pub use diagnostics::{DiagnosticsReport, DiagnosticsService};
 pub use jobs::{
-    enqueue, find_active_by_payload, list_by_kind, mark_completed, mark_failed, mark_running,
-    recover_interrupted, Job, JobError, JobEvent, JobStatus,
+    cancel_pending, enqueue, find_active_by_payload, get_by_id, list_by_kind, mark_completed,
+    mark_failed, mark_running, recover_interrupted, retry_terminal, Job, JobError, JobEvent,
+    JobStatus,
 };
 pub use library::{
     AuthorizedRoot, LibraryError, LibraryRootView, LibraryService, ScanEnqueue, ScanJobPayload,

@@ -40,6 +40,20 @@ pub struct LearningArtifactRow {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LearningArtifactSummaryRow {
+    pub id: String,
+    pub media_id: String,
+    pub display_name: String,
+    pub transcript_id: Option<String>,
+    pub kind: String,
+    pub model_id: String,
+    pub prompt_version: String,
+    pub created_at: String,
+    pub superseded_at: Option<String>,
+    pub stale: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExplanationNoteRow {
     pub id: String,
     pub media_id: String,
@@ -92,6 +106,8 @@ pub struct StudyItemRow {
     pub repetitions: u32,
     pub ease_milli: u32,
     pub last_quality: Option<u8>,
+    pub archived: bool,
+    pub user_edited: bool,
 }
 
 #[derive(Clone)]
@@ -200,6 +216,47 @@ impl Repo {
         .fetch_optional(&self.pool)
         .await?;
         row.map(artifact_from_row).transpose()
+    }
+
+    pub async fn list_artifact_summaries(
+        &self,
+        include_superseded: bool,
+        limit: u32,
+    ) -> DbResult<Vec<LearningArtifactSummaryRow>> {
+        let rows = sqlx::query(
+            "SELECT artifact.id, artifact.media_id, media.display_name, artifact.transcript_id, \
+                    artifact.kind, artifact.model_id, artifact.prompt_version, artifact.created_at, \
+                    artifact.superseded_at, \
+                    CASE WHEN artifact.superseded_at IS NOT NULL OR \
+                      (artifact.transcript_id IS NOT NULL AND NOT EXISTS ( \
+                        SELECT 1 FROM transcripts transcript \
+                        WHERE transcript.id = artifact.transcript_id AND transcript.superseded_at IS NULL \
+                      )) THEN 1 ELSE 0 END AS stale \
+             FROM learning_artifacts artifact \
+             JOIN media_files media ON media.id = artifact.media_id \
+             WHERE (? = 1 OR artifact.superseded_at IS NULL) \
+             ORDER BY artifact.created_at DESC LIMIT ?",
+        )
+        .bind(include_superseded)
+        .bind(i64::from(limit.clamp(1, 1000)))
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter()
+            .map(|row| {
+                Ok(LearningArtifactSummaryRow {
+                    id: row.try_get("id")?,
+                    media_id: row.try_get("media_id")?,
+                    display_name: row.try_get("display_name")?,
+                    transcript_id: row.try_get("transcript_id")?,
+                    kind: row.try_get("kind")?,
+                    model_id: row.try_get("model_id")?,
+                    prompt_version: row.try_get("prompt_version")?,
+                    created_at: row.try_get("created_at")?,
+                    superseded_at: row.try_get("superseded_at")?,
+                    stale: row.try_get::<i64, _>("stale")? != 0,
+                })
+            })
+            .collect()
     }
 
     pub async fn save_artifact(
@@ -433,6 +490,8 @@ impl Repo {
                 repetitions: 0,
                 ease_milli: 2500,
                 last_quality: None,
+                archived: false,
+                user_edited: false,
             });
         }
         transaction.commit().await?;
@@ -447,11 +506,12 @@ impl Repo {
         let rows = sqlx::query(
             "SELECT item.id, item.media_id, item.chapter_start_ms, item.kind, item.prompt, \
                     item.answer, item.hint, item.options_json, item.evidence_json, state.due_at, \
-                    state.interval_days, state.repetitions, state.ease_milli, state.last_quality \
+                    state.interval_days, state.repetitions, state.ease_milli, state.last_quality, \
+                    item.archived, item.user_edited \
              FROM study_items item \
              JOIN learning_artifacts artifact ON artifact.id = item.artifact_id \
              JOIN review_states state ON state.study_item_id = item.id \
-             WHERE item.media_id = ? AND artifact.superseded_at IS NULL \
+             WHERE item.media_id = ? AND artifact.superseded_at IS NULL AND item.archived = 0 \
              ORDER BY state.due_at, item.created_at, item.id LIMIT ?",
         )
         .bind(media_id)
@@ -469,11 +529,13 @@ impl Repo {
         let rows = sqlx::query(
             "SELECT item.id, item.media_id, item.chapter_start_ms, item.kind, item.prompt, \
                     item.answer, item.hint, item.options_json, item.evidence_json, state.due_at, \
-                    state.interval_days, state.repetitions, state.ease_milli, state.last_quality \
+                    state.interval_days, state.repetitions, state.ease_milli, state.last_quality, \
+                    item.archived, item.user_edited \
              FROM study_items item \
              JOIN learning_artifacts artifact ON artifact.id = item.artifact_id \
              JOIN review_states state ON state.study_item_id = item.id \
              WHERE julianday(state.due_at) <= julianday(?) AND artifact.superseded_at IS NULL \
+               AND item.archived = 0 \
              ORDER BY state.due_at, item.created_at, item.id LIMIT ?",
         )
         .bind(due_before)
@@ -481,6 +543,77 @@ impl Repo {
         .fetch_all(&self.pool)
         .await?;
         rows.into_iter().map(study_item_from_row).collect()
+    }
+
+    pub async fn list_study_library(
+        &self,
+        include_archived: bool,
+        limit: u32,
+    ) -> DbResult<Vec<StudyItemRow>> {
+        let rows = sqlx::query(
+            "SELECT item.id, item.media_id, item.chapter_start_ms, item.kind, item.prompt, \
+                    item.answer, item.hint, item.options_json, item.evidence_json, state.due_at, \
+                    state.interval_days, state.repetitions, state.ease_milli, state.last_quality, \
+                    item.archived, item.user_edited \
+             FROM study_items item \
+             JOIN learning_artifacts artifact ON artifact.id = item.artifact_id \
+             JOIN review_states state ON state.study_item_id = item.id \
+             WHERE artifact.superseded_at IS NULL AND (? = 1 OR item.archived = 0) \
+             ORDER BY item.archived, state.due_at, item.created_at, item.id LIMIT ?",
+        )
+        .bind(include_archived)
+        .bind(i64::from(limit.clamp(1, 1000)))
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter().map(study_item_from_row).collect()
+    }
+
+    pub async fn update_study_item(
+        &self,
+        study_item_id: &str,
+        prompt: &str,
+        answer: &str,
+        hint: Option<&str>,
+        archived: bool,
+    ) -> DbResult<Option<StudyItemRow>> {
+        let prompt = prompt.trim();
+        let answer = answer.trim();
+        let hint = hint.map(str::trim).filter(|value| !value.is_empty());
+        if prompt.is_empty()
+            || prompt.chars().count() > 4_000
+            || answer.is_empty()
+            || answer.chars().count() > 12_000
+        {
+            return Err(DbError::Pool("invalid study item update".into()));
+        }
+        let updated_at = Utc::now().to_rfc3339();
+        let result = sqlx::query(
+            "UPDATE study_items SET prompt = ?, answer = ?, hint = ?, archived = ?, \
+                    user_edited = 1, updated_at = ? WHERE id = ?",
+        )
+        .bind(prompt)
+        .bind(answer)
+        .bind(hint)
+        .bind(archived)
+        .bind(updated_at)
+        .bind(study_item_id)
+        .execute(&self.pool)
+        .await?;
+        if result.rows_affected() == 0 {
+            return Ok(None);
+        }
+        let row = sqlx::query(
+            "SELECT item.id, item.media_id, item.chapter_start_ms, item.kind, item.prompt, \
+                    item.answer, item.hint, item.options_json, item.evidence_json, state.due_at, \
+                    state.interval_days, state.repetitions, state.ease_milli, state.last_quality, \
+                    item.archived, item.user_edited \
+             FROM study_items item JOIN review_states state ON state.study_item_id = item.id \
+             WHERE item.id = ?",
+        )
+        .bind(study_item_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        row.map(study_item_from_row).transpose()
     }
 
     /// Deterministic SM-2 update. The model never selects review dates.
@@ -627,6 +760,8 @@ fn study_item_from_row(row: sqlx::sqlite::SqliteRow) -> DbResult<StudyItemRow> {
         last_quality: row
             .try_get::<Option<i64>, _>("last_quality")?
             .and_then(|value| u8::try_from(value).ok()),
+        archived: row.try_get::<i64, _>("archived")? != 0,
+        user_edited: row.try_get::<i64, _>("user_edited")? != 0,
     })
 }
 
@@ -640,4 +775,90 @@ fn nonnegative_u64(value: i64) -> u64 {
 
 fn nonnegative_u32(value: i64) -> u32 {
     u32::try_from(value.max(0)).unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn study_item_corrections_are_persisted_and_archives_are_filtered() {
+        let db = crate::Db::open_in_memory().await.expect("database");
+        sqlx::query(
+            "INSERT INTO library_roots \
+             (id, display_name, canonical_path, registered_at, revoked_at) \
+             VALUES ('root', 'Lectures', 'C:/lectures', '2026-08-20T00:00:00Z', NULL)",
+        )
+        .execute(db.pool())
+        .await
+        .expect("root");
+        sqlx::query(
+            "INSERT INTO media_files \
+             (id, root_id, folder_id, path, size_bytes, mtime, discovered_at, display_name) \
+             VALUES ('media', 'root', NULL, 'C:/lectures/demo.mp4', 1, \
+                     '2026-08-20T00:00:00Z', '2026-08-20T00:00:00Z', 'demo.mp4')",
+        )
+        .execute(db.pool())
+        .await
+        .expect("media");
+        sqlx::query(
+            "INSERT INTO learning_artifacts \
+             (id, media_id, transcript_id, kind, model_id, prompt_version, schema_version, \
+              input_hash, payload_json, created_at, superseded_at) \
+             VALUES ('artifact', 'media', NULL, 'study_materials', 'test-model', 'test', 1, \
+                     '0000000000000000000000000000000000000000000000000000000000000000', \
+                     '{}', '2026-08-20T00:00:00Z', NULL)",
+        )
+        .execute(db.pool())
+        .await
+        .expect("artifact");
+        sqlx::query(
+            "INSERT INTO study_items \
+             (id, artifact_id, media_id, chapter_start_ms, kind, prompt, answer, hint, \
+              options_json, evidence_json, created_at) \
+             VALUES ('item', 'artifact', 'media', 1000, 'flashcard', 'Old prompt', \
+                     'Old answer', NULL, NULL, '[]', '2026-08-20T00:00:00Z')",
+        )
+        .execute(db.pool())
+        .await
+        .expect("study item");
+        sqlx::query(
+            "INSERT INTO review_states \
+             (study_item_id, due_at, interval_days, repetitions, ease_milli, last_quality, updated_at) \
+             VALUES ('item', '2026-08-20T00:00:00Z', 0, 0, 2500, NULL, \
+                     '2026-08-20T00:00:00Z')",
+        )
+        .execute(db.pool())
+        .await
+        .expect("review state");
+
+        let repo = Repo::new(db.pool().clone());
+        let updated = repo
+            .update_study_item(
+                "item",
+                "Correct prompt",
+                "Correct answer",
+                Some("Helpful hint"),
+                true,
+            )
+            .await
+            .expect("update")
+            .expect("updated item");
+        assert_eq!(updated.prompt, "Correct prompt");
+        assert_eq!(updated.hint.as_deref(), Some("Helpful hint"));
+        assert!(updated.archived);
+        assert!(updated.user_edited);
+        assert!(repo
+            .list_study_library(false, 100)
+            .await
+            .expect("active library")
+            .is_empty());
+        assert_eq!(
+            repo.list_study_library(true, 100)
+                .await
+                .expect("full library")
+                .len(),
+            1
+        );
+    }
 }

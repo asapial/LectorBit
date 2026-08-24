@@ -52,6 +52,14 @@ impl LibraryAdapter {
         Ok(())
     }
 
+    pub fn resume_job(&self, job: Job) -> Result<(), String> {
+        if job.kind != "scan" {
+            return Err("unsupported library job kind".into());
+        }
+        self.spawn_scan(job, Arc::new(|_| {}));
+        Ok(())
+    }
+
     fn spawn_scan(&self, job: Job, sink: ScanEventSink) {
         let adapter = self.clone();
         tauri::async_runtime::spawn(async move {

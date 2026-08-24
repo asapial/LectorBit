@@ -283,6 +283,21 @@ pub struct RoutinePlanDto {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PlanVersionSummaryDto {
+    pub id: String,
+    pub created_at: String,
+    pub horizon_start: String,
+    pub horizon_end: String,
+    pub is_active: bool,
+    pub day_count: u32,
+    pub item_count: u32,
+    pub effective_content_ms: u64,
+    pub added_count: u32,
+    pub removed_count: u32,
+    pub moved_count: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PlaybackCapabilityDto {
     pub available: bool,
     pub backend: String,
@@ -412,6 +427,10 @@ pub trait PlannerOps: Send + Sync + 'static {
         &self,
         day_limit: u32,
     ) -> BoxFuture<'_, Result<Option<RoutinePlanDto>, PlannerErrorCode>>;
+    fn history(
+        &self,
+        limit: u32,
+    ) -> BoxFuture<'_, Result<Vec<PlanVersionSummaryDto>, PlannerErrorCode>>;
     fn replan(
         &self,
         horizon_start: String,
@@ -521,6 +540,27 @@ pub struct TranscriptStateDto {
     pub language: Option<String>,
     pub model_id: Option<String>,
     pub job: Option<AnalysisJobDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TranscriptSegmentDto {
+    pub id: i64,
+    pub ordinal: u32,
+    pub start_ms: u64,
+    pub end_ms: u64,
+    pub text: String,
+    pub confidence_milli: Option<u16>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TranscriptDocumentDto {
+    pub id: String,
+    pub media_id: String,
+    pub language: String,
+    pub model_id: String,
+    pub analyzer_version: String,
+    pub created_at: String,
+    pub segments: Vec<TranscriptSegmentDto>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -641,6 +681,8 @@ pub struct StudyItemDto {
     pub repetitions: u32,
     pub ease_milli: u32,
     pub last_quality: Option<u8>,
+    pub archived: bool,
+    pub user_edited: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -715,6 +757,19 @@ pub trait LearningOps: Send + Sync + 'static {
         due_before: String,
         limit: u32,
     ) -> BoxFuture<'_, Result<Vec<StudyItemDto>, LearningErrorCode>>;
+    fn list_study_library(
+        &self,
+        include_archived: bool,
+        limit: u32,
+    ) -> BoxFuture<'_, Result<Vec<StudyItemDto>, LearningErrorCode>>;
+    fn update_study_item(
+        &self,
+        study_item_id: String,
+        prompt: String,
+        answer: String,
+        hint: Option<String>,
+        archived: bool,
+    ) -> BoxFuture<'_, Result<StudyItemDto, LearningErrorCode>>;
     fn record_review(
         &self,
         study_item_id: String,
@@ -730,6 +785,61 @@ pub trait LearningOps: Send + Sync + 'static {
         action: String,
         consent: bool,
     ) -> BoxFuture<'_, Result<CompanionAnswerDto, LearningErrorCode>>;
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AiArtifactSummaryDto {
+    pub id: String,
+    pub media_id: String,
+    pub display_name: String,
+    pub transcript_id: Option<String>,
+    pub kind: String,
+    pub model: String,
+    pub prompt_version: String,
+    pub created_at: String,
+    pub superseded_at: Option<String>,
+    pub stale: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AiRequestEventDto {
+    pub id: String,
+    pub provider: String,
+    pub capability: String,
+    pub prompt_id: String,
+    pub prompt_version: String,
+    pub requested_model: String,
+    pub resolved_model: Option<String>,
+    pub request_bytes: u64,
+    pub response_bytes: Option<u64>,
+    pub duration_ms: u64,
+    pub total_tokens: Option<u64>,
+    pub result: String,
+    pub error_kind: Option<String>,
+    pub consent_scope: String,
+    pub created_at: String,
+}
+
+pub trait AiStudioOps: Send + Sync + 'static {
+    fn list_artifacts(
+        &self,
+        include_superseded: bool,
+        limit: u32,
+    ) -> BoxFuture<'_, Result<Vec<AiArtifactSummaryDto>, LearningErrorCode>>;
+    fn list_request_activity(
+        &self,
+        limit: u32,
+    ) -> BoxFuture<'_, Result<Vec<AiRequestEventDto>, LearningErrorCode>>;
+    fn list_jobs(
+        &self,
+        limit: u32,
+    ) -> BoxFuture<'_, Result<Vec<AnalysisJobDto>, LearningErrorCode>>;
+    fn cancel_job(
+        &self,
+        job_id: String,
+    ) -> BoxFuture<'_, Result<AnalysisJobDto, LearningErrorCode>>;
+    fn retry_job(&self, job_id: String)
+        -> BoxFuture<'_, Result<AnalysisJobDto, LearningErrorCode>>;
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -804,6 +914,17 @@ pub trait AnalysisOps: Send + Sync + 'static {
         &self,
         media_id: String,
     ) -> BoxFuture<'_, Result<TranscriptStateDto, AnalysisErrorCode>>;
+    fn transcript_document(
+        &self,
+        media_id: String,
+    ) -> BoxFuture<'_, Result<Option<TranscriptDocumentDto>, AnalysisErrorCode>>;
+    fn correct_transcript_segment(
+        &self,
+        media_id: String,
+        transcript_id: String,
+        segment_id: i64,
+        text: String,
+    ) -> BoxFuture<'_, Result<TranscriptDocumentDto, AnalysisErrorCode>>;
     fn list_jobs(
         &self,
         kind: String,
@@ -1148,6 +1269,12 @@ pub struct RoutineArgs {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct PlanHistoryArgs {
+    #[serde(default = "default_plan_history_limit")]
+    pub limit: u32,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct ReplanArgs {
     pub horizon_start: String,
 }
@@ -1221,6 +1348,14 @@ pub struct TranscriptStateArgs {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct CorrectTranscriptSegmentArgs {
+    pub media_id: String,
+    pub transcript_id: String,
+    pub segment_id: i64,
+    pub text: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct LectureUnderstandingArgs {
     pub media_id: String,
     #[serde(default)]
@@ -1264,6 +1399,44 @@ pub struct DueReviewsArgs {
     pub due_before: String,
     #[serde(default = "default_due_review_limit")]
     pub limit: u32,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct StudyLibraryArgs {
+    #[serde(default)]
+    pub include_archived: bool,
+    #[serde(default = "default_study_library_limit")]
+    pub limit: u32,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateStudyItemArgs {
+    pub study_item_id: String,
+    pub prompt: String,
+    pub answer: String,
+    #[serde(default)]
+    pub hint: Option<String>,
+    #[serde(default)]
+    pub archived: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AiStudioArtifactsArgs {
+    #[serde(default)]
+    pub include_superseded: bool,
+    #[serde(default = "default_ai_studio_limit")]
+    pub limit: u32,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AiStudioActivityArgs {
+    #[serde(default = "default_ai_studio_limit")]
+    pub limit: u32,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AiStudioJobArgs {
+    pub job_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1326,6 +1499,10 @@ fn default_routine_days() -> u32 {
     14
 }
 
+fn default_plan_history_limit() -> u32 {
+    12
+}
+
 fn default_search_limit() -> u32 {
     30
 }
@@ -1336,6 +1513,14 @@ fn default_transcription_language() -> String {
 
 fn default_due_review_limit() -> u32 {
     50
+}
+
+fn default_study_library_limit() -> u32 {
+    500
+}
+
+fn default_ai_studio_limit() -> u32 {
+    100
 }
 
 mod commands {
@@ -1444,6 +1629,20 @@ mod commands {
         args: Option<RoutineArgs>,
     ) -> Result<Option<RoutinePlanDto>, PlannerErrorCode> {
         ops.routine(args.unwrap_or_default().day_limit).await
+    }
+
+    #[tauri::command]
+    pub(crate) async fn plan_list_history(
+        ops: State<'_, Arc<dyn PlannerOps>>,
+        args: Option<PlanHistoryArgs>,
+    ) -> Result<Vec<PlanVersionSummaryDto>, PlannerErrorCode> {
+        ops.history(
+            args.unwrap_or(PlanHistoryArgs {
+                limit: default_plan_history_limit(),
+            })
+            .limit,
+        )
+        .await
     }
 
     #[tauri::command]
@@ -1629,6 +1828,28 @@ mod commands {
     }
 
     #[tauri::command]
+    pub(crate) async fn analysis_get_transcript_document(
+        ops: State<'_, Arc<dyn AnalysisOps>>,
+        args: TranscriptStateArgs,
+    ) -> Result<Option<TranscriptDocumentDto>, AnalysisErrorCode> {
+        ops.transcript_document(args.media_id).await
+    }
+
+    #[tauri::command]
+    pub(crate) async fn analysis_correct_transcript_segment(
+        ops: State<'_, Arc<dyn AnalysisOps>>,
+        args: CorrectTranscriptSegmentArgs,
+    ) -> Result<TranscriptDocumentDto, AnalysisErrorCode> {
+        ops.correct_transcript_segment(
+            args.media_id,
+            args.transcript_id,
+            args.segment_id,
+            args.text,
+        )
+        .await
+    }
+
+    #[tauri::command]
     pub(crate) async fn analysis_list_jobs(
         ops: State<'_, Arc<dyn AnalysisOps>>,
         args: AnalysisJobsArgs,
@@ -1697,6 +1918,85 @@ mod commands {
         args: DueReviewsArgs,
     ) -> Result<Vec<StudyItemDto>, LearningErrorCode> {
         ops.list_due_reviews(args.due_before, args.limit).await
+    }
+
+    #[tauri::command]
+    pub(crate) async fn learning_list_study_library(
+        ops: State<'_, Arc<dyn LearningOps>>,
+        args: Option<StudyLibraryArgs>,
+    ) -> Result<Vec<StudyItemDto>, LearningErrorCode> {
+        let args = args.unwrap_or(StudyLibraryArgs {
+            include_archived: false,
+            limit: default_study_library_limit(),
+        });
+        ops.list_study_library(args.include_archived, args.limit)
+            .await
+    }
+
+    #[tauri::command]
+    pub(crate) async fn learning_update_study_item(
+        ops: State<'_, Arc<dyn LearningOps>>,
+        args: UpdateStudyItemArgs,
+    ) -> Result<StudyItemDto, LearningErrorCode> {
+        ops.update_study_item(
+            args.study_item_id,
+            args.prompt,
+            args.answer,
+            args.hint,
+            args.archived,
+        )
+        .await
+    }
+
+    #[tauri::command]
+    pub(crate) async fn ai_studio_list_artifacts(
+        ops: State<'_, Arc<dyn AiStudioOps>>,
+        args: Option<AiStudioArtifactsArgs>,
+    ) -> Result<Vec<AiArtifactSummaryDto>, LearningErrorCode> {
+        let args = args.unwrap_or(AiStudioArtifactsArgs {
+            include_superseded: false,
+            limit: default_ai_studio_limit(),
+        });
+        ops.list_artifacts(args.include_superseded, args.limit)
+            .await
+    }
+
+    #[tauri::command]
+    pub(crate) async fn ai_studio_list_request_activity(
+        ops: State<'_, Arc<dyn AiStudioOps>>,
+        args: Option<AiStudioActivityArgs>,
+    ) -> Result<Vec<AiRequestEventDto>, LearningErrorCode> {
+        let args = args.unwrap_or(AiStudioActivityArgs {
+            limit: default_ai_studio_limit(),
+        });
+        ops.list_request_activity(args.limit).await
+    }
+
+    #[tauri::command]
+    pub(crate) async fn ai_studio_list_jobs(
+        ops: State<'_, Arc<dyn AiStudioOps>>,
+        args: Option<AiStudioActivityArgs>,
+    ) -> Result<Vec<AnalysisJobDto>, LearningErrorCode> {
+        let args = args.unwrap_or(AiStudioActivityArgs {
+            limit: default_ai_studio_limit(),
+        });
+        ops.list_jobs(args.limit).await
+    }
+
+    #[tauri::command]
+    pub(crate) async fn ai_studio_cancel_job(
+        ops: State<'_, Arc<dyn AiStudioOps>>,
+        args: AiStudioJobArgs,
+    ) -> Result<AnalysisJobDto, LearningErrorCode> {
+        ops.cancel_job(args.job_id).await
+    }
+
+    #[tauri::command]
+    pub(crate) async fn ai_studio_retry_job(
+        ops: State<'_, Arc<dyn AiStudioOps>>,
+        args: AiStudioJobArgs,
+    ) -> Result<AnalysisJobDto, LearningErrorCode> {
+        ops.retry_job(args.job_id).await
     }
 
     #[tauri::command]
@@ -1813,6 +2113,7 @@ mod plugin_builder {
                 super::commands::planner_preview,
                 super::commands::plan_commit,
                 super::commands::plan_get_routine,
+                super::commands::plan_list_history,
                 super::commands::plan_replan,
                 super::commands::cloud_planning_get_status,
                 super::commands::cloud_planning_save_key,
@@ -1835,6 +2136,8 @@ mod plugin_builder {
                 super::commands::analysis_get_capability,
                 super::commands::analysis_start_transcription,
                 super::commands::analysis_get_transcript_state,
+                super::commands::analysis_get_transcript_document,
+                super::commands::analysis_correct_transcript_segment,
                 super::commands::analysis_list_jobs,
                 super::commands::learning_start_lecture_understanding,
                 super::commands::learning_get_lecture_understanding,
@@ -1843,6 +2146,13 @@ mod plugin_builder {
                 super::commands::learning_generate_study_materials,
                 super::commands::learning_list_study_materials,
                 super::commands::learning_list_due_reviews,
+                super::commands::learning_list_study_library,
+                super::commands::learning_update_study_item,
+                super::commands::ai_studio_list_artifacts,
+                super::commands::ai_studio_list_request_activity,
+                super::commands::ai_studio_list_jobs,
+                super::commands::ai_studio_cancel_job,
+                super::commands::ai_studio_retry_job,
                 super::commands::learning_record_review,
                 super::commands::learning_companion,
                 super::commands::annotations_list,

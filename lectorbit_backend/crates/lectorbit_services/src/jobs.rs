@@ -278,6 +278,63 @@ pub async fn list_by_kind(pool: &SqlitePool, kind: &str, limit: u32) -> Result<V
     rows.into_iter().map(row_to_job).collect()
 }
 
+pub async fn get_by_id(pool: &SqlitePool, id: &str) -> Result<Job, JobError> {
+    let row = sqlx::query(
+        "SELECT id, kind, payload, status, attempt, last_error, created_at, updated_at \
+         FROM analysis_jobs WHERE id = ?",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|error| JobError::Database(error.to_string()))?
+    .ok_or_else(|| JobError::NotFound(id.to_string()))?;
+    row_to_job(row)
+}
+
+/// Cancel work that has not started. Running processes are deliberately not
+/// reported as cancelled because the current sidecars are not cooperatively
+/// interruptible yet.
+pub async fn cancel_pending(pool: &SqlitePool, id: &str) -> Result<Job, JobError> {
+    let result = sqlx::query(
+        "UPDATE analysis_jobs SET status = 'cancelled', updated_at = ? \
+         WHERE id = ? AND status IN ('queued', 'retry_wait', 'paused')",
+    )
+    .bind(Utc::now().to_rfc3339())
+    .bind(id)
+    .execute(pool)
+    .await
+    .map_err(|error| JobError::Database(error.to_string()))?;
+    if result.rows_affected() == 0 {
+        let current = get_by_id(pool, id).await?;
+        return Err(JobError::Terminal(format!(
+            "{id} is {}",
+            current.status.as_str()
+        )));
+    }
+    get_by_id(pool, id).await
+}
+
+/// Requeue terminal work with the same immutable payload and attempt history.
+pub async fn retry_terminal(pool: &SqlitePool, id: &str) -> Result<Job, JobError> {
+    let result = sqlx::query(
+        "UPDATE analysis_jobs SET status = 'queued', last_error = NULL, updated_at = ? \
+         WHERE id = ? AND status IN ('failed', 'cancelled')",
+    )
+    .bind(Utc::now().to_rfc3339())
+    .bind(id)
+    .execute(pool)
+    .await
+    .map_err(|error| JobError::Database(error.to_string()))?;
+    if result.rows_affected() == 0 {
+        let current = get_by_id(pool, id).await?;
+        return Err(JobError::Terminal(format!(
+            "{id} is {}",
+            current.status.as_str()
+        )));
+    }
+    get_by_id(pool, id).await
+}
+
 pub async fn find_active_by_payload(
     pool: &SqlitePool,
     kind: &str,
@@ -475,5 +532,35 @@ mod tests {
             .expect("lookup")
             .expect("active job");
         assert_eq!(found.id, job.id);
+    }
+
+    #[tokio::test]
+    async fn pending_jobs_can_be_cancelled_and_retried() {
+        let db = lectorbit_db::Db::open_in_memory().await.expect("db");
+        let job = enqueue(db.pool(), "scan", &serde_json::json!({ "root_id": "r" }))
+            .await
+            .expect("enqueue");
+        let cancelled = cancel_pending(db.pool(), &job.id).await.expect("cancel");
+        assert_eq!(cancelled.status, JobStatus::Cancelled);
+        let retried = retry_terminal(db.pool(), &job.id).await.expect("retry");
+        assert_eq!(retried.status, JobStatus::Queued);
+        assert_eq!(retried.attempt, 0);
+    }
+
+    #[tokio::test]
+    async fn running_jobs_are_not_reported_as_cancelled() {
+        let db = lectorbit_db::Db::open_in_memory().await.expect("db");
+        let job = enqueue(db.pool(), "scan", &serde_json::json!({ "root_id": "r" }))
+            .await
+            .expect("enqueue");
+        mark_running(db.pool(), &job.id).await.expect("running");
+        assert!(matches!(
+            cancel_pending(db.pool(), &job.id).await,
+            Err(JobError::Terminal(_))
+        ));
+        assert_eq!(
+            get_by_id(db.pool(), &job.id).await.expect("job").status,
+            JobStatus::Running
+        );
     }
 }

@@ -7,7 +7,9 @@ use lectorbit_ai::{
     builtin_models, model_supports_language, ModelManifest, TranscriptOutput,
     TranscriptionLanguage, EXPECTED_WHISPER_VERSION,
 };
-use lectorbit_db::{AnalysisRepo, DbError, ModelManifestRow, TranscriptSegmentInput};
+use lectorbit_db::{
+    AnalysisRepo, DbError, ModelManifestRow, TranscriptDocumentRow, TranscriptSegmentInput,
+};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -241,6 +243,31 @@ impl AnalysisService {
         })
     }
 
+    pub async fn transcript_document(
+        &self,
+        media_id: &str,
+    ) -> Result<Option<TranscriptDocumentRow>, AnalysisError> {
+        validate_identifier(media_id)?;
+        Ok(self.repo.active_transcript_document(media_id).await?)
+    }
+
+    pub async fn correct_transcript_segment(
+        &self,
+        media_id: &str,
+        transcript_id: &str,
+        segment_id: i64,
+        text: &str,
+    ) -> Result<TranscriptDocumentRow, AnalysisError> {
+        validate_identifier(media_id)?;
+        if transcript_id.trim().is_empty() || segment_id <= 0 || text.trim().is_empty() {
+            return Err(AnalysisError::InvalidInput);
+        }
+        Ok(self
+            .repo
+            .correct_transcript_segment(media_id, transcript_id, segment_id, text)
+            .await?)
+    }
+
     pub async fn model_manifest(&self, model_id: &str) -> Result<ModelManifest, AnalysisError> {
         let row = self
             .repo
@@ -380,6 +407,7 @@ impl AnalysisService {
                 start_ms: segment.start_ms,
                 end_ms: segment.end_ms,
                 text: segment.text,
+                confidence_milli: segment.confidence_milli,
             })
             .collect::<Vec<_>>();
         Ok(self

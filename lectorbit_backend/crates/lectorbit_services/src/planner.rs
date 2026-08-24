@@ -4,8 +4,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::{Duration, NaiveDate};
 use lectorbit_db::{
-    ChunksRepo, CommittedPlan, DbError, PlansRepo, ReplanMediaState, RoutinePlan, SchedulableMedia,
-    StoredChunk, StudyRepo,
+    ChunksRepo, CommittedPlan, DbError, PlanVersionSummaryRow, PlansRepo, ReplanMediaState,
+    RoutinePlan, SchedulableMedia, StoredChunk, StudyRepo,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -196,6 +196,16 @@ impl PlannerService {
             .await?)
     }
 
+    pub async fn history(
+        &self,
+        limit: u32,
+    ) -> Result<Vec<PlanVersionSummaryRow>, PlannerServiceError> {
+        Ok(self
+            .plans
+            .list_version_summaries(LOCAL_USER_ID, limit)
+            .await?)
+    }
+
     pub async fn replan(
         &self,
         horizon_start: NaiveDate,
@@ -332,11 +342,8 @@ fn adjusted_chunks(
     let mut result = Vec::new();
     for chunk in chunks {
         let mut boundaries = vec![chunk.start_ms, chunk.end_ms];
-        let completed_ranges = normalized_completed_ranges(
-            &state.completed_ranges,
-            chunk.start_ms,
-            chunk.end_ms,
-        );
+        let completed_ranges =
+            normalized_completed_ranges(&state.completed_ranges, chunk.start_ms, chunk.end_ms);
         for (start, end) in completed_ranges.iter().chain(state.forced_ranges.iter()) {
             if *end > chunk.start_ms && *start < chunk.end_ms {
                 boundaries.push((*start).max(chunk.start_ms));
