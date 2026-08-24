@@ -74,6 +74,8 @@ const StudyItemSchema = z.object({
   repetitions: z.number().int().nonnegative(),
   ease_milli: z.number().int().min(1300).max(3000),
   last_quality: z.number().int().min(0).max(5).nullable(),
+  archived: z.boolean().default(false),
+  user_edited: z.boolean().default(false),
 });
 
 const ReviewStateSchema = z.object({
@@ -221,6 +223,34 @@ export async function listDueReviews(
   return z.array(StudyItemSchema).parse(
     await invoke<unknown>('plugin:lectorbit|learning_list_due_reviews', {
       args: { due_before: dueBefore, limit },
+    }).catch(wrapLearningError),
+  );
+}
+
+export async function listStudyLibrary(includeArchived = false, limit = 500): Promise<StudyItem[]> {
+  return z.array(StudyItemSchema).parse(
+    await invoke<unknown>('plugin:lectorbit|learning_list_study_library', {
+      args: { include_archived: includeArchived, limit },
+    }).catch(wrapLearningError),
+  );
+}
+
+export async function updateStudyItem(input: {
+  studyItemId: string;
+  prompt: string;
+  answer: string;
+  hint?: string;
+  archived: boolean;
+}): Promise<StudyItem> {
+  return StudyItemSchema.parse(
+    await invoke<unknown>('plugin:lectorbit|learning_update_study_item', {
+      args: {
+        study_item_id: input.studyItemId,
+        prompt: input.prompt,
+        answer: input.answer,
+        hint: input.hint,
+        archived: input.archived,
+      },
     }).catch(wrapLearningError),
   );
 }

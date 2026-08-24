@@ -51,10 +51,13 @@ export function HomeRoute() {
             : `${formatLongDay(today)} · Turn available time into one clear next step.`
         }
         actions={
-          <Link to="/plan" className={secondaryLinkClass}>
-            <ListChecks aria-hidden="true" className="size-4" />
-            {routine ? 'Adjust plan' : 'Build a plan'}
-          </Link>
+          <div className="flex flex-wrap gap-2">
+            <Link to="/study" className={secondaryLinkClass}><Brain aria-hidden="true" className="size-4" /> Study Hub</Link>
+            <Link to="/plan" className={secondaryLinkClass}>
+              <ListChecks aria-hidden="true" className="size-4" />
+              {routine ? 'Adjust plan' : 'Build a plan'}
+            </Link>
+          </div>
         }
       />
 

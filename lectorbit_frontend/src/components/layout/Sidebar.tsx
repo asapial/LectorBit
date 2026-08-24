@@ -2,6 +2,7 @@ import CalendarDays from 'lucide-react/dist/esm/icons/calendar-days';
 import Gauge from 'lucide-react/dist/esm/icons/gauge';
 import LibraryBig from 'lucide-react/dist/esm/icons/library-big';
 import ListChecks from 'lucide-react/dist/esm/icons/list-checks';
+import Brain from 'lucide-react/dist/esm/icons/brain';
 import Search from 'lucide-react/dist/esm/icons/search';
 import Settings2 from 'lucide-react/dist/esm/icons/settings-2';
 import ShieldCheck from 'lucide-react/dist/esm/icons/shield-check';
@@ -44,6 +45,12 @@ const entries: NavEntry[] = [
     label: 'AI Studio',
     icon: Sparkles,
     description: 'Models & intelligence',
+  },
+  {
+    to: '/study',
+    label: 'Study Hub',
+    icon: Brain,
+    description: 'Review & mastery',
   },
   {
     to: '/search',
@@ -137,7 +144,7 @@ export function MobileNavigation() {
   return (
     <nav
       aria-label="Mobile navigation"
-      className="fixed bottom-3 left-1/2 z-40 grid w-[calc(100%-1.5rem)] max-w-2xl -translate-x-1/2 grid-cols-6 rounded-2xl border border-border/80 bg-card/90 p-1.5 shadow-[0_16px_50px_rgba(28,25,23,0.16)] backdrop-blur-xl supports-[padding:max(0px)]:bottom-[max(0.75rem,env(safe-area-inset-bottom))] min-[1180px]:hidden"
+      className="fixed bottom-3 left-1/2 z-40 grid w-[calc(100%-1.5rem)] max-w-2xl -translate-x-1/2 grid-cols-7 rounded-2xl border border-border/80 bg-card/90 p-1.5 shadow-[0_16px_50px_rgba(28,25,23,0.16)] backdrop-blur-xl supports-[padding:max(0px)]:bottom-[max(0.75rem,env(safe-area-inset-bottom))] min-[1180px]:hidden"
     >
       {mobileEntries.map((entry) => {
         const Icon = entry.icon;
