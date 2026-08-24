@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { MobileNavigation, Sidebar } from './Sidebar';
 import { Topbar } from './Topbar';
+import { CommandPalette } from './CommandPalette';
 
 interface AppShellProps {
   children: ReactNode;
@@ -30,6 +31,7 @@ export function AppShell({ children }: AppShellProps) {
         </main>
       </div>
       <MobileNavigation />
+      <CommandPalette />
     </div>
   );
 }

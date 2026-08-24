@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import CircleCheck from 'lucide-react/dist/esm/icons/circle-check';
 import FolderSearch from 'lucide-react/dist/esm/icons/folder-search';
+import Search from 'lucide-react/dist/esm/icons/search';
 import FileAudio from 'lucide-react/dist/esm/icons/file-audio';
 import FileVideo from 'lucide-react/dist/esm/icons/file-video';
 import ScanLine from 'lucide-react/dist/esm/icons/scan-line';
@@ -67,6 +68,7 @@ export function LibraryRoute() {
   const [liveScans, setLiveScans] = useState<Record<string, LiveScan>>({});
   const [analysisProgress, setAnalysisProgress] = useState<Record<string, AnalysisProgress>>({});
   const [transcriptionLanguage, setTranscriptionLanguage] = useState<TranscriptionLanguage>('en');
+  const [mediaFilter, setMediaFilter] = useState('');
 
   const roots = useQuery({
     queryKey: ['library', 'roots'] as const,
@@ -246,6 +248,19 @@ export function LibraryRoute() {
         actions={
           <div className="flex flex-wrap items-end gap-2">
             <label className="space-y-1 text-xs font-medium text-muted-foreground">
+              Filter current pages
+              <span className="relative block">
+                <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2" />
+                <input
+                  aria-label="Filter library media"
+                  className="form-control min-w-52 pl-9 text-sm text-foreground"
+                  value={mediaFilter}
+                  onChange={(event) => setMediaFilter(event.target.value)}
+                  placeholder="Lecture name"
+                />
+              </span>
+            </label>
+            <label className="space-y-1 text-xs font-medium text-muted-foreground">
               Transcript language
               <select
                 aria-label="Transcript language"
@@ -367,6 +382,7 @@ export function LibraryRoute() {
               onTranscribe={(mediaId, modelId) =>
                 transcribe.mutate({ mediaId, modelId, language: transcriptionLanguage })
               }
+              filter={mediaFilter}
             />
           ))}
         </>
@@ -495,12 +511,14 @@ function FolderMediaCard({
   analysisProgress,
   pendingMediaId,
   onTranscribe,
+  filter,
 }: {
   root: LibraryRoot;
   readyModelId?: string;
   analysisProgress: Record<string, AnalysisProgress>;
   pendingMediaId?: string;
   onTranscribe: (mediaId: string, modelId: string) => void;
+  filter: string;
 }) {
   const [pageIndex, setPageIndex] = useState(0);
   const media = useInfiniteQuery({
@@ -523,7 +541,12 @@ function FolderMediaCard({
   const currentPage = pages[pageIndex];
   // Treat the root boundary defensively as well as at the database query. A
   // malformed/stale page can never leak another folder's media into this module.
-  const items = currentPage?.items.filter((item) => item.root_id === root.id) ?? [];
+  const term = filter.trim().toLocaleLowerCase();
+  const items =
+    currentPage?.items.filter(
+      (item) =>
+        item.root_id === root.id && (!term || item.display_name.toLocaleLowerCase().includes(term)),
+    ) ?? [];
   const summary = pages[0]?.summary;
   const totalPages = summary
     ? Math.max(1, Math.ceil(summary.total_items / MEDIA_PAGE_SIZE))

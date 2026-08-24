@@ -4,12 +4,14 @@ import CircleHelp from 'lucide-react/dist/esm/icons/circle-help';
 import Moon from 'lucide-react/dist/esm/icons/moon';
 import Sun from 'lucide-react/dist/esm/icons/sun';
 import Search from 'lucide-react/dist/esm/icons/search';
+import Command from 'lucide-react/dist/esm/icons/command';
 import { Link, useLocation } from 'react-router';
 import { useTheme } from '../../app/ThemeProvider';
 import { getAppVersion } from '../../ipc/app';
 import { BrandLogo } from '../brand/BrandLogo';
 import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
+import { JobIndicator } from './JobIndicator';
 
 export function Topbar() {
   const location = useLocation();
@@ -63,6 +65,17 @@ export function Topbar() {
         >
           <Search aria-hidden="true" className="size-4" />
         </Link>
+        <JobIndicator />
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-10 rounded-xl sm:size-9"
+          aria-label="Open command palette"
+          title="Command palette (Ctrl K)"
+          onClick={() => window.dispatchEvent(new Event('lectorbit:command-palette'))}
+        >
+          <Command className="size-4" />
+        </Button>
         <Button
           variant="ghost"
           size="icon"
@@ -96,6 +109,7 @@ function pageLabel(pathname: string) {
     '/library': 'Library',
     '/plan': 'Plan builder',
     '/ai': 'AI Studio',
+    '/study': 'Study Hub',
     '/search': 'Search',
     '/settings': 'Settings',
     '/diagnostics': 'Diagnostics',
