@@ -103,6 +103,21 @@ class UpdaterManifestTests(unittest.TestCase):
 
 
 class ReleaseConfigTests(unittest.TestCase):
+    def test_base_config_always_packages_the_runtime_sidecars(self):
+        config = json.loads(
+            (ROOT / "lectorbit_backend/src-tauri/tauri.conf.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(
+            config["bundle"]["resources"],
+            {"resources/sidecars/": "sidecars/"},
+        )
+        self.assertIn(
+            "stage-tauri-runtime.mjs",
+            config["build"]["beforeBuildCommand"]["script"],
+        )
+
     def test_release_overlay_requires_an_updater_public_key(self):
         with self.assertRaises(ValueError):
             release_config.release_overlay("   ")
@@ -114,6 +129,7 @@ class ReleaseConfigTests(unittest.TestCase):
         self.assertEqual(
             overlay["bundle"]["windows"]["certificateThumbprint"], "ABC123"
         )
+        self.assertNotIn("resources", overlay["bundle"])
 
 
 class SidecarBundleTests(unittest.TestCase):

@@ -40,6 +40,7 @@ if ($env:OS -ne 'Windows_NT' -or -not [Environment]::Is64BitOperatingSystem) {
 
 $repositoryRoot = [IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
 $backendRoot = Join-Path $repositoryRoot 'lectorbit_backend'
+$frontendRoot = Join-Path $repositoryRoot 'lectorbit_frontend'
 $tauriRoot = Join-Path $backendRoot 'src-tauri'
 $targetRoot = [IO.Path]::GetFullPath((Join-Path $backendRoot 'target'))
 $workRoot = [IO.Path]::GetFullPath((Join-Path $targetRoot 'lectorbit-windows-local'))
@@ -244,12 +245,10 @@ $receiptPath = Join-Path $stagingRoot 'sidecar-receipt.json'
 )
 
 New-Item -ItemType Directory -Path $workRoot -Force | Out-Null
-$resourceKey = $stagingRoot.Replace('\', '/') + '/'
 $overlay = [ordered]@{
     bundle = [ordered]@{
         targets = @('nsis')
         createUpdaterArtifacts = $false
-        resources = [ordered]@{ $resourceKey = 'sidecars/' }
         windows = [ordered]@{
             allowDowngrades = $false
             webviewInstallMode = [ordered]@{ type = $WebViewInstallMode; silent = $true }
@@ -280,11 +279,19 @@ foreach ($commandName in @('cargo', 'pnpm')) {
         throw "$commandName is required to build the Windows installer."
     }
 }
+$tauriCli = Join-Path $frontendRoot 'node_modules\.bin\tauri.cmd'
+if (-not (Test-Path -LiteralPath $tauriCli -PathType Leaf)) {
+    throw 'The pinned frontend Tauri CLI is missing. Run pnpm install in lectorbit_frontend first.'
+}
 
 Write-Host ''
 Write-Host "Building the Windows 10/11 x64 installer ($buildProfile, $WebViewInstallMode, $Compression)..." -ForegroundColor Cyan
 $previousCargoTarget = $env:CARGO_TARGET_DIR
+$previousFfmpegPath = $env:LECTORBIT_FFMPEG_PATH
+$previousFfprobePath = $env:LECTORBIT_FFPROBE_PATH
 $env:CARGO_TARGET_DIR = $buildTarget
+$env:LECTORBIT_FFMPEG_PATH = $resolvedFfmpeg
+$env:LECTORBIT_FFPROBE_PATH = $resolvedFfprobe
 try {
     Push-Location $backendRoot
     try {
@@ -293,15 +300,15 @@ try {
             if (-not (Test-Path -LiteralPath $existingBinary -PathType Leaf)) {
                 throw "BundleOnly requires an existing $buildProfile binary from this packaging script."
             }
-            $tauriArguments = @('tauri', 'bundle')
+            $tauriArguments = @('bundle')
             if ($DebugBuild) { $tauriArguments += '--debug' }
             $tauriArguments += @('--ci', '--bundles', 'nsis', '--no-sign', '--config', $overlayPath)
-            & cargo @tauriArguments
+            & $tauriCli @tauriArguments
         } else {
-            $tauriArguments = @('tauri', 'build')
+            $tauriArguments = @('build')
             if ($DebugBuild) { $tauriArguments += '--debug' }
             $tauriArguments += @('--ci', '--bundles', 'nsis', '--no-sign', '--config', $overlayPath, '--', '--locked')
-            & cargo @tauriArguments
+            & $tauriCli @tauriArguments
         }
         if ($LASTEXITCODE -ne 0) { throw "Tauri installer build failed with exit code $LASTEXITCODE." }
     } finally {
@@ -309,6 +316,8 @@ try {
     }
 } finally {
     $env:CARGO_TARGET_DIR = $previousCargoTarget
+    $env:LECTORBIT_FFMPEG_PATH = $previousFfmpegPath
+    $env:LECTORBIT_FFPROBE_PATH = $previousFfprobePath
 }
 
 $bundleDirectory = Join-Path $buildTarget "$buildProfile\bundle\nsis"

@@ -462,6 +462,25 @@ mod tests {
     }
 
     #[test]
+    fn installed_ffprobe_is_resolved_from_the_resource_directory() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let sidecars = directory.path().join("sidecars");
+        std::fs::create_dir_all(&sidecars).expect("create sidecar directory");
+        let filename = if cfg!(windows) {
+            "ffprobe.exe"
+        } else {
+            "ffprobe"
+        };
+        let executable = sidecars.join(filename);
+        std::fs::write(&executable, b"fixture").expect("create ffprobe fixture");
+
+        assert_eq!(
+            resolve_ffprobe_path_with_search_path(Some(directory.path()), None, None),
+            Some(executable)
+        );
+    }
+
+    #[test]
     fn debug_sidecar_can_be_resolved_to_an_absolute_path() {
         let executable = std::env::current_exe().expect("test executable");
         let filename = executable

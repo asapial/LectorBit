@@ -16,7 +16,6 @@ def release_overlay(updater_pubkey: str, windows_thumbprint: str | None = None) 
         raise ValueError("the updater public key is required for a release build")
     bundle: dict = {
         "createUpdaterArtifacts": True,
-        "resources": {"resources/sidecars/": "sidecars/"},
     }
     if windows_thumbprint:
         bundle["windows"] = {

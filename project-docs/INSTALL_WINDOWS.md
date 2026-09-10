@@ -66,6 +66,16 @@ The script (offline WebView2 by default):
 - builds a current-user NSIS installer with offline WebView2 in an isolated Cargo target (using practical zlib compression for the large local FFmpeg binaries); and
 - copies the setup executable, receipt, and checksum into `artifacts/windows-local/`. A completed release build removes a superseded debug setup from that handoff folder so the checksum is unambiguous.
 
+The packaging script invokes the repository-pinned frontend Tauri CLI rather
+than a globally installed `cargo-tauri.exe`. This keeps the build reproducible
+and avoids relying on a user-profile Cargo subcommand that Windows Application
+Control may block.
+
+The base Tauri configuration also packages `resources/sidecars/`, and its
+pre-build hook stages the exact pinned FFmpeg/ffprobe binaries. This prevents a
+plain `cargo tauri build` from silently producing an installer that works only
+on the build PC because FFmpeg happened to be on that machine's `PATH`.
+
 For a fast provenance check without compiling:
 
 ```powershell

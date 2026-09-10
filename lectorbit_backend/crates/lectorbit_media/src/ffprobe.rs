@@ -19,6 +19,8 @@ const MAX_JSON_BYTES: usize = 16 * 1024 * 1024;
 pub enum ProbeError {
     #[error("ffprobe executable is not configured")]
     Unavailable,
+    #[error("Windows Application Control blocked ffprobe")]
+    LaunchBlocked,
     #[error("ffprobe executable path must be absolute")]
     InvalidExecutable,
     #[error("media path must be an absolute file path")]
@@ -43,6 +45,9 @@ impl ProbeError {
             Self::Unavailable | Self::InvalidExecutable | Self::VersionMismatch => {
                 "Media inspection is not available in this installation."
             }
+            Self::LaunchBlocked => {
+                "Windows Application Control blocked media inspection. Install an approved, signed LectorBit package."
+            }
             Self::TimedOut => "Media inspection timed out.",
             Self::InvalidMediaPath
             | Self::ProcessFailed
@@ -54,7 +59,10 @@ impl ProbeError {
 
     pub fn status(&self) -> &'static str {
         match self {
-            Self::Unavailable | Self::InvalidExecutable | Self::VersionMismatch => "unavailable",
+            Self::Unavailable
+            | Self::LaunchBlocked
+            | Self::InvalidExecutable
+            | Self::VersionMismatch => "unavailable",
             _ => "failed",
         }
     }
@@ -95,7 +103,7 @@ impl Ffprobe {
         )
         .await
         .map_err(|_| ProbeError::TimedOut)?
-        .map_err(|_| ProbeError::Unavailable)?;
+        .map_err(map_launch_error)?;
         if !output.status.success() {
             return Err(ProbeError::Unavailable);
         }
@@ -126,7 +134,7 @@ impl Ffprobe {
         )
         .await
         .map_err(|_| ProbeError::TimedOut)?
-        .map_err(|_| ProbeError::Unavailable)?;
+        .map_err(map_launch_error)?;
         if !output.status.success() {
             return Err(ProbeError::ProcessFailed);
         }
@@ -135,6 +143,14 @@ impl Ffprobe {
         }
         parse_probe_json(&output.stdout)
     }
+}
+
+fn map_launch_error(error: std::io::Error) -> ProbeError {
+    #[cfg(windows)]
+    if error.raw_os_error() == Some(4551) {
+        return ProbeError::LaunchBlocked;
+    }
+    ProbeError::Unavailable
 }
 
 pub fn probe_arguments(media_path: &Path) -> Vec<OsString> {
@@ -420,6 +436,15 @@ mod tests {
             Ffprobe::with_timeout(PathBuf::from("ffprobe"), Duration::from_secs(1))
                 .expect_err("relative"),
             ProbeError::InvalidExecutable
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_application_control_failure_is_distinct() {
+        assert_eq!(
+            map_launch_error(std::io::Error::from_raw_os_error(4551)),
+            ProbeError::LaunchBlocked
         );
     }
 }

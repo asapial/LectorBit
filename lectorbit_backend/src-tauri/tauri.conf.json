@@ -11,7 +11,7 @@
     },
     "beforeBuildCommand": {
       "cwd": "../../lectorbit_frontend",
-      "script": "pnpm build",
+      "script": "pnpm build && node ../scripts/stage-tauri-runtime.mjs",
       "wait": true
     },
     "devUrl": "http://127.0.0.1:1420",
@@ -49,6 +49,9 @@
     "shortDescription": "A local-first video study planner.",
     "longDescription": "Plan, watch, transcribe, and review lectures with private local media playback and optional grounded AI study tools.",
     "icon": ["icons/icon.ico", "icons/icon.png"],
+    "resources": {
+      "resources/sidecars/": "sidecars/"
+    },
     "windows": {
       "allowDowngrades": false,
       "webviewInstallMode": {
